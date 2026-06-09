@@ -2,12 +2,13 @@
   "name": "antigravity",
   "private": true,
   "engines": {
-    "node": ">=20"
+    "node": "22"
   },
   "packageManager": "pnpm@11.5.2",
   "scripts": {
     "dev": "turbo run dev",
     "build": "turbo run build",
+    "start": "node apps/api/dist/server.js",
     "lint": "turbo run lint",
     "type-check": "turbo run type-check",
     "test": "turbo run test",
