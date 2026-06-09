@@ -2,7 +2,9 @@
   "extends": "@antigravity/config/typescript/node.json",
   "compilerOptions": {
     "rootDir": ".",
-    "noEmit": true
+    "outDir": "dist",
+    "noEmit": false,
+    "declaration": true
   },
   "include": ["src/**/*.ts"],
   "exclude": ["node_modules", "dist"]
