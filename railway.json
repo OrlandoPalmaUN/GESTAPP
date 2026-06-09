@@ -4,7 +4,7 @@
     "builder": "nixpacks"
   },
   "deploy": {
-    "startCommand": "pnpm --filter @antigravity/api start",
+    "startCommand": "node apps/api/dist/server.js",
     "restartPolicyType": "on_failure",
     "restartPolicyMaxRetries": 5
   }
