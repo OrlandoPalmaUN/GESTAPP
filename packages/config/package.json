@@ -1,0 +1,19 @@
+{
+  "name": "@antigravity/config",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "typescript",
+    "eslint"
+  ],
+  "exports": {
+    "./eslint/*": "./eslint/*",
+    "./typescript/*": "./typescript/*"
+  },
+  "dependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.4.1",
+    "typescript-eslint": "^8.60.1"
+  }
+}

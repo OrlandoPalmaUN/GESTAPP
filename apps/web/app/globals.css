@@ -1,0 +1,159 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 0 0% 3.9%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 3.9%;
+    --primary: 0 0% 9%;
+    --primary-foreground: 0 0% 98%;
+    --secondary: 0 0% 96.1%;
+    --secondary-foreground: 0 0% 9%;
+    --muted: 0 0% 96.1%;
+    --muted-foreground: 0 0% 45.1%;
+    --accent: 0 0% 96.1%;
+    --accent-foreground: 0 0% 9%;
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 89.8%;
+    --input: 0 0% 89.8%;
+    --ring: 0 0% 3.9%;
+    --radius: 0.5rem;
+
+    /* Color secundario de marca — personalizable por usuario (ver
+       `colorSecundario` en `Usuario` y `PATCH /auth/perfil`). El valor por
+       defecto es el azul de la plataforma; cada usuario puede sobreescribir
+       esta variable en tiempo real desde Configuración sin tocar Tailwind. */
+    --brand-blue: #5092A9;
+  }
+
+  .dark {
+    --background: 0 0% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 0 0% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 0 0% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 0 0% 9%;
+    --secondary: 0 0% 14.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 0 0% 14.9%;
+    --muted-foreground: 0 0% 63.9%;
+    --accent: 0 0% 14.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 0 0% 14.9%;
+    --input: 0 0% 14.9%;
+    --ring: 0 0% 83.1%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground font-sans;
+  }
+}
+
+/* Neo-Brutalist Styling Utilities */
+@layer utilities {
+  .neo-border {
+    border: 2px solid #000000;
+  }
+  .neo-border-thin {
+    border: 1px solid #000000;
+  }
+  .neo-shadow {
+    box-shadow: 4px 4px 0px 0px #000000;
+  }
+  .neo-shadow-lg {
+    box-shadow: 8px 8px 0px 0px #000000;
+  }
+  .neo-shadow-sm {
+    box-shadow: 2px 2px 0px 0px #000000;
+  }
+  .neo-shadow-red {
+    box-shadow: 4px 4px 0px 0px #E03C31;
+  }
+  .neo-shadow-blue {
+    box-shadow: 4px 4px 0px 0px var(--brand-blue, #5092A9);
+  }
+  
+  .neo-btn {
+    @apply border-2 border-black bg-white text-black font-bold px-4 py-2 
+           shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[-1px] hover:translate-y-[-1px] 
+           hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] 
+           active:shadow-none transition-all duration-100 cursor-pointer select-none outline-none;
+  }
+  
+  .neo-btn-primary {
+    @apply border-2 border-black bg-brand-red text-white font-bold px-4 py-2 
+           shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[-1px] hover:translate-y-[-1px] 
+           hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] 
+           active:shadow-none transition-all duration-100 cursor-pointer select-none outline-none;
+  }
+
+  .neo-btn-secondary {
+    @apply border-2 border-black bg-brand-blue text-white font-bold px-4 py-2 
+           shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[-1px] hover:translate-y-[-1px] 
+           hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] active:translate-x-[2px] active:translate-y-[2px] 
+           active:shadow-none transition-all duration-100 cursor-pointer select-none outline-none;
+  }
+
+  .neo-card {
+    @apply border-2 border-black bg-white p-5 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)];
+  }
+
+  .neo-input {
+    @apply border-2 border-black bg-white text-black px-3 py-2 outline-none 
+           focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all duration-100;
+  }
+}
+
+/* Placeholder for contenteditable rich-text editors */
+[contenteditable][data-placeholder]:empty::before {
+  content: attr(data-placeholder);
+  color: #9ca3af;
+  pointer-events: none;
+}
+
+/* Rich text content styling inside contenteditable */
+[contenteditable] ul { list-style: disc; padding-left: 1.5rem; margin: 0.25rem 0; }
+[contenteditable] ol { list-style: decimal; padding-left: 1.5rem; margin: 0.25rem 0; }
+[contenteditable] li { margin: 0.1rem 0; }
+
+/* Custom Scrollbars to keep it retro and neat */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f1f1;
+  border-left: 2px solid #000000;
+}
+::-webkit-scrollbar-thumb {
+  background: #888;
+  border: 2px solid #000000;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #000000;
+}
+
+/* Custom grid mesh pattern similar to blueprint design */
+.blueprint-grid {
+  background-size: 20px 20px;
+  background-image: 
+    linear-gradient(to right, rgba(0, 0, 0, 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.05) 1px, transparent 1px);
+}
+

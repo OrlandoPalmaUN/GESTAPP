@@ -1,0 +1,5 @@
+export { getPgPool, getPrismaClient, PrismaClient } from './client.js'
+export type * from '../generated/prisma/client.js'
+export { createTenantKysely } from './kysely.js'
+export type { TenantDB } from './kysely.js'
+export { listarMigracionesDisponibles, provisionarSchemaDeTenant } from './tenant-migrations.js'

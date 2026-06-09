@@ -1,0 +1,96 @@
+// Schema público — compartido entre todos los tenants.
+// Las tablas de cada tenant viven en su propio schema de Postgres
+// (`tenant_<slug>_<id>`) y se gestionan vía Kysely + el migration runner
+// de scripts/migrate-tenants.ts — Prisma solo conoce `public` porque no
+// soporta cambiar el search_path en runtime (ver plan §10).
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+// La URL de conexión vive en prisma.config.ts (Prisma 7 ya no la lee desde
+// el datasource del schema — ver prisma.config.ts y src/client.ts).
+datasource db {
+  provider = "postgresql"
+  schemas  = ["public"]
+}
+
+/// Empresas registradas. `slug` resuelve el subdominio (miempresa.antigravity.co)
+/// y `schemaName` apunta al schema de Postgres que contiene sus datos operativos.
+model Tenant {
+  id          String    @id @default(uuid()) @db.Uuid
+  name        String
+  slug        String    @unique
+  schemaName  String    @unique @map("schema_name")
+  plan        String    @default("basico")
+  status      String    @default("active")
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  trialEndsAt DateTime? @map("trial_ends_at") @db.Timestamptz(6)
+
+  billingEvents BillingEvent[]
+
+  @@map("tenants")
+  @@schema("public")
+}
+
+/// Catálogo de planes y precios (básico / profesional / empresarial).
+model SubscriptionPlan {
+  id           String @id @default(uuid()) @db.Uuid
+  name         String
+  precioCop    Int    @map("precio_cop")
+  maxUsuarios  Int?   @map("max_usuarios")
+  maxProductos Int?   @map("max_productos")
+  features     Json   @default("{}")
+
+  @@map("subscription_plans")
+  @@schema("public")
+}
+
+/// Historial de eventos de facturación (pagos, fallos, cancelaciones, upgrades).
+model BillingEvent {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @map("tenant_id") @db.Uuid
+  tipo       String
+  montoCop   Int?     @map("monto_cop")
+  referencia String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@map("billing_events")
+  @@schema("public")
+}
+
+/// Usuarios de la plataforma (panel de administración). El `superadmin` es
+/// global (tenantId null) y gestiona la creación/administración del resto de
+/// usuarios — ver "Módulo de comunicaciones" addendum: por ahora no hay
+/// auto-registro, todo usuario lo crea un superadmin o un admin de tenant.
+model Usuario {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  passwordHash String    @map("password_hash")
+  nombre       String
+  rol          String    @default("usuario") // 'superadmin' | 'admin' | 'usuario'
+  tenantId     String?   @map("tenant_id") @db.Uuid
+  status       String    @default("active") // 'active' | 'suspended'
+  colorSecundario String? @map("color_secundario") // tema personal: hex (#5092A9) elegido por el propio usuario
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastLoginAt  DateTime? @map("last_login_at") @db.Timestamptz(6)
+
+  @@map("usuarios")
+  @@schema("public")
+}
+
+/// Registro de qué migración se aplicó a qué schema de tenant — la fuente
+/// de verdad que usa scripts/migrate-tenants.ts para no reaplicar migraciones.
+model MigrationLog {
+  id         Int      @id @default(autoincrement())
+  schemaName String   @map("schema_name")
+  migration  String
+  appliedAt  DateTime @default(now()) @map("applied_at") @db.Timestamptz(6)
+
+  @@unique([schemaName, migration])
+  @@map("migration_log")
+  @@schema("public")
+}
