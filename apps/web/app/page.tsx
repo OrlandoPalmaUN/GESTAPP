@@ -1881,7 +1881,7 @@ export default function AppHome() {
         setOrderItems([{ producto_id: products[0]?.id ?? 'prod-1', cantidad: 1, precio_excepcional: null }]);
         setShippingEnabled(false);
         setShippingPrice('');
-        await fetchPedidos();
+        await Promise.all([fetchPedidos(), fetchFinanzas()]);
       } catch (err: unknown) {
         setOrderValidationError(err instanceof ApiError ? err.message : 'Ocurrió un error inesperado al crear el pedido.');
       }
@@ -1964,7 +1964,7 @@ export default function AppHome() {
     void (async () => {
       try {
         await api.transicionarPedido(orderId, targetState);
-        await Promise.all([fetchPedidos(), fetchInventario()]);
+        await Promise.all([fetchPedidos(), fetchInventario(), fetchFinanzas()]);
       } catch (err: unknown) {
         setPedidosError(err instanceof ApiError ? err.message : 'No se pudo cambiar el estado del pedido.');
       }
