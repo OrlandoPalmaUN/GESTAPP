@@ -34,6 +34,25 @@ import {
 
 import type { Abono, Categoria, CategoriaGasto, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor } from '@antigravity/shared';
 
+// Helper para ajustar el brillo de un color hex
+// amount positivo = más claro (hacia blanco), negativo = más oscuro
+function adjustColor(hex: string, amount: number): string {
+  const clean = hex.replace('#', '');
+  if (!/^[0-9a-fA-F]{6}$/.test(clean)) return hex;
+  const num = parseInt(clean, 16);
+  const r = Math.min(255, Math.max(0, (num >> 16) + amount));
+  const g = Math.min(255, Math.max(0, ((num >> 8) & 0xFF) + amount));
+  const b = Math.min(255, Math.max(0, (num & 0xFF) + amount));
+  return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
+}
+
+// Icono TikTok (no está en lucide-react)
+const TikTokIcon = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill="currentColor">
+    <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.32 6.32 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.69a8.18 8.18 0 004.78 1.52V6.75a4.85 4.85 0 01-1.01-.06z"/>
+  </svg>
+);
+
 // Local copy — mirrors TRANSICIONES_VALIDAS_PROVEEDOR from shared to avoid
 // importing a runtime value from a package that uses TypeScript ESM .js imports
 // (which Next.js's webpack can't resolve without extensionAlias).
@@ -290,6 +309,18 @@ export default function AppHome() {
   const [eventFormFecha, setEventFormFecha] = useState('');
   const [eventFormCanal, setEventFormCanal] = useState<'instagram' | 'facebook' | 'tiktok'>('instagram');
   const [eventFormError, setEventFormError] = useState<string | null>(null);
+
+  // --- Popup de evento de calendario ---
+  const [eventoPopup, setEventoPopup] = useState<EventoCalendario | null>(null);
+  const [eventoPopupDesc, setEventoPopupDesc] = useState('');
+  const [eventoPopupGuardando, setEventoPopupGuardando] = useState(false);
+
+  // --- Popup de nota (dashboard) ---
+  const [notaPopup, setNotaPopup] = useState<NotaInterna | null>(null);
+
+  // --- Vista de pedidos ---
+  const [pedidosVista, setPedidosVista] = useState<'lista' | 'kanban'>('lista');
+  const [pedidoExpandido, setPedidoExpandido] = useState<string | null>(null);
 
   // --- Pedidos a Proveedores (órdenes de compra) ---
   const [compras, setCompras] = useState<PedidoProveedor[]>([]);
@@ -976,8 +1007,34 @@ export default function AppHome() {
     }
   };
 
-  // Legacy: keep as alias
-  const handleToggleEventEstado = handleAvanzarEventEstado;
+  // Keep to avoid unused-var lint error (still referenced in some older paths)
+  void handleAvanzarEventEstado;
+
+  // Handler: guardar descripción en popup de evento
+  const handleGuardarEventoDesc = async () => {
+    if (!eventoPopup) return;
+    setEventoPopupGuardando(true);
+    try {
+      await api.actualizarEventoCalendario(eventoPopup.id, { descripcion: eventoPopupDesc });
+      setCalendarEvents(prev => prev.map(e => e.id === eventoPopup.id ? { ...e, descripcion: eventoPopupDesc } : e));
+    } catch (error) {
+      setComunicacionesError(error instanceof ApiError ? error.message : 'No se pudo guardar la descripción.');
+    } finally {
+      setEventoPopupGuardando(false);
+    }
+  };
+
+  // Handler: cambiar estado desde popup de evento
+  const handlePopupCambiarEstado = async (evento: EventoCalendario, siguiente: string) => {
+    try {
+      await api.actualizarEventoCalendario(evento.id, { estado: siguiente as EventoCalendario['estado'] });
+      const actualizado = { ...evento, estado: siguiente as EventoCalendario['estado'] };
+      setCalendarEvents(prev => prev.map(e => e.id === evento.id ? actualizado : e));
+      setEventoPopup(actualizado);
+    } catch (error) {
+      setComunicacionesError(error instanceof ApiError ? error.message : 'No se pudo actualizar el estado.');
+    }
+  };
 
   const handleDeleteCalendarEvent = async (id: string) => {
     setComunicacionesError(null);
@@ -2292,14 +2349,16 @@ export default function AppHome() {
                       </button>
                       <button
                         onClick={() => setShowGastoModal(true)}
-                        className="border-2 border-black bg-brand-yellow text-black font-mono font-bold text-sm py-3 px-4 flex items-center justify-center gap-2 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)]"
+                        style={{ backgroundColor: adjustColor(colorSecundarioInput, -40) }}
+                        className="border-2 border-black text-white font-mono font-bold text-sm py-3 px-4 flex items-center justify-center gap-2 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)]"
                       >
                         <FileSpreadsheet size={16} />
                         Registrar Gasto
                       </button>
                       <button
                         onClick={() => setShowTransferenciaModal(true)}
-                        className="border-2 border-black bg-brand-sage text-black font-mono font-bold text-sm py-3 px-4 flex items-center justify-center gap-2 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)]"
+                        style={{ backgroundColor: adjustColor(colorSecundarioInput, 60) }}
+                        className="border-2 border-black text-black font-mono font-bold text-sm py-3 px-4 flex items-center justify-center gap-2 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)]"
                       >
                         <TrendingUp size={16} />
                         Transferencia
@@ -2389,6 +2448,7 @@ export default function AppHome() {
                                           >
                                             {ev.tipo === 'post' && ev.canal === 'instagram' && <Instagram size={10} />}
                                             {ev.tipo === 'post' && ev.canal === 'facebook' && <Facebook size={10} />}
+                                            {ev.tipo === 'post' && ev.canal === 'tiktok' && <TikTokIcon size={10} />}
                                             <span>{ev.titulo}</span>
                                             <span className={`text-[8px] font-mono opacity-70 ${
                                               ev.estado === 'subido' ? 'text-green-700' :
@@ -2471,7 +2531,11 @@ export default function AppHome() {
                                     {nota.completada && <span className="text-white text-[8px] font-black leading-none">✓</span>}
                                   </button>
                                 )}
-                                <span className={`font-semibold text-black truncate ${nota.completada ? 'line-through opacity-50' : ''}`}>{nota.titulo}</span>
+                                <button
+                                  type="button"
+                                  onClick={() => setNotaPopup(nota)}
+                                  className={`font-semibold text-black truncate text-left hover:underline ${nota.completada ? 'line-through opacity-50' : ''}`}
+                                >{nota.titulo}</button>
                               </div>
                             ))}
                             {!notasCargando && notasInternas.length === 0 && (
@@ -2797,19 +2861,35 @@ export default function AppHome() {
                     {/* Filtros e inserción */}
                     <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-white border-2 border-black p-3">
 
-                      <select
-                        value={orderStatusFilter}
-                        onChange={(e) => setOrderStatusFilter(e.target.value)}
-                        className="neo-input text-xs font-mono py-2 w-full sm:w-60"
-                      >
-                        <option value="all">Ver Todos los Estados</option>
-                        <option value="borrador">Borrador</option>
-                        <option value="confirmado">Confirmado (Stock Reservado)</option>
-                        <option value="en_preparacion">En Preparación</option>
-                        <option value="despachado">Despachado</option>
-                        <option value="entregado">Entregado (Terminal)</option>
-                        <option value="cancelado">Cancelado (Reserva Liberada)</option>
-                      </select>
+                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                        <select
+                          value={orderStatusFilter}
+                          onChange={(e) => setOrderStatusFilter(e.target.value)}
+                          className="neo-input text-xs font-mono py-2 w-full sm:w-52"
+                        >
+                          <option value="all">Ver Todos los Estados</option>
+                          <option value="borrador">Borrador</option>
+                          <option value="confirmado">Confirmado (Stock Reservado)</option>
+                          <option value="en_preparacion">En Preparación</option>
+                          <option value="despachado">Despachado</option>
+                          <option value="entregado">Entregado (Terminal)</option>
+                          <option value="cancelado">Cancelado (Reserva Liberada)</option>
+                        </select>
+
+                        {/* Toggle Vista Lista / Kanban */}
+                        <div className="flex border-2 border-black overflow-hidden shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => setPedidosVista('lista')}
+                            className={`font-mono text-[10px] font-bold px-3 py-1.5 ${pedidosVista === 'lista' ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-50'}`}
+                          >Lista</button>
+                          <button
+                            type="button"
+                            onClick={() => setPedidosVista('kanban')}
+                            className={`font-mono text-[10px] font-bold px-3 py-1.5 border-l-2 border-black ${pedidosVista === 'kanban' ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-50'}`}
+                          >Kanban</button>
+                        </div>
+                      </div>
 
                       <button
                         onClick={() => setShowCreateOrder(true)}
@@ -2821,159 +2901,262 @@ export default function AppHome() {
 
                     </div>
 
-                    {/* Listado de Pedidos */}
-                    <div className="space-y-4">
-                      {orders
+                    {/* Vista Lista de Pedidos */}
+                    {pedidosVista === 'lista' && (() => {
+                      const estadoClases: Record<string, string> = {
+                        borrador: 'bg-neutral-100 border-neutral-300',
+                        confirmado: 'bg-blue-50 border-blue-300',
+                        en_preparacion: 'bg-yellow-50 border-yellow-300',
+                        despachado: 'bg-blue-100 border-blue-400',
+                        entregado: 'bg-green-50 border-green-300',
+                        cancelado: 'bg-red-50 border-red-300',
+                      };
+
+                      const pedidosFiltrados = orders
                         .filter(ord => orderStatusFilter === 'all' || ord.estado === orderStatusFilter)
-                        .map((ord) => {
-                          const client = customers.find(c => c.id === ord.cliente_id);
-                          
-                          // Determinar transiciones válidas según el estado actual
-                          const transitions: Record<Order['estado'], Order['estado'][]> = {
-                            borrador: ['confirmado', 'cancelado'],
-                            confirmado: ['en_preparacion', 'cancelado'],
-                            en_preparacion: ['despachado', 'cancelado'],
-                            despachado: ['entregado', 'cancelado'],
-                            entregado: [],
-                            cancelado: [],
-                          };
-                          
-                          const nextStates = transitions[ord.estado];
+                        .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
 
-                          return (
-                            <div key={ord.id} className="neo-card bg-white flex flex-col gap-4">
-                              
-                              {/* Header del pedido */}
-                              <div className="flex flex-wrap items-center justify-between border-b border-black pb-2.5 gap-2">
-                                <div className="flex items-center gap-3">
-                                  <div className="flex flex-col">
-                                    <span className="font-black text-sm text-black">{getOrderDisplayName(ord)}</span>
-                                    <span className="font-mono text-[9px] text-neutral-400">{ord.numero}</span>
-                                  </div>
-                                  <span className="text-[10px] text-neutral-500 font-mono">
-                                    {new Date(ord.fecha).toLocaleDateString('es-CO')}
-                                  </span>
-                                  <span className={`inline-block border-[1.5px] border-black text-[10px] font-mono font-bold px-2 py-0.5 ${
-                                    ord.estado === 'borrador' ? 'bg-neutral-100 text-neutral-700' :
-                                    ord.estado === 'confirmado' ? 'bg-brand-blue/20 text-brand-blue' :
-                                    ord.estado === 'en_preparacion' ? 'bg-brand-yellow/20 text-neutral-700' :
-                                    ord.estado === 'despachado' ? 'bg-brand-blue text-white' :
-                                    ord.estado === 'entregado' ? 'bg-green-100 text-green-800' :
-                                    'bg-brand-red text-white'
-                                  }`}>
-                                    {ord.estado.toUpperCase()}
-                                  </span>
-                                </div>
-                                <div className="flex items-center gap-3">
-                                  <span className="font-mono font-bold text-sm text-black">
-                                    Total: ${ord.total.toLocaleString('es-CO')} COP
-                                  </span>
-                                  <div className="flex items-center gap-1.5 shrink-0">
-                                    {(() => {
-                                      const cxc = invoices.find(i => i.tipo === 'cxc' && i.pedido_id === ord.id);
-                                      return cxc && cxc.saldo_pendiente > 0 ? (
-                                        <span className="font-mono text-[9px] font-bold text-brand-red border border-brand-red bg-red-50 px-1.5 py-0.5 shrink-0">
-                                          Debe ${cxc.saldo_pendiente.toLocaleString('es-CO')}
-                                        </span>
-                                      ) : cxc && cxc.saldo_pendiente === 0 ? (
-                                        <span className="font-mono text-[9px] font-bold text-green-700 border border-green-300 bg-green-50 px-1.5 py-0.5 shrink-0">Pagado ✓</span>
-                                      ) : null;
-                                    })()}
-                                    <button
-                                      type="button"
-                                      onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
-                                      className="neo-btn px-2.5 py-1.5 text-[10px] font-mono font-bold hover:bg-brand-blue hover:text-white"
-                                      title="Gestionar pedido"
-                                    >
-                                      Gestionar
-                                    </button>
-                                    <button type="button" onClick={() => openEditOrder(ord)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar pedido"><Pencil size={13} /></button>
-                                    <button type="button" onClick={() => void handleDeleteOrder(ord)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar pedido"><Trash2 size={13} /></button>
-                                  </div>
-                                </div>
+                      // Agrupar por fecha
+                      const porFecha = new Map<string, typeof pedidosFiltrados>();
+                      for (const ord of pedidosFiltrados) {
+                        const key = ord.fecha.slice(0, 10);
+                        const lista = porFecha.get(key) ?? [];
+                        lista.push(ord);
+                        porFecha.set(key, lista);
+                      }
+                      const fechasOrdenadas = [...porFecha.keys()].sort((a, b) => b.localeCompare(a));
+
+                      if (pedidosFiltrados.length === 0) return (
+                        <div className="neo-card bg-white text-center py-12 text-xs text-neutral-400 font-mono italic">
+                          No hay pedidos con los filtros actuales.
+                        </div>
+                      );
+
+                      const transitions: Record<Order['estado'], Order['estado'][]> = {
+                        borrador: ['confirmado', 'cancelado'],
+                        confirmado: ['en_preparacion', 'cancelado'],
+                        en_preparacion: ['despachado', 'cancelado'],
+                        despachado: ['entregado', 'cancelado'],
+                        entregado: [],
+                        cancelado: [],
+                      };
+
+                      return (
+                        <div className="flex flex-col gap-1">
+                          {fechasOrdenadas.map(fecha => (
+                            <div key={fecha}>
+                              {/* Separador de fecha */}
+                              <div className="font-mono text-[10px] font-bold text-neutral-400 uppercase tracking-widest px-2 py-1.5 border-b border-neutral-200 bg-neutral-50">
+                                {new Date(fecha + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
                               </div>
+                              {(porFecha.get(fecha) ?? []).map((ord) => {
+                                const client = customers.find(c => c.id === ord.cliente_id);
+                                const nextStates = transitions[ord.estado];
+                                const isExpanded = pedidoExpandido === ord.id;
 
-                              {/* Detalles */}
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
-                                <div>
-                                  <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">CLIENTE</div>
-                                  <div className="font-semibold text-black">{client?.nombre}</div>
-                                  {client?.nit && <div className="text-neutral-600 mt-0.5 font-mono">{client.nit}</div>}
-                                </div>
-
-                                <div>
-                                  <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">PRODUCTOS</div>
-                                  <div className="space-y-1">
-                                    {ord.items.map((item, idx) => {
-                                      const p = item.producto_id ? products.find(prod => prod.id === item.producto_id) : null;
-                                      const etiqueta = item.producto_id ? p?.nombre : (item.concepto ?? 'Cargo');
-                                      return (
-                                        <div key={idx} className="flex justify-between">
-                                          <span>{etiqueta} x{item.cantidad}</span>
-                                          <span className="font-mono text-neutral-500">${(item.precio * item.cantidad).toLocaleString('es-CO')}</span>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-
-                                <div>
-                                  <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">ENVÍO / DESPACHO</div>
-                                  <div className="font-mono text-neutral-700">
-                                    {ord.guia_despacho ? (
-                                      <div className="flex flex-col gap-1">
-                                        <div className="font-bold text-green-700">Guía de Seguimiento:</div>
-                                        <div className="bg-neutral-100 p-1 border border-black inline-block text-[10px]">
-                                          {ord.guia_despacho}
-                                        </div>
+                                return (
+                                  <div key={ord.id} className={`border ${estadoClases[ord.estado] ?? 'bg-white border-neutral-300'} mb-1`}>
+                                    {/* Row compacto */}
+                                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
+                                      <div className="flex items-center gap-2 min-w-0">
+                                        <span className="font-bold text-black truncate">{getOrderDisplayName(ord)}</span>
+                                        <span className="font-mono text-[9px] text-neutral-400 shrink-0">{ord.numero}</span>
+                                        <span className={`inline-block border border-black text-[9px] font-mono font-bold px-1.5 py-0.5 shrink-0 ${
+                                          ord.estado === 'borrador' ? 'bg-neutral-200 text-neutral-700' :
+                                          ord.estado === 'confirmado' ? 'bg-blue-200 text-blue-800' :
+                                          ord.estado === 'en_preparacion' ? 'bg-yellow-200 text-yellow-800' :
+                                          ord.estado === 'despachado' ? 'bg-blue-500 text-white' :
+                                          ord.estado === 'entregado' ? 'bg-green-200 text-green-800' :
+                                          'bg-red-200 text-red-800'
+                                        }`}>{ord.estado.toUpperCase()}</span>
                                       </div>
-                                    ) : (
-                                      <span className="italic text-neutral-400">Guía pendiente de despacho</span>
+                                      <div className="flex items-center gap-2 shrink-0">
+                                        <span className="font-mono font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
+                                        {(() => {
+                                          const cxc = invoices.find(i => i.tipo === 'cxc' && i.pedido_id === ord.id);
+                                          return cxc && cxc.saldo_pendiente > 0 ? (
+                                            <span className="font-mono text-[9px] font-bold text-brand-red border border-brand-red bg-red-50 px-1 py-0.5">Debe ${cxc.saldo_pendiente.toLocaleString('es-CO')}</span>
+                                          ) : cxc && cxc.saldo_pendiente === 0 ? (
+                                            <span className="font-mono text-[9px] font-bold text-green-700 border border-green-300 bg-green-50 px-1 py-0.5">Pagado ✓</span>
+                                          ) : null;
+                                        })()}
+                                        <button
+                                          type="button"
+                                          onClick={() => setPedidoExpandido(isExpanded ? null : ord.id)}
+                                          className="font-mono text-[9px] font-bold border border-black bg-white px-2 py-0.5 hover:bg-neutral-100"
+                                        >{isExpanded ? 'Ocultar' : 'Ver detalle'}</button>
+                                        <button
+                                          type="button"
+                                          onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
+                                          className="neo-btn px-2 py-0.5 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white"
+                                        >Gestionar</button>
+                                        <button type="button" onClick={() => openEditOrder(ord)} className="neo-btn p-1 hover:bg-neutral-100"><Pencil size={11} /></button>
+                                        <button type="button" onClick={() => void handleDeleteOrder(ord)} className="neo-btn p-1 hover:bg-red-50 hover:text-brand-red"><Trash2 size={11} /></button>
+                                      </div>
+                                    </div>
+
+                                    {/* Panel expandible de detalle */}
+                                    {isExpanded && (
+                                      <div className="border-t border-black/20 bg-white/70 px-3 py-3 flex flex-col gap-3">
+                                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
+                                          <div>
+                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">CLIENTE</div>
+                                            <div className="font-semibold text-black">{client?.nombre ?? '—'}</div>
+                                            {client?.nit && <div className="text-neutral-600 mt-0.5 font-mono">{client.nit}</div>}
+                                          </div>
+                                          <div>
+                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">PRODUCTOS</div>
+                                            <div className="space-y-1">
+                                              {ord.items.map((item, idx) => {
+                                                const p = item.producto_id ? products.find(prod => prod.id === item.producto_id) : null;
+                                                const etiqueta = item.producto_id ? p?.nombre : (item.concepto ?? 'Cargo');
+                                                return (
+                                                  <div key={idx} className="flex justify-between">
+                                                    <span>{etiqueta} x{item.cantidad}</span>
+                                                    <span className="font-mono text-neutral-500">${(item.precio * item.cantidad).toLocaleString('es-CO')}</span>
+                                                  </div>
+                                                );
+                                              })}
+                                            </div>
+                                          </div>
+                                          <div>
+                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">ENVÍO / DESPACHO</div>
+                                            <div className="font-mono text-neutral-700 text-xs">
+                                              {ord.guia_despacho ? (
+                                                <div className="flex flex-col gap-1">
+                                                  <div className="font-bold text-green-700">Guía de Seguimiento:</div>
+                                                  <div className="bg-neutral-100 p-1 border border-black inline-block text-[10px]">{ord.guia_despacho}</div>
+                                                </div>
+                                              ) : (
+                                                <span className="italic text-neutral-400">Guía pendiente de despacho</span>
+                                              )}
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Acciones de Transición de Estados */}
+                                        {nextStates.length > 0 && (
+                                          <div className="border-t border-dashed border-neutral-300 pt-3 flex items-center justify-between flex-wrap gap-2">
+                                            <div className="text-[10px] font-mono text-neutral-500">
+                                              {ord.estado === 'borrador' && '⚠️ Confirmar reservará el inventario'}
+                                              {ord.estado === 'confirmado' && '✓ El inventario está reservado temporalmente'}
+                                              {ord.estado === 'en_preparacion' && '⚙ Preparando pedido para despacho'}
+                                              {ord.estado === 'despachado' && '🚚 Pedido en ruta al cliente'}
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                              {nextStates.map((next) => (
+                                                <button
+                                                  key={next}
+                                                  onClick={() => handleTransitionOrder(ord.id, next)}
+                                                  className={`font-mono text-[10px] font-bold px-3 py-1.5 border-2 border-black shadow-sm active:translate-y-0.5 active:shadow-none transition-all ${
+                                                    next === 'cancelado' ? 'bg-white text-brand-red hover:bg-neutral-50' :
+                                                    next === 'confirmado' ? 'bg-brand-blue text-white hover:opacity-95' :
+                                                    next === 'despachado' ? 'bg-brand-yellow text-black' :
+                                                    'bg-brand-blue text-white'
+                                                  }`}
+                                                >
+                                                  {next === 'confirmado' && 'CONFIRMAR PEDIDO'}
+                                                  {next === 'en_preparacion' && 'PREPARAR PEDIDO'}
+                                                  {next === 'despachado' && 'DESPACHAR / ASIGNAR GUÍA'}
+                                                  {next === 'entregado' && 'MARCAR COMO ENTREGADO'}
+                                                  {next === 'cancelado' && 'CANCELAR PEDIDO'}
+                                                </button>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )}
+                                      </div>
                                     )}
                                   </div>
+                                );
+                              })}
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Vista Kanban de Pedidos */}
+                    {pedidosVista === 'kanban' && (() => {
+                      const estadosKanban: Order['estado'][] = ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'];
+                      const semanaAtras = new Date();
+                      semanaAtras.setDate(semanaAtras.getDate() - 7);
+
+                      const transitions: Record<Order['estado'], Order['estado'][]> = {
+                        borrador: ['confirmado', 'cancelado'],
+                        confirmado: ['en_preparacion', 'cancelado'],
+                        en_preparacion: ['despachado', 'cancelado'],
+                        despachado: ['entregado', 'cancelado'],
+                        entregado: [],
+                        cancelado: [],
+                      };
+
+                      const pedidosSemana = orders.filter(ord => new Date(ord.fecha) >= semanaAtras);
+                      const estadoColores: Record<string, string> = {
+                        borrador: 'bg-neutral-100 border-neutral-400',
+                        confirmado: 'bg-blue-50 border-blue-400',
+                        en_preparacion: 'bg-yellow-50 border-yellow-400',
+                        despachado: 'bg-blue-100 border-blue-500',
+                        entregado: 'bg-green-50 border-green-400',
+                        cancelado: 'bg-red-50 border-red-400',
+                      };
+
+                      return (
+                        <div className="flex overflow-x-auto gap-3 pb-4">
+                          {estadosKanban.map(estado => {
+                            const columna = pedidosSemana.filter(ord =>
+                              ord.estado === estado &&
+                              (orderStatusFilter === 'all' || ord.estado === orderStatusFilter)
+                            );
+                            return (
+                              <div key={estado} className={`w-56 shrink-0 border-2 ${estadoColores[estado] ?? 'bg-white border-black'} flex flex-col`}>
+                                <div className="px-3 py-2 border-b-2 border-black bg-white/80">
+                                  <div className="font-mono text-[10px] font-bold uppercase">{estado.replace('_', ' ')}</div>
+                                  <div className="font-mono text-xs text-neutral-500">{columna.length} pedido{columna.length !== 1 ? 's' : ''}</div>
+                                </div>
+                                <div className="flex flex-col gap-2 p-2 flex-1 overflow-y-auto max-h-96">
+                                  {columna.length === 0 && (
+                                    <p className="text-[10px] text-neutral-400 font-mono italic text-center py-4">Vacío</p>
+                                  )}
+                                  {columna.map(ord => {
+                                    const client = customers.find(c => c.id === ord.cliente_id);
+                                    const nextStates = transitions[ord.estado];
+                                    const prevEstados: Order['estado'][] = estadosKanban.filter((e, i) => i < estadosKanban.indexOf(estado) && transitions[e].includes(estado));
+                                    return (
+                                      <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[10px]">
+                                        <div className="font-bold text-black leading-tight">{client?.nombre ?? 'Sin cliente'}</div>
+                                        <div className="font-mono text-neutral-400">{ord.numero}</div>
+                                        <div className="font-mono font-bold">${ord.total.toLocaleString('es-CO')}</div>
+                                        {/* Flechas de transición */}
+                                        <div className="flex gap-1 flex-wrap mt-1">
+                                          {prevEstados.length > 0 && (
+                                            <button
+                                              type="button"
+                                              onClick={() => handleTransitionOrder(ord.id, prevEstados[prevEstados.length - 1]!)}
+                                              className="border border-black bg-white hover:bg-neutral-100 px-1.5 py-0.5 font-mono font-bold"
+                                              title="Estado anterior"
+                                            >‹ Atrás</button>
+                                          )}
+                                          {nextStates.filter(n => n !== 'cancelado').map(next => (
+                                            <button
+                                              key={next}
+                                              type="button"
+                                              onClick={() => handleTransitionOrder(ord.id, next)}
+                                              className="border border-black bg-brand-blue text-white hover:opacity-90 px-1.5 py-0.5 font-mono font-bold"
+                                              title={`Mover a ${next}`}
+                                            >Adelante ›</button>
+                                          ))}
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               </div>
-
-                              {/* Acciones de Transición de Estados */}
-                              {nextStates.length > 0 && (
-                                <div className="border-t border-dashed border-neutral-300 pt-3 flex items-center justify-between flex-wrap gap-2.5">
-                                  <div className="text-[10px] font-mono text-neutral-500">
-                                    {ord.estado === 'borrador' && '⚠️ Confirmar reservará el inventario'}
-                                    {ord.estado === 'confirmado' && '✓ El inventario está reservado temporalmente'}
-                                    {ord.estado === 'en_preparacion' && '⚙ Preparando pedido para despacho'}
-                                    {ord.estado === 'despachado' && '🚚 Pedido en ruta al cliente'}
-                                  </div>
-
-                                  <div className="flex items-center gap-2">
-                                    {nextStates.map((next) => (
-                                      <button
-                                        key={next}
-                                        onClick={() => handleTransitionOrder(ord.id, next)}
-                                        className={`font-mono text-[10px] font-bold px-3 py-1.5 border-2 border-black shadow-sm active:translate-y-0.5 active:shadow-none transition-all ${
-                                          next === 'cancelado' 
-                                            ? 'bg-white text-brand-red hover:bg-neutral-50' 
-                                            : next === 'confirmado'
-                                              ? 'bg-brand-blue text-white hover:opacity-95'
-                                              : next === 'despachado'
-                                                ? 'bg-brand-yellow text-black'
-                                                : 'bg-brand-blue text-white'
-                                        }`}
-                                      >
-                                        {next === 'confirmado' && 'CONFIRMAR PEDIDO'}
-                                        {next === 'en_preparacion' && 'PREPARAR PEDIDO'}
-                                        {next === 'despachado' && 'DESPACHAR / ASIGNAR GUÍA'}
-                                        {next === 'entregado' && 'MARCAR COMO ENTREGADO'}
-                                        {next === 'cancelado' && 'CANCELAR PEDIDO'}
-                                      </button>
-                                    ))}
-                                  </div>
-                                </div>
-                              )}
-
-                            </div>
-                          );
-                        })}
-                    </div>
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
 
                   </div>
                 )}
@@ -3917,8 +4100,8 @@ export default function AppHome() {
                                       <button
                                         key={evento.id}
                                         type="button"
-                                        onClick={() => void handleToggleEventEstado(evento)}
-                                        title="Click para cambiar estado · clic derecho/eliminar abajo"
+                                        onClick={() => { setEventoPopup(evento); setEventoPopupDesc(evento.descripcion ?? ''); }}
+                                        title="Click para ver detalle y cambiar estado"
                                         className={`text-left text-[9px] font-mono font-bold px-1.5 py-1 border-[1.5px] border-black truncate flex items-center gap-1 ${
                                           evento.tipo === 'nota' ? 'bg-brand-yellow/30' :
                                           evento.tipo === 'recordatorio' ? 'bg-brand-blue/20' :
@@ -3927,6 +4110,7 @@ export default function AppHome() {
                                       >
                                         {evento.tipo === 'post' && evento.canal === 'instagram' && <Instagram size={10} />}
                                         {evento.tipo === 'post' && evento.canal === 'facebook' && <Facebook size={10} />}
+                                        {evento.tipo === 'post' && evento.canal === 'tiktok' && <TikTokIcon size={10} />}
                                         <span className="truncate">{evento.titulo}</span>
                                       </button>
                                     ))}
@@ -3961,6 +4145,7 @@ export default function AppHome() {
                                     <span className="text-neutral-500 shrink-0">
                                       {evento.canal === 'instagram' && <Instagram size={12} />}
                                       {evento.canal === 'facebook' && <Facebook size={12} />}
+                                      {evento.canal === 'tiktok' && <TikTokIcon size={12} />}
                                     </span>
                                   )}
                                 </div>
@@ -4338,7 +4523,7 @@ export default function AppHome() {
                               <div className="flex items-center gap-2 border-b border-black pb-2">
                                 {s.canal === 'instagram' && <Instagram size={18} />}
                                 {s.canal === 'facebook' && <Facebook size={18} />}
-                                {s.canal === 'tiktok' && <MessageCircle size={18} />}
+                                {s.canal === 'tiktok' && <TikTokIcon size={18} />}
                                 <span className="font-mono font-bold text-sm capitalize">{s.canal}</span>
                                 <span className="text-[10px] text-neutral-500 font-mono ml-auto">{s.handle}</span>
                               </div>
@@ -4373,7 +4558,7 @@ export default function AppHome() {
                               <div className="flex items-center gap-2 min-w-0">
                                 {post.canal === 'instagram' && <Instagram size={14} className="shrink-0" />}
                                 {post.canal === 'facebook' && <Facebook size={14} className="shrink-0" />}
-                                {post.canal === 'tiktok' && <MessageCircle size={14} className="shrink-0" />}
+                                {post.canal === 'tiktok' && <TikTokIcon size={14} />}
                                 <span className="font-mono text-neutral-500 text-[10px] shrink-0">{new Date(post.fecha).toLocaleDateString('es-CO')}</span>
                                 <span className="text-black truncate">{post.extracto}</span>
                               </div>
@@ -4385,6 +4570,71 @@ export default function AppHome() {
                             </div>
                           ))}
                         </div>
+
+                        {/* Planner de Contenido — Semana (Kanban de posts) */}
+                        {(() => {
+                          const estadosPost = ['idea', 'grabado', 'editado', 'subido'] as const;
+                          const semanaAtras = new Date();
+                          semanaAtras.setDate(semanaAtras.getDate() - 7);
+                          const hoy = new Date();
+                          const postsSemana = calendarEvents.filter(ev =>
+                            ev.tipo === 'post' &&
+                            new Date(ev.fecha) >= semanaAtras &&
+                            new Date(ev.fecha) <= hoy
+                          );
+                          const estadoColores: Record<string, string> = {
+                            idea: 'bg-neutral-100 border-neutral-400',
+                            grabado: 'bg-orange-50 border-orange-400',
+                            editado: 'bg-yellow-50 border-yellow-400',
+                            subido: 'bg-green-50 border-green-400',
+                          };
+                          return (
+                            <div className="bg-white border-2 border-black p-3 flex flex-col gap-3">
+                              <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Planner de Contenido — Semana</h3>
+                              <div className="flex overflow-x-auto gap-3 pb-2">
+                                {estadosPost.map(estado => {
+                                  const columna = postsSemana.filter(ev => ev.estado === estado);
+                                  const siguiente = TRANSICIONES_EVENTO_LOCAL[estado] ?? null;
+                                  const anterior = ESTADO_ANTERIOR_LOCAL[estado] ?? null;
+                                  return (
+                                    <div key={estado} className={`w-44 shrink-0 border-2 ${estadoColores[estado] ?? 'bg-white border-black'} flex flex-col`}>
+                                      <div className="px-2 py-1.5 border-b border-black bg-white/70">
+                                        <div className="font-mono text-[10px] font-bold uppercase">{estado}</div>
+                                        <div className="font-mono text-[10px] text-neutral-500">{columna.length} posts</div>
+                                      </div>
+                                      <div className="flex flex-col gap-1.5 p-1.5 max-h-60 overflow-y-auto">
+                                        {columna.length === 0 && (
+                                          <p className="text-[9px] text-neutral-400 font-mono italic text-center py-3">Vacío</p>
+                                        )}
+                                        {columna.map(ev => (
+                                          <div key={ev.id} className="bg-white border border-black p-1.5 flex flex-col gap-1 text-[9px]">
+                                            <div className="flex items-center gap-1">
+                                              {ev.canal === 'instagram' && <Instagram size={10} />}
+                                              {ev.canal === 'facebook' && <Facebook size={10} />}
+                                              {ev.canal === 'tiktok' && <TikTokIcon size={10} />}
+                                              <span className="font-bold text-black truncate leading-tight">{ev.titulo}</span>
+                                            </div>
+                                            <div className="font-mono text-neutral-400">{new Date(ev.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}</div>
+                                            <div className="flex gap-1">
+                                              {anterior && (
+                                                <button type="button" onClick={() => void handlePopupCambiarEstado(ev, anterior)}
+                                                  className="border border-black bg-white hover:bg-neutral-100 px-1 py-0.5 font-mono font-bold flex-1">‹</button>
+                                              )}
+                                              {siguiente && (
+                                                <button type="button" onClick={() => void handlePopupCambiarEstado(ev, siguiente)}
+                                                  className="border border-black bg-brand-blue text-white hover:opacity-90 px-1 py-0.5 font-mono font-bold flex-1">›</button>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -6587,6 +6837,115 @@ export default function AppHome() {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── POPUP: Evento de calendario ── */}
+      {eventoPopup && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4" onClick={() => setEventoPopup(null)}>
+          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col gap-0 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
+            {/* Header */}
+            <div className={`flex items-center justify-between px-4 py-3 border-b-2 border-black ${
+              eventoPopup.tipo === 'nota' ? 'bg-brand-yellow/30' :
+              eventoPopup.tipo === 'recordatorio' ? 'bg-brand-blue/20' : 'bg-brand-red/15'
+            }`}>
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[9px] font-bold border border-black px-1.5 py-0.5 bg-white">{eventoPopup.tipo.toUpperCase()}</span>
+                {eventoPopup.canal === 'instagram' && <Instagram size={14} />}
+                {eventoPopup.canal === 'facebook' && <Facebook size={14} />}
+                {eventoPopup.canal === 'tiktok' && <TikTokIcon size={14} />}
+                <span className="font-mono text-xs text-neutral-500">{new Date(eventoPopup.fecha).toLocaleDateString('es-CO')}</span>
+              </div>
+              <button type="button" onClick={() => setEventoPopup(null)} className="text-neutral-500 hover:text-black text-lg leading-none font-bold">×</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-4">
+              {/* Título */}
+              <h3 className="font-black text-base text-black">{eventoPopup.titulo}</h3>
+              {/* Estado */}
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-[9px] text-neutral-500 uppercase">Estado:</span>
+                {ESTADO_ANTERIOR_LOCAL[eventoPopup.estado] !== null && (
+                  <button type="button" onClick={() => {
+                    const ant = ESTADO_ANTERIOR_LOCAL[eventoPopup.estado];
+                    if (ant) void handlePopupCambiarEstado(eventoPopup, ant);
+                  }} className="text-neutral-400 hover:text-black font-bold">‹</button>
+                )}
+                <span className={`font-mono text-[9px] font-bold border-[1.5px] border-black px-2 py-1 ${
+                  eventoPopup.estado === 'idea' ? 'bg-neutral-100 text-neutral-600' :
+                  eventoPopup.estado === 'grabado' ? 'bg-orange-100 text-orange-700' :
+                  eventoPopup.estado === 'editado' ? 'bg-brand-yellow/30 text-neutral-700' :
+                  eventoPopup.estado === 'subido' || eventoPopup.estado === 'hecho' ? 'bg-green-100 text-green-700' :
+                  'bg-white text-neutral-600'
+                }`}>{eventoPopup.estado.toUpperCase()}</span>
+                {TRANSICIONES_EVENTO_LOCAL[eventoPopup.estado] !== null && (
+                  <button type="button" onClick={() => {
+                    const sig = TRANSICIONES_EVENTO_LOCAL[eventoPopup.estado];
+                    if (sig) void handlePopupCambiarEstado(eventoPopup, sig);
+                  }} className="text-neutral-400 hover:text-black font-bold">›</button>
+                )}
+              </div>
+              {/* Notas / Descripción */}
+              <div className="flex flex-col gap-1.5">
+                <label className="font-mono text-[9px] font-bold text-neutral-500 uppercase">Notas</label>
+                <textarea
+                  rows={4}
+                  value={eventoPopupDesc}
+                  onChange={e => setEventoPopupDesc(e.target.value)}
+                  placeholder="Agrega notas, ideas, detalles..."
+                  className="neo-input text-xs resize-none font-mono"
+                />
+                <button
+                  type="button"
+                  onClick={() => void handleGuardarEventoDesc()}
+                  disabled={eventoPopupGuardando}
+                  className="neo-btn-primary text-[11px] py-1.5 self-end px-4"
+                >
+                  {eventoPopupGuardando ? 'Guardando...' : 'Guardar notas'}
+                </button>
+              </div>
+            </div>
+            {/* Footer */}
+            <div className="border-t-2 border-black px-4 py-2.5 flex justify-between items-center bg-neutral-50">
+              <button type="button" onClick={() => { void handleDeleteCalendarEvent(eventoPopup.id); setEventoPopup(null); }}
+                className="text-xs font-mono text-brand-red hover:underline flex items-center gap-1">
+                <Trash2 size={12} /> Eliminar
+              </button>
+              <button type="button" onClick={() => setEventoPopup(null)} className="neo-btn text-xs px-3 py-1">Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── POPUP: Nota interna (desde dashboard) ── */}
+      {notaPopup && (
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-4" onClick={() => setNotaPopup(null)}>
+          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-4 py-3 border-b-2 border-black bg-brand-yellow/20">
+              <div className="flex items-center gap-2">
+                <StickyNote size={14} />
+                <span className="font-mono text-xs font-bold">NOTA</span>
+              </div>
+              <button type="button" onClick={() => setNotaPopup(null)} className="text-neutral-500 hover:text-black text-lg font-bold leading-none">×</button>
+            </div>
+            <div className="px-4 py-4 flex flex-col gap-3">
+              <div className="flex items-center gap-2">
+                {notaPopup.tieneCheckbox && (
+                  <button type="button" onClick={() => { void handleToggleNotaCompletada(notaPopup); setNotaPopup({ ...notaPopup, completada: !notaPopup.completada }); }}
+                    className={`shrink-0 w-4 h-4 border-2 border-black flex items-center justify-center ${notaPopup.completada ? 'bg-black' : 'bg-white'}`}>
+                    {notaPopup.completada && <span className="text-white text-[9px] font-black leading-none">✓</span>}
+                  </button>
+                )}
+                <h3 className={`font-black text-base ${notaPopup.completada ? 'line-through opacity-50' : ''}`}>{notaPopup.titulo}</h3>
+              </div>
+              {notaPopup.contenido && (
+                <p className="text-sm text-neutral-700 font-mono whitespace-pre-wrap leading-relaxed border-l-4 border-brand-yellow pl-3">{notaPopup.contenido}</p>
+              )}
+              <p className="font-mono text-[9px] text-neutral-400">{new Date(notaPopup.createdAt).toLocaleDateString('es-CO')}</p>
+            </div>
+            <div className="border-t-2 border-black px-4 py-2.5 flex justify-end bg-neutral-50">
+              <button type="button" onClick={() => setNotaPopup(null)} className="neo-btn text-xs px-3 py-1">Cerrar</button>
             </div>
           </div>
         </div>
