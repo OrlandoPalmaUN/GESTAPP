@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
   Boxes,
@@ -500,7 +501,15 @@ export default function AppHome() {
   // El usuario logueado define el tenant (resuelto por sesión en el
   // middleware tenant-resolver — ver apps/api). El superadmin no tiene
   // tenantId y por lo tanto no opera sobre datos de negocio (Inventario).
-  const { usuario, tenant, logout, actualizarPerfil } = useAuth();
+  const { usuario, tenant, cargando, logout, actualizarPerfil } = useAuth();
+  const router = useRouter();
+
+  // Auth guard: redirect to /login if not authenticated
+  useEffect(() => {
+    if (!cargando && !usuario) {
+      router.replace('/login');
+    }
+  }, [cargando, usuario, router]);
 
   // Personalización de UI: el color secundario de marca (`brand-blue`) es
   // editable por cada usuario y vive en `usuario.colorSecundario` (BD). Lo
