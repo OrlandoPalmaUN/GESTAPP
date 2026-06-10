@@ -3161,33 +3161,25 @@ export default function AppHome() {
                                   )}
                                   {columna.map(ord => {
                                     const client = customers.find(c => c.id === ord.cliente_id);
-                                    const nextStates = transitions[ord.estado];
-                                    const prevEstados: Order['estado'][] = estadosKanban.filter((e, i) => i < estadosKanban.indexOf(estado) && transitions[e].includes(estado));
+                                    const nextStates = transitions[ord.estado].filter(n => n !== 'cancelado');
                                     return (
                                       <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[10px]">
                                         <div className="font-bold text-black leading-tight">{client?.nombre ?? 'Sin cliente'}</div>
                                         <div className="font-mono text-neutral-400">{ord.numero}</div>
                                         <div className="font-mono font-bold">${ord.total.toLocaleString('es-CO')}</div>
-                                        {/* Flechas de transición */}
-                                        <div className="flex gap-1 flex-wrap mt-1">
-                                          {prevEstados.length > 0 && (
-                                            <button
-                                              type="button"
-                                              onClick={() => handleTransitionOrder(ord.id, prevEstados[prevEstados.length - 1]!)}
-                                              className="border border-black bg-white hover:bg-neutral-100 px-1.5 py-0.5 font-mono font-bold"
-                                              title="Estado anterior"
-                                            >‹ Atrás</button>
-                                          )}
-                                          {nextStates.filter(n => n !== 'cancelado').map(next => (
-                                            <button
-                                              key={next}
-                                              type="button"
-                                              onClick={() => handleTransitionOrder(ord.id, next)}
-                                              className="border border-black bg-brand-blue text-white hover:opacity-90 px-1.5 py-0.5 font-mono font-bold"
-                                              title={`Mover a ${next}`}
-                                            >Adelante ›</button>
-                                          ))}
-                                        </div>
+                                        {nextStates.length > 0 && (
+                                          <div className="flex gap-1 flex-wrap mt-1">
+                                            {nextStates.map(next => (
+                                              <button
+                                                key={next}
+                                                type="button"
+                                                onClick={() => handleTransitionOrder(ord.id, next)}
+                                                className="border border-black bg-brand-blue text-white hover:opacity-90 px-1.5 py-0.5 font-mono font-bold flex-1 text-center"
+                                                title={`Mover a ${next}`}
+                                              >Adelante ›</button>
+                                            ))}
+                                          </div>
+                                        )}
                                       </div>
                                     );
                                   })}
