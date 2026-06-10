@@ -321,6 +321,7 @@ export default function AppHome() {
   // --- Vista de pedidos ---
   const [pedidosVista, setPedidosVista] = useState<'lista' | 'kanban'>('lista');
   const [pedidoExpandido, setPedidoExpandido] = useState<string | null>(null);
+  const [pedidosOrden, setPedidosOrden] = useState<'fecha_desc' | 'fecha_asc' | 'total_desc' | 'total_asc' | 'estado' | 'cliente'>('fecha_desc');
 
   // --- Pedidos a Proveedores (órdenes de compra) ---
   const [compras, setCompras] = useState<PedidoProveedor[]>([]);
@@ -2876,6 +2877,20 @@ export default function AppHome() {
                           <option value="cancelado">Cancelado (Reserva Liberada)</option>
                         </select>
 
+                        {/* Ordenar */}
+                        <select
+                          value={pedidosOrden}
+                          onChange={(e) => setPedidosOrden(e.target.value as typeof pedidosOrden)}
+                          className="neo-input text-xs font-mono py-2 w-full sm:w-44"
+                        >
+                          <option value="fecha_desc">↓ Más reciente</option>
+                          <option value="fecha_asc">↑ Más antiguo</option>
+                          <option value="total_desc">↓ Mayor total</option>
+                          <option value="total_asc">↑ Menor total</option>
+                          <option value="estado">Por estado</option>
+                          <option value="cliente">Cliente A→Z</option>
+                        </select>
+
                         {/* Toggle Vista Lista / Kanban */}
                         <div className="flex border-2 border-black overflow-hidden shrink-0">
                           <button
@@ -2912,19 +2927,43 @@ export default function AppHome() {
                         cancelado: 'bg-red-50 border-red-300',
                       };
 
+                      const estadoOrdenFlujo: Record<string, number> = {
+                        borrador: 0, confirmado: 1, en_preparacion: 2, despachado: 3, entregado: 4, cancelado: 5,
+                      };
                       const pedidosFiltrados = orders
                         .filter(ord => orderStatusFilter === 'all' || ord.estado === orderStatusFilter)
-                        .sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+                        .sort((a, b) => {
+                          switch (pedidosOrden) {
+                            case 'fecha_asc': return new Date(a.fecha).getTime() - new Date(b.fecha).getTime();
+                            case 'total_desc': return b.total - a.total;
+                            case 'total_asc': return a.total - b.total;
+                            case 'estado': return (estadoOrdenFlujo[a.estado] ?? 9) - (estadoOrdenFlujo[b.estado] ?? 9);
+                            case 'cliente': {
+                              const ca = customers.find(c => c.id === a.cliente_id)?.nombre ?? '';
+                              const cb = customers.find(c => c.id === b.cliente_id)?.nombre ?? '';
+                              return ca.localeCompare(cb, 'es');
+                            }
+                            default: return new Date(b.fecha).getTime() - new Date(a.fecha).getTime(); // fecha_desc
+                          }
+                        });
 
-                      // Agrupar por fecha
+                      // Agrupar por fecha solo cuando el orden es cronológico
+                      const agruparPorFecha = pedidosOrden === 'fecha_desc' || pedidosOrden === 'fecha_asc';
                       const porFecha = new Map<string, typeof pedidosFiltrados>();
-                      for (const ord of pedidosFiltrados) {
-                        const key = ord.fecha.slice(0, 10);
-                        const lista = porFecha.get(key) ?? [];
-                        lista.push(ord);
-                        porFecha.set(key, lista);
+                      if (agruparPorFecha) {
+                        for (const ord of pedidosFiltrados) {
+                          const key = ord.fecha.slice(0, 10);
+                          const lista = porFecha.get(key) ?? [];
+                          lista.push(ord);
+                          porFecha.set(key, lista);
+                        }
                       }
-                      const fechasOrdenadas = [...porFecha.keys()].sort((a, b) => b.localeCompare(a));
+                      const fechasOrdenadas = agruparPorFecha
+                        ? [...porFecha.keys()].sort((a, b) => pedidosOrden === 'fecha_asc' ? a.localeCompare(b) : b.localeCompare(a))
+                        : [];
+                      // Cuando no agrupamos por fecha usamos un único bucket virtual
+                      const gruposFinal = agruparPorFecha ? porFecha : new Map([['__all__', pedidosFiltrados]]);
+                      const llavesFinal = agruparPorFecha ? fechasOrdenadas : ['__all__'];
 
                       if (pedidosFiltrados.length === 0) return (
                         <div className="neo-card bg-white text-center py-12 text-xs text-neutral-400 font-mono italic">
@@ -2943,13 +2982,15 @@ export default function AppHome() {
 
                       return (
                         <div className="flex flex-col gap-1">
-                          {fechasOrdenadas.map(fecha => (
-                            <div key={fecha}>
-                              {/* Separador de fecha */}
-                              <div className="font-mono text-[10px] font-bold text-neutral-400 uppercase tracking-widest px-2 py-1.5 border-b border-neutral-200 bg-neutral-50">
-                                {new Date(fecha + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
-                              </div>
-                              {(porFecha.get(fecha) ?? []).map((ord) => {
+                          {llavesFinal.map(llave => (
+                            <div key={llave}>
+                              {/* Separador de fecha (solo en modo cronológico) */}
+                              {agruparPorFecha && (
+                                <div className="font-mono text-[10px] font-bold text-neutral-400 uppercase tracking-widest px-2 py-1.5 border-b border-neutral-200 bg-neutral-50">
+                                  {new Date(llave + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+                                </div>
+                              )}
+                              {(gruposFinal.get(llave) ?? []).map((ord) => {
                                 const client = customers.find(c => c.id === ord.cliente_id);
                                 const nextStates = transitions[ord.estado];
                                 const isExpanded = pedidoExpandido === ord.id;
