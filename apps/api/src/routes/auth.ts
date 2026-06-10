@@ -59,11 +59,12 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
     }
     const token = await reply.jwtSign(payload, { expiresIn: `${SESION_COOKIE.maxAgeSeconds}s` })
 
+    const isProduction = fastify.config.NODE_ENV === 'production'
     reply.setCookie(SESION_COOKIE.name, token, {
       path: '/',
       httpOnly: true,
-      sameSite: 'lax',
-      secure: fastify.config.NODE_ENV === 'production',
+      sameSite: isProduction ? 'none' : 'lax',
+      secure: isProduction,
       maxAge: SESION_COOKIE.maxAgeSeconds,
     })
 
