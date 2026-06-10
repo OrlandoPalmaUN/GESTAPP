@@ -68,19 +68,14 @@ export const ESTADOS_PEDIDO = [
 export type EstadoPedido = (typeof ESTADOS_PEDIDO)[number]
 
 /**
- * Transiciones válidas por estado — lista vacía significa estado terminal.
- * Esta es la regla de negocio que tanto la API (al cambiar el estado de un
- * pedido) como el frontend (al decidir qué acciones mostrar) deben respetar,
- * de ahí que viva en `shared` y no duplicada en cada lado.
+ * Transiciones válidas por estado — cualquier estado puede pasar a cualquier
+ * otro. Los movimientos de inventario solo se generan para las transiciones
+ * definidas en MOVIMIENTOS_POR_TRANSICION; las demás cambian el estado sin
+ * efecto en stock (útil para correcciones manuales).
  */
-export const TRANSICIONES_VALIDAS: Record<EstadoPedido, EstadoPedido[]> = {
-  borrador: ['confirmado', 'cancelado'],
-  confirmado: ['en_preparacion', 'cancelado'],
-  en_preparacion: ['despachado', 'cancelado'],
-  despachado: ['entregado', 'cancelado'],
-  entregado: [],
-  cancelado: [],
-}
+export const TRANSICIONES_VALIDAS: Record<EstadoPedido, EstadoPedido[]> = Object.fromEntries(
+  ESTADOS_PEDIDO.map((estado) => [estado, ESTADOS_PEDIDO.filter((e) => e !== estado)]),
+) as Record<EstadoPedido, EstadoPedido[]>
 
 /** Cliente del tenant — vive en su schema (tabla `clientes`). */
 export interface Cliente {

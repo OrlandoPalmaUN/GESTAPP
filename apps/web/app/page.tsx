@@ -302,6 +302,7 @@ export default function AppHome() {
   const [calendarMonthCursor, setCalendarMonthCursor] = useState<Date>(() => new Date());
   // Vista de "próximos 7 días" del dashboard — offset en días desde hoy (las flechas mueven la ventana de a 7).
   const [dashboardWeekOffset, setDashboardWeekOffset] = useState(0);
+  const [dashboardSlide, setDashboardSlide] = useState(0);
   const [showCreateEvent, setShowCreateEvent] = useState(false);
   const [eventFormTipo, setEventFormTipo] = useState<'nota' | 'recordatorio' | 'post'>('nota');
   const [eventFormTitulo, setEventFormTitulo] = useState('');
@@ -1179,6 +1180,13 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
 
   useEffect(() => { void fetchNotasInternas(); }, [fetchNotasInternas]);
+
+  // Auto-avance del slider del dashboard cada 10 segundos
+  useEffect(() => {
+    if (activeTab !== 'dashboard') return;
+    const timer = setInterval(() => setDashboardSlide((s) => (s + 1) % 3), 10000);
+    return () => clearInterval(timer);
+  }, [activeTab]);
 
   // Serializa los items de checklist a JSON para guardar en `contenido`
   const serializarChecklist = (items: { id: string; texto: string; checked: boolean; orden: number }[]) =>
@@ -2475,78 +2483,160 @@ export default function AppHome() {
                         </button>
                       </div>
 
-                      {/* Panel derecho: Alertas reales + Top 10 Notas */}
-                      <div className="flex flex-col gap-4">
+                      {/* Panel derecho: Slider automático — Alertas / Pedidos por entregar / CxC */}
+                      {(() => {
+                        const slideLabels = ['ALERTAS', 'POR ENTREGAR', 'CUENTAS × COBRAR'];
+                        const pedidosPorEntregar = orders.filter((o) =>
+                          ['confirmado', 'en_preparacion', 'despachado'].includes(o.estado)
+                        );
+                        const cxcPendientes = invoices
+                          .filter((i) => i.tipo === 'cxc' && i.saldo_pendiente > 0)
+                          .sort((a, b) => b.saldo_pendiente - a.saldo_pendiente);
+                        const estadoColorPedido: Record<string, string> = {
+                          confirmado: 'bg-blue-100 text-blue-800',
+                          en_preparacion: 'bg-yellow-100 text-yellow-800',
+                          despachado: 'bg-brand-blue/20 text-brand-blue',
+                        };
 
-                        {/* Alertas reales del sistema */}
-                        <div className="neo-card bg-white flex flex-col gap-3">
-                          <h3 className="font-mono text-sm font-bold border-b border-black pb-2">ALERTAS</h3>
-                          <div className="flex flex-col gap-2 max-h-44 overflow-y-auto pr-1">
-                            {criticalProducts.length === 0 && facturasVencidas.length === 0 && (
-                              <p className="text-xs text-neutral-400 italic font-mono py-1">Sin alertas activas — todo en orden.</p>
-                            )}
-                            {criticalProducts.map((p) => {
-                              const stock = productStocks[p.id] ?? 0;
-                              return (
-                                <div key={p.id} className="border border-black p-2 bg-brand-red/10 flex gap-2 text-xs">
-                                  <AlertTriangle size={14} className="text-brand-red shrink-0 mt-0.5" />
-                                  <div>
-                                    <span className="font-bold text-black">Stock crítico: </span>
-                                    {p.nombre} ({stock} uds, mínimo {p.stock_minimo})
-                                  </div>
-                                </div>
-                              );
-                            })}
-                            {facturasVencidas.map((inv) => {
-                              const cliente = customers.find((c) => c.id === inv.cliente_id);
-                              const diasVencida = Math.floor((Date.now() - new Date(inv.fecha_vencimiento).getTime()) / 86400000);
-                              return (
-                                <div key={inv.id} className="border border-black p-2 bg-brand-yellow/10 flex gap-2 text-xs">
-                                  <ClockAlert size={14} className="text-brand-yellow shrink-0 mt-0.5" />
-                                  <div>
-                                    <span className="font-bold text-black">Factura vencida: </span>
-                                    {inv.numero}{cliente ? ` — ${cliente.nombre}` : ''} · ${inv.saldo_pendiente.toLocaleString('es-CO')} · {diasVencida}d mora
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-
-                        {/* Top 10 notas */}
-                        <div className="neo-card bg-white flex flex-col gap-3">
-                          <div className="flex items-center justify-between border-b border-black pb-2">
-                            <h3 className="font-mono text-sm font-bold flex items-center gap-1.5"><StickyNote size={14} /> NOTAS</h3>
-                            <button onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('notas'); }} className="neo-btn text-[10px] px-2 py-1 hover:bg-neutral-100">Ver todas →</button>
-                          </div>
-                          <div className="flex flex-col gap-1.5 max-h-52 overflow-y-auto pr-1">
-                            {notasCargando && <p className="text-xs text-neutral-400 font-mono italic">Cargando...</p>}
-                            {notasSorted(notasInternas).slice(0, 10).map((nota) => (
-                              <div key={nota.id} className="flex items-start gap-2 text-xs py-1 border-b border-neutral-100 last:border-b-0">
-                                {nota.tieneCheckbox && (
+                        return (
+                          <div className="neo-card bg-white flex flex-col gap-0 overflow-hidden">
+                            {/* Cabecera con indicadores */}
+                            <div className="flex items-center justify-between border-b border-black px-4 py-2.5">
+                              <h3 className="font-mono text-sm font-bold">{slideLabels[dashboardSlide]}</h3>
+                              <div className="flex items-center gap-2">
+                                {slideLabels.map((_, i) => (
                                   <button
+                                    key={i}
                                     type="button"
-                                    onClick={() => void handleToggleNotaCompletada(nota)}
-                                    className={`mt-0.5 shrink-0 w-3.5 h-3.5 border-2 border-black flex items-center justify-center ${nota.completada ? 'bg-black' : 'bg-white'}`}
-                                  >
-                                    {nota.completada && <span className="text-white text-[8px] font-black leading-none">✓</span>}
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={() => setNotaPopup(nota)}
-                                  className={`font-semibold text-black truncate text-left hover:underline ${nota.completada ? 'line-through opacity-50' : ''}`}
-                                >{nota.titulo}</button>
+                                    onClick={() => setDashboardSlide(i)}
+                                    className={`w-2 h-2 rounded-full border border-black transition-all ${dashboardSlide === i ? 'bg-black scale-125' : 'bg-neutral-300 hover:bg-neutral-400'}`}
+                                  />
+                                ))}
                               </div>
-                            ))}
-                            {!notasCargando && notasInternas.length === 0 && (
-                              <p className="text-xs text-neutral-400 italic font-mono">Sin notas todavía.</p>
-                            )}
+                            </div>
+
+                            {/* Barra de progreso 10s */}
+                            <div className="h-0.5 bg-neutral-100 relative overflow-hidden">
+                              <div
+                                key={dashboardSlide}
+                                className="absolute inset-y-0 left-0 bg-black"
+                                style={{ animation: 'slideProgress 10s linear forwards' }}
+                              />
+                            </div>
+
+                            {/* Slide 0: Alertas */}
+                            <div className={`flex flex-col gap-2 px-4 py-3 transition-all duration-300 ${dashboardSlide === 0 ? 'block' : 'hidden'}`}>
+                              {criticalProducts.length === 0 && facturasVencidas.length === 0 ? (
+                                <p className="text-xs text-neutral-400 italic font-mono py-4 text-center">✓ Sin alertas activas — todo en orden.</p>
+                              ) : (
+                                <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
+                                  {criticalProducts.map((p) => {
+                                    const stock = productStocks[p.id] ?? 0;
+                                    return (
+                                      <div key={p.id} className="border border-black p-2 bg-brand-red/10 flex gap-2 text-xs">
+                                        <AlertTriangle size={14} className="text-brand-red shrink-0 mt-0.5" />
+                                        <div>
+                                          <span className="font-bold text-black">Stock crítico: </span>
+                                          {p.nombre} — {stock} uds (mín. {p.stock_minimo})
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                  {facturasVencidas.map((inv) => {
+                                    const cliente = customers.find((c) => c.id === inv.cliente_id);
+                                    const diasVencida = Math.floor((Date.now() - new Date(inv.fecha_vencimiento).getTime()) / 86400000);
+                                    return (
+                                      <div key={inv.id} className="border border-black p-2 bg-brand-yellow/10 flex gap-2 text-xs">
+                                        <ClockAlert size={14} className="text-brand-yellow shrink-0 mt-0.5" />
+                                        <div>
+                                          <span className="font-bold text-black">Factura vencida: </span>
+                                          {inv.numero}{cliente ? ` — ${cliente.nombre}` : ''} · ${inv.saldo_pendiente.toLocaleString('es-CO')} · {diasVencida}d mora
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              <div className="text-[9px] font-mono text-neutral-400 text-right mt-1">
+                                {criticalProducts.length + facturasVencidas.length} alerta{criticalProducts.length + facturasVencidas.length !== 1 ? 's' : ''}
+                              </div>
+                            </div>
+
+                            {/* Slide 1: Pedidos por entregar */}
+                            <div className={`flex flex-col gap-2 px-4 py-3 transition-all duration-300 ${dashboardSlide === 1 ? 'block' : 'hidden'}`}>
+                              {pedidosPorEntregar.length === 0 ? (
+                                <p className="text-xs text-neutral-400 italic font-mono py-4 text-center">Sin pedidos pendientes de entrega.</p>
+                              ) : (
+                                <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
+                                  {pedidosPorEntregar
+                                    .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime())
+                                    .map((ord) => {
+                                      const cliente = customers.find((c) => c.id === ord.cliente_id);
+                                      return (
+                                        <button
+                                          key={ord.id}
+                                          type="button"
+                                          onClick={() => { setActiveTab('pedidos'); }}
+                                          className="border border-black p-2 bg-neutral-50 hover:bg-neutral-100 flex items-center justify-between gap-2 text-xs text-left"
+                                        >
+                                          <div className="flex flex-col gap-0.5 min-w-0">
+                                            <span className="font-bold text-black font-mono truncate">{ord.numero}</span>
+                                            <span className="text-neutral-600 truncate">{cliente?.nombre ?? 'Sin cliente'}</span>
+                                          </div>
+                                          <div className="flex flex-col items-end gap-0.5 shrink-0">
+                                            <span className="font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
+                                            <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-sm border border-black ${estadoColorPedido[ord.estado] ?? ''}`}>
+                                              {ord.estado.replace('_', ' ').toUpperCase()}
+                                            </span>
+                                          </div>
+                                        </button>
+                                      );
+                                    })}
+                                </div>
+                              )}
+                              <div className="text-[9px] font-mono text-neutral-400 text-right mt-1">
+                                {pedidosPorEntregar.length} pedido{pedidosPorEntregar.length !== 1 ? 's' : ''} activo{pedidosPorEntregar.length !== 1 ? 's' : ''}
+                              </div>
+                            </div>
+
+                            {/* Slide 2: Cuentas por cobrar */}
+                            <div className={`flex flex-col gap-2 px-4 py-3 transition-all duration-300 ${dashboardSlide === 2 ? 'block' : 'hidden'}`}>
+                              {cxcPendientes.length === 0 ? (
+                                <p className="text-xs text-neutral-400 italic font-mono py-4 text-center">Sin cuentas por cobrar pendientes.</p>
+                              ) : (
+                                <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
+                                  {cxcPendientes.map((inv) => {
+                                    const cliente = customers.find((c) => c.id === inv.cliente_id);
+                                    const vencida = inv.estado === 'vencida';
+                                    return (
+                                      <button
+                                        key={inv.id}
+                                        type="button"
+                                        onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('cxc'); }}
+                                        className={`border border-black p-2 flex items-center justify-between gap-2 text-xs text-left hover:bg-neutral-50 ${vencida ? 'bg-brand-red/8' : 'bg-neutral-50'}`}
+                                      >
+                                        <div className="flex flex-col gap-0.5 min-w-0">
+                                          <span className="font-bold text-black font-mono truncate">{inv.numero}</span>
+                                          <span className="text-neutral-600 truncate">{cliente?.nombre ?? 'Sin cliente'}</span>
+                                        </div>
+                                        <div className="flex flex-col items-end gap-0.5 shrink-0">
+                                          <span className={`font-bold ${vencida ? 'text-brand-red' : 'text-black'}`}>
+                                            ${inv.saldo_pendiente.toLocaleString('es-CO')}
+                                          </span>
+                                          {vencida && <span className="text-[9px] font-mono text-brand-red font-bold">VENCIDA</span>}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                              <div className="text-[9px] font-mono text-neutral-400 text-right mt-1">
+                                Total: ${cxcPendientes.reduce((s, i) => s + i.saldo_pendiente, 0).toLocaleString('es-CO')} COP
+                              </div>
+                            </div>
                           </div>
-                        </div>
-
-                      </div>
-
+                        );
+                      })()}
                     </div>
                   </div>
                 )}
@@ -2971,14 +3061,10 @@ export default function AppHome() {
                         </div>
                       );
 
-                      const transitions: Record<Order['estado'], Order['estado'][]> = {
-                        borrador: ['confirmado', 'cancelado'],
-                        confirmado: ['en_preparacion', 'cancelado'],
-                        en_preparacion: ['despachado', 'cancelado'],
-                        despachado: ['entregado', 'cancelado'],
-                        entregado: [],
-                        cancelado: [],
-                      };
+                      const todosLosEstados: Order['estado'][] = ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'];
+                      const transitions: Record<Order['estado'], Order['estado'][]> = Object.fromEntries(
+                        todosLosEstados.map(e => [e, todosLosEstados.filter(x => x !== e)])
+                      ) as Record<Order['estado'], Order['estado'][]>;
 
                       return (
                         <div className="flex flex-col gap-1">
@@ -2992,7 +3078,6 @@ export default function AppHome() {
                               )}
                               {(gruposFinal.get(llave) ?? []).map((ord) => {
                                 const client = customers.find(c => c.id === ord.cliente_id);
-                                const nextStates = transitions[ord.estado];
                                 const isExpanded = pedidoExpandido === ord.id;
 
                                 return (
@@ -3075,37 +3160,28 @@ export default function AppHome() {
                                           </div>
                                         </div>
 
-                                        {/* Acciones de Transición de Estados */}
-                                        {nextStates.length > 0 && (
-                                          <div className="border-t border-dashed border-neutral-300 pt-3 flex items-center justify-between flex-wrap gap-2">
-                                            <div className="text-[10px] font-mono text-neutral-500">
-                                              {ord.estado === 'borrador' && '⚠️ Confirmar reservará el inventario'}
-                                              {ord.estado === 'confirmado' && '✓ El inventario está reservado temporalmente'}
-                                              {ord.estado === 'en_preparacion' && '⚙ Preparando pedido para despacho'}
-                                              {ord.estado === 'despachado' && '🚚 Pedido en ruta al cliente'}
-                                            </div>
-                                            <div className="flex items-center gap-2">
-                                              {nextStates.map((next) => (
-                                                <button
-                                                  key={next}
-                                                  onClick={() => handleTransitionOrder(ord.id, next)}
-                                                  className={`font-mono text-[10px] font-bold px-3 py-1.5 border-2 border-black shadow-sm active:translate-y-0.5 active:shadow-none transition-all ${
-                                                    next === 'cancelado' ? 'bg-white text-brand-red hover:bg-neutral-50' :
-                                                    next === 'confirmado' ? 'bg-brand-blue text-white hover:opacity-95' :
-                                                    next === 'despachado' ? 'bg-brand-yellow text-black' :
-                                                    'bg-brand-blue text-white'
-                                                  }`}
-                                                >
-                                                  {next === 'confirmado' && 'CONFIRMAR PEDIDO'}
-                                                  {next === 'en_preparacion' && 'PREPARAR PEDIDO'}
-                                                  {next === 'despachado' && 'DESPACHAR / ASIGNAR GUÍA'}
-                                                  {next === 'entregado' && 'MARCAR COMO ENTREGADO'}
-                                                  {next === 'cancelado' && 'CANCELAR PEDIDO'}
-                                                </button>
-                                              ))}
-                                            </div>
+                                        {/* Cambiar estado */}
+                                        <div className="border-t border-dashed border-neutral-300 pt-3">
+                                          <div className="text-[9px] font-mono font-bold text-neutral-400 uppercase mb-2">Cambiar estado</div>
+                                          <div className="flex flex-wrap gap-1.5">
+                                            {todosLosEstados.filter(e => e !== ord.estado).map((next) => (
+                                              <button
+                                                key={next}
+                                                type="button"
+                                                onClick={() => handleTransitionOrder(ord.id, next)}
+                                                className={`font-mono text-[9px] font-bold px-2.5 py-1 border border-black active:translate-y-px transition-all ${
+                                                  next === 'cancelado' ? 'bg-white text-brand-red hover:bg-red-50 border-red-300' :
+                                                  next === 'entregado' ? 'bg-green-100 text-green-800 hover:bg-green-200 border-green-400' :
+                                                  next === 'despachado' ? 'bg-brand-yellow/70 text-black hover:bg-brand-yellow' :
+                                                  next === 'confirmado' ? 'bg-brand-blue/20 text-brand-blue hover:bg-brand-blue/30' :
+                                                  'bg-neutral-100 text-neutral-700 hover:bg-neutral-200'
+                                                }`}
+                                              >
+                                                {next.replace('_', ' ').toUpperCase()}
+                                              </button>
+                                            ))}
                                           </div>
-                                        )}
+                                        </div>
                                       </div>
                                     )}
                                   </div>
@@ -3123,14 +3199,10 @@ export default function AppHome() {
                       const semanaAtras = new Date();
                       semanaAtras.setDate(semanaAtras.getDate() - 7);
 
-                      const transitions: Record<Order['estado'], Order['estado'][]> = {
-                        borrador: ['confirmado', 'cancelado'],
-                        confirmado: ['en_preparacion', 'cancelado'],
-                        en_preparacion: ['despachado', 'cancelado'],
-                        despachado: ['entregado', 'cancelado'],
-                        entregado: [],
-                        cancelado: [],
-                      };
+                      const todosLosEstados: Order['estado'][] = ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'];
+                      const transitions: Record<Order['estado'], Order['estado'][]> = Object.fromEntries(
+                        todosLosEstados.map(e => [e, todosLosEstados.filter(x => x !== e)])
+                      ) as Record<Order['estado'], Order['estado'][]>;
 
                       const pedidosSemana = orders.filter(ord => new Date(ord.fecha) >= semanaAtras);
                       const estadoColores: Record<string, string> = {
@@ -3161,25 +3233,26 @@ export default function AppHome() {
                                   )}
                                   {columna.map(ord => {
                                     const client = customers.find(c => c.id === ord.cliente_id);
-                                    const nextStates = transitions[ord.estado].filter(n => n !== 'cancelado');
+                                    const estadoLabel: Record<string, string> = {
+                                      borrador: 'Borrador', confirmado: 'Confirmado',
+                                      en_preparacion: 'En prep.', despachado: 'Despachado',
+                                      entregado: 'Entregado', cancelado: 'Cancelado',
+                                    };
                                     return (
                                       <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[10px]">
                                         <div className="font-bold text-black leading-tight">{client?.nombre ?? 'Sin cliente'}</div>
                                         <div className="font-mono text-neutral-400">{ord.numero}</div>
                                         <div className="font-mono font-bold">${ord.total.toLocaleString('es-CO')}</div>
-                                        {nextStates.length > 0 && (
-                                          <div className="flex gap-1 flex-wrap mt-1">
-                                            {nextStates.map(next => (
-                                              <button
-                                                key={next}
-                                                type="button"
-                                                onClick={() => handleTransitionOrder(ord.id, next)}
-                                                className="border border-black bg-brand-blue text-white hover:opacity-90 px-1.5 py-0.5 font-mono font-bold flex-1 text-center"
-                                                title={`Mover a ${next}`}
-                                              >Adelante ›</button>
-                                            ))}
-                                          </div>
-                                        )}
+                                        <select
+                                          defaultValue=""
+                                          onChange={(e) => { if (e.target.value) { handleTransitionOrder(ord.id, e.target.value as Order['estado']); e.target.value = ''; } }}
+                                          className="mt-1 w-full border border-black bg-white font-mono text-[9px] py-0.5 px-1 cursor-pointer hover:bg-neutral-50"
+                                        >
+                                          <option value="" disabled>Mover a…</option>
+                                          {(Object.keys(estadoLabel) as Order['estado'][]).filter(e => e !== ord.estado).map(e => (
+                                            <option key={e} value={e}>{estadoLabel[e]}</option>
+                                          ))}
+                                        </select>
                                       </div>
                                     );
                                   })}
@@ -5949,15 +6022,8 @@ export default function AppHome() {
         const cxc = invoices.find(i => i.tipo === 'cxc' && i.pedido_id === ord.id);
         const abonosCxc = cxc ? abonos.filter(a => a.factura_id === cxc.id) : [];
         const client = customers.find(c => c.id === ord.cliente_id);
-        const transitions: Record<Order['estado'], Order['estado'][]> = {
-          borrador: ['confirmado', 'cancelado'],
-          confirmado: ['en_preparacion', 'cancelado'],
-          en_preparacion: ['despachado', 'cancelado'],
-          despachado: ['entregado', 'cancelado'],
-          entregado: [],
-          cancelado: [],
-        };
-        const nextStates = transitions[ord.estado];
+        const todosEstados: Order['estado'][] = ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'];
+        const otrosEstados = todosEstados.filter(e => e !== ord.estado);
 
         return (
           <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setOrderManager(null)}>
@@ -6134,24 +6200,27 @@ export default function AppHome() {
                 </div>
 
                 {/* Cambiar estado */}
-                {nextStates.length > 0 && (
-                  <div className="p-4 bg-neutral-50">
-                    <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2">Avanzar estado</div>
-                    <div className="flex flex-wrap gap-2">
-                      {nextStates.map(next => (
-                        <button
-                          key={next}
-                          onClick={() => { handleTransitionOrder(ord.id, next); setOrderManager(null); }}
-                          className={`font-mono text-[10px] font-bold px-3 py-2 border-2 border-black ${
-                            next === 'cancelado' ? 'bg-white text-brand-red hover:bg-red-50' : 'bg-brand-blue text-white hover:opacity-90'
-                          }`}
-                        >
-                          → {next.replace('_', ' ').toUpperCase()}
-                        </button>
-                      ))}
-                    </div>
+                <div className="p-4 bg-neutral-50">
+                  <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2">Cambiar estado</div>
+                  <div className="flex flex-wrap gap-2">
+                    {otrosEstados.map(next => (
+                      <button
+                        key={next}
+                        onClick={() => { handleTransitionOrder(ord.id, next); setOrderManager(null); }}
+                        className={`font-mono text-[10px] font-bold px-3 py-2 border-2 border-black ${
+                          next === 'cancelado' ? 'bg-white text-brand-red hover:bg-red-50'
+                          : next === 'entregado' ? 'bg-green-600 text-white hover:bg-green-700'
+                          : next === 'despachado' ? 'bg-brand-blue text-white hover:opacity-90'
+                          : next === 'en_preparacion' ? 'bg-yellow-400 text-black hover:bg-yellow-500'
+                          : next === 'confirmado' ? 'bg-blue-200 text-black hover:bg-blue-300'
+                          : 'bg-neutral-200 text-black hover:bg-neutral-300'
+                        }`}
+                      >
+                        → {next.replace(/_/g, ' ').toUpperCase()}
+                      </button>
+                    ))}
                   </div>
-                )}
+                </div>
               </div>
             </div>
           </div>

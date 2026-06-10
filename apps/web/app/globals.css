@@ -149,6 +149,12 @@
   background: #000000;
 }
 
+/* Barra de progreso del slider del dashboard */
+@keyframes slideProgress {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
 /* Custom grid mesh pattern similar to blueprint design */
 .blueprint-grid {
   background-size: 20px 20px;
