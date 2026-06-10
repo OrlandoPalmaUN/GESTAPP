@@ -4574,13 +4574,14 @@ export default function AppHome() {
                         {/* Planner de Contenido — Semana (Kanban de posts) */}
                         {(() => {
                           const estadosPost = ['idea', 'grabado', 'editado', 'subido'] as const;
-                          const semanaAtras = new Date();
-                          semanaAtras.setDate(semanaAtras.getDate() - 7);
-                          const hoy = new Date();
+                          const dosSemanasAtras = new Date();
+                          dosSemanasAtras.setDate(dosSemanasAtras.getDate() - 14);
+                          const dosSemanasAdelante = new Date();
+                          dosSemanasAdelante.setDate(dosSemanasAdelante.getDate() + 14);
                           const postsSemana = calendarEvents.filter(ev =>
                             ev.tipo === 'post' &&
-                            new Date(ev.fecha) >= semanaAtras &&
-                            new Date(ev.fecha) <= hoy
+                            new Date(ev.fecha) >= dosSemanasAtras &&
+                            new Date(ev.fecha) <= dosSemanasAdelante
                           );
                           const estadoColores: Record<string, string> = {
                             idea: 'bg-neutral-100 border-neutral-400',
@@ -4590,7 +4591,7 @@ export default function AppHome() {
                           };
                           return (
                             <div className="bg-white border-2 border-black p-3 flex flex-col gap-3">
-                              <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Planner de Contenido — Semana</h3>
+                              <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Planner de Contenido — 4 semanas</h3>
                               <div className="flex overflow-x-auto gap-3 pb-2">
                                 {estadosPost.map(estado => {
                                   const columna = postsSemana.filter(ev => ev.estado === estado);
