@@ -2,8 +2,27 @@ import type Groq from 'groq-sdk'
 
 /**
  * Herramientas que el agente puede llamar.
- * El LLM decide cuál usar según el mensaje del usuario.
+ * Usar getToolsForContext() en vez de AGENT_TOOLS directamente —
+ * enviar solo las tools del módulo activo reduce ~1.5k–2k tokens por request.
  */
+
+// Agrupación por módulo — cada tool puede aparecer en varios contextos
+const TOOLS_BY_CONTEXT: Record<string, string[]> = {
+  general:    ['buscar_cliente','crear_cliente','buscar_producto','crear_pedido','buscar_proveedor','crear_proveedor','consultar_resumen_negocio','crear_nota'],
+  pedidos:    ['buscar_cliente','crear_cliente','buscar_producto','crear_pedido','actualizar_estado_pedido','registrar_abono','ver_historial_cliente'],
+  inventario: ['buscar_producto','crear_producto','ajustar_stock','consultar_resumen_negocio'],
+  clientes:   ['buscar_cliente','crear_cliente','ver_historial_cliente','registrar_abono'],
+  finanzas:   ['buscar_cliente','registrar_abono','ver_historial_cliente','consultar_resumen_negocio'],
+  redes:      ['consultar_posts_ig','consultar_metricas_ig'],
+  notas:      ['crear_nota'],
+  proveedores:['buscar_proveedor','crear_proveedor'],
+}
+
+export function getToolsForContext(context: string): Groq.Chat.ChatCompletionTool[] {
+  const names = new Set(TOOLS_BY_CONTEXT[context] ?? TOOLS_BY_CONTEXT.general)
+  return AGENT_TOOLS.filter(t => t.function?.name && names.has(t.function.name))
+}
+
 export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
     type: 'function',

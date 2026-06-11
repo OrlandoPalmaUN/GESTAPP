@@ -5,7 +5,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type Groq from 'groq-sdk'
 import { getGroq, AI_MODEL } from '../../lib/ai/client.js'
-import { AGENT_TOOLS } from '../../lib/ai/tools.js'
+import { getToolsForContext } from '../../lib/ai/tools.js'
 import { executeTool } from '../../lib/ai/executor.js'
 import { buildSystemPrompt, buildNotasPrompt, type BusinessContext } from '../../lib/ai/prompts.js'
 
@@ -48,6 +48,9 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     if (!messages?.length) return reply.badRequest('messages requerido')
+
+    // Limitar historial a los últimos 12 mensajes para contener uso de tokens
+    const recentMessages = messages.slice(-12)
 
     const tenantName = request.tenant.name ?? request.tenant.slug
 
@@ -131,9 +134,11 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
 
     const systemPrompt = buildSystemPrompt(biz)
 
+    const tools = getToolsForContext(context)
+
     const allMessages: Groq.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
-      ...messages,
+      ...recentMessages,
     ]
 
     // Loop de tool calls — máximo 5 iteraciones para evitar ciclos infinitos
@@ -141,7 +146,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
       const completion = await groq.chat.completions.create({
         model: AI_MODEL,
         messages: allMessages,
-        tools: AGENT_TOOLS,
+        tools,
         tool_choice: 'auto',
         temperature: 0.3,
         max_tokens: 1024,
