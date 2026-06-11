@@ -24,7 +24,7 @@ export async function executeTool(
       case 'crear_cliente':
         return await crearCliente(args as { nombre: string; email?: string; telefono?: string }, db)
       case 'crear_pedido':
-        return await crearPedido(args as CrearPedidoArgs, db)
+        return await crearPedido(args as unknown as CrearPedidoArgs, db)
       case 'consultar_resumen_negocio':
         return await consultarResumenNegocio(db)
       default:

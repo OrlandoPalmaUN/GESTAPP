@@ -108,7 +108,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
         const mejor = igHeatmap.rows[0]
         if (mejor) {
           const dias = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado']
-          biz.igMejorHora = `${dias[mejor.dia]} a las ${mejor.hora}:00`
+          biz.igMejorHora = `${dias[mejor.dia] ?? 'día'} a las ${mejor.hora}:00`
         }
       }
     } catch (err) {
@@ -207,7 +207,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
       custom: customPrompt ?? 'Mejora el texto.',
     }
 
-    const systemPrompt = buildNotasPrompt(instrucciones[instruccion] ?? instrucciones.mejorar)
+    const systemPrompt = buildNotasPrompt(instrucciones[instruccion] ?? instrucciones.mejorar ?? 'Mejora el texto.')
 
     const completion = await groq.chat.completions.create({
       model: 'llama-3.1-8b-instant', // modelo más pequeño y rápido para texto simple

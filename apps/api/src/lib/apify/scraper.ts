@@ -13,7 +13,7 @@ import type { ApifyIgPost, ApifyIgProfileDetail } from './types.js'
  *   - string: "89,093"       → 89093  (coma = separador de miles en locale en)
  *   - null / undefined       → 0
  */
-function parseCount(v: number | string | null | undefined): number {
+export function parseCount(v: number | string | null | undefined): number {
   if (v == null) return 0
   if (typeof v === 'number') return Math.round(v)
   // Quitar puntos y comas usados como separadores de miles, luego parsear

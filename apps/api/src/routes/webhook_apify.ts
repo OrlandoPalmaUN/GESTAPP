@@ -10,6 +10,7 @@ import type { FastifyInstance } from 'fastify'
 import { validarHmacApify } from '../lib/apify/webhook.js'
 import { apifyGetDataset } from '../lib/apify/client.js'
 import { persistIgScrape } from '../lib/apify/persistor.js'
+import { parseCount } from '../lib/apify/scraper.js'
 import type { ApifyIgPost } from '../lib/apify/types.js'
 
 interface ApifyWebhookBody {
@@ -86,10 +87,10 @@ export async function webhookApifyRoutes(fastify: FastifyInstance): Promise<void
                 displayName: items[0].ownerFullName ?? null,
                 bio: null,
                 avatarUrl: null,
-                verified: items[0].ownerVerified,
+                verified: items[0].ownerVerified ?? false,
                 categoria: null,
                 sitioWeb: null,
-                followersCount: items[0].ownerFollowersCount ?? 0,
+                followersCount: parseCount(items[0].ownerFollowersCount),
                 followingCount: 0,
                 postsCount: 0,
                 isPrivate: false,
