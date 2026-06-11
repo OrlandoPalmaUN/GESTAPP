@@ -95,7 +95,7 @@ export function AiChat({ context = 'general' }: { context?: string }) {
     }
   }
 
-  const sugerencias = SUGERENCIAS[context] ?? SUGERENCIAS.general
+  const sugerencias: string[] = SUGERENCIAS[context] ?? SUGERENCIAS.general ?? []
 
   return (
     <>
