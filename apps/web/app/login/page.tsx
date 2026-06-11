@@ -16,7 +16,9 @@ export default function LoginPage() {
   const [enviando, setEnviando] = useState(false)
 
   useEffect(() => {
-    if (!cargando && usuario) router.replace('/admin/usuarios')
+    if (!cargando && usuario) {
+      router.replace(usuario.rol === 'superadmin' ? '/admin/usuarios' : '/')
+    }
   }, [cargando, usuario, router])
 
   async function onSubmit(e: FormEvent) {
@@ -24,8 +26,8 @@ export default function LoginPage() {
     setError(null)
     setEnviando(true)
     try {
-      await login(email, password)
-      router.replace('/admin/usuarios')
+      const u = await login(email, password)
+      router.replace(u.rol === 'superadmin' ? '/admin/usuarios' : '/')
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo iniciar sesión. Intenta de nuevo.')
     } finally {

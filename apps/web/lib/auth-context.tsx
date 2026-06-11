@@ -14,7 +14,7 @@ interface AuthContextValue {
   tenant: TenantDeSesion | null
   /** `true` mientras se intenta hidratar la sesión desde la cookie al cargar. */
   cargando: boolean
-  login: (email: string, password: string) => Promise<void>
+  login: (email: string, password: string) => Promise<Usuario>
   logout: () => Promise<void>
   /** Autoservicio: el propio usuario edita su personalización de UI (p. ej. `colorSecundario`). */
   actualizarPerfil: (data: { colorSecundario: string | null }) => Promise<void>
@@ -41,7 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       .finally(() => setCargando(false))
   }, [])
 
-  const login = useCallback(async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string): Promise<Usuario> => {
     const { usuario } = await api.login(email, password)
     setUsuario(usuario)
     // El login no trae el tenant — lo hidratamos con `/auth/me` justo después.
@@ -51,6 +51,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } catch {
       setTenant(null)
     }
+    return usuario
   }, [])
 
   const logout = useCallback(async () => {
