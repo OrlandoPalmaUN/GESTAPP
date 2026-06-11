@@ -42,6 +42,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { message?: string } | null
+    // Si la sesión expiró o no hay cookie, redirigir a login en vez de mostrar el error crudo.
+    // Excepción: /auth/login y /auth/me los manejamos donde se llaman.
+    if (res.status === 401 && !path.startsWith('/auth/')) {
+      if (typeof window !== 'undefined') {
+        window.location.replace('/login')
+      }
+    }
     throw new ApiError(body?.message ?? `Error ${res.status} al llamar ${path}`, res.status)
   }
 
