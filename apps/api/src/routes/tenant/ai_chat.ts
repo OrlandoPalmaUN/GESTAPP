@@ -25,6 +25,14 @@ function exigirTenant(
 
 export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+
+  if (!fastify.config.GROQ_API_KEY) {
+    fastify.log.warn('GROQ_API_KEY no configurada — rutas /ai/* deshabilitadas')
+    fastify.post('/ai/chat', async (_req, reply) => reply.serviceUnavailable('IA no configurada: falta GROQ_API_KEY'))
+    fastify.post('/ai/notas', async (_req, reply) => reply.serviceUnavailable('IA no configurada: falta GROQ_API_KEY'))
+    return
+  }
+
   const groq = getGroq(fastify.config.GROQ_API_KEY)
 
   // ─────────────────────────────────────────────────────────────────────────

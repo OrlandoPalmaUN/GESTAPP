@@ -34,7 +34,7 @@ const envSchema = z.object({
   IG_REFRESH_COOLDOWN_HOURS: z.coerce.number().int().positive().default(6),
 
   // --- Groq AI --------------------------------------------------------------
-  GROQ_API_KEY: z.string().min(10),
+  GROQ_API_KEY: z.string().default(''),
 })
 
 export type Env = z.infer<typeof envSchema>
