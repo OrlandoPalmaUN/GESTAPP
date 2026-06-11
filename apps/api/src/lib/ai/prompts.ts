@@ -50,23 +50,25 @@ export function buildSystemPrompt(biz: BusinessContext): string {
 
   // ── Bloque IG (solo en contexto redes) ────────────────────────────────────
   let datosIG = ''
-  if (biz.context === 'redes' && biz.igHandle) {
-    datosIG = `\n\nInstagram del negocio: @${biz.igHandle}`
-    if (biz.igSeguidores) datosIG += ` — ${biz.igSeguidores.toLocaleString('es-CO')} seguidores`
-    if (biz.igTopHashtags?.length) datosIG += `\nHashtags con mejor engagement: ${biz.igTopHashtags.slice(0, 6).map(h => `#${h}`).join(' ')}`
-    if (biz.igMejorHora) datosIG += `\nMejor hora para publicar: ${biz.igMejorHora}`
-    datosIG += `\nPara ver posts reales: usa consultar_posts_ig. Para métricas detalladas: usa consultar_metricas_ig.`
+  if (biz.context === 'redes') {
+    if (biz.igHandle) {
+      datosIG = `\n\nInstagram del negocio: @${biz.igHandle}`
+      if (biz.igSeguidores) datosIG += ` — ${biz.igSeguidores.toLocaleString('es-CO')} seguidores`
+      if (biz.igTopHashtags?.length) datosIG += `\nHashtags con mejor engagement: ${biz.igTopHashtags.slice(0, 6).map(h => `#${h}`).join(' ')}`
+      if (biz.igMejorHora) datosIG += `\nMejor hora para publicar: ${biz.igMejorHora}`
+    }
+    datosIG += `\n\nCuando el usuario pida ideas de contenido, análisis o estrategia: llama consultar_posts_ig PRIMERO para ver los posts reales y basar tus sugerencias en ellos. Luego responde con ideas concretas.`
   }
 
   // ── Contexto por módulo ────────────────────────────────────────────────────
   const contextos: Record<string, string> = {
     general:    'Estás en el panel general. Puedes ayudar con cualquier tema del negocio.',
-    inventario: 'Estás en Inventario. El usuario tiene preguntas sobre productos, stock o movimientos.',
-    pedidos:    'Estás en Pedidos. El usuario puede querer registrar ventas o consultar el estado de pedidos.',
-    clientes:   'Estás en CRM. El usuario puede agregar clientes o consultar su historial.',
-    finanzas:   'Estás en Finanzas. El usuario puede preguntar sobre flujo de caja, facturas o balances.',
-    redes:      'Estás en Redes Sociales. Ayuda con estrategia de contenido, ideas para posts, hashtags y análisis de engagement basándote en los datos reales de Instagram del negocio.',
-    notas:      'Estás en Notas. Ayuda al usuario a escribir, estructurar o mejorar sus notas.',
+    inventario: 'Estás en Inventario. Ayuda con productos, stock, ajustes y movimientos.',
+    pedidos:    'Estás en Pedidos. Registra ventas, actualiza estados, consulta pedidos.',
+    clientes:   'Estás en CRM. Gestiona clientes, registra pagos, consulta historial.',
+    finanzas:   'Estás en Finanzas. Ayuda con flujo de caja, abonos y facturas.',
+    redes:      'Estás en Redes Sociales. Tu rol principal es dar IDEAS DE CONTENIDO, analizar posts, sugerir hashtags y estrategia. Usa consultar_posts_ig para ver los posts reales antes de responder.',
+    notas:      'Estás en Notas. Ayuda a escribir, organizar o crear notas.',
   }
 
   return `Eres el asistente de negocios de "${biz.tenantName}" dentro de GESTAPP.
@@ -94,18 +96,12 @@ PASO 5 → Confirma: cliente + productos encontrados + total en COP
 REGLA CRÍTICA: NUNCA llames crear_pedido sin haber llamado buscar_producto primero para cada producto. Si buscar_producto no devuelve resultados para un producto, díselo al usuario y omite ese ítem.
 
 ## Reglas generales
-- NUNCA digas que creaste, registraste o guardaste algo si no llamaste la herramienta correspondiente. Si no tienes la herramienta para hacerlo, dile al usuario que esa acción no está disponible aún.
+- Para CREAR o GUARDAR datos (clientes, pedidos, abonos, etc.): usa la herramienta. Nunca digas que guardaste algo sin haberlo hecho.
+- Para DAR IDEAS, ANALIZAR, SUGERIR o RESPONDER preguntas: hazlo directamente — no necesitas herramienta para pensar. Si te preguntan por ideas de posts, hazlo.
+- Usa las herramientas para enriquecer tus respuestas cuando haya datos relevantes (ej: ver posts antes de dar ideas).
 - NUNCA uses "X", "Y" ni UUIDs inventados — solo IDs reales de las herramientas
 - Responde en español, sin markdown
-- Números en COP
-
-## Herramientas disponibles
-- buscar_cliente / crear_cliente → clientes del CRM
-- buscar_proveedor / crear_proveedor → proveedores
-- buscar_producto → inventario
-- crear_pedido → ventas (requiere IDs reales de cliente y productos)
-- consultar_resumen_negocio → métricas generales del negocio
-- consultar_posts_ig / consultar_metricas_ig → Instagram (solo contexto redes)`
+- Números en COP`
 }
 
 /** Prompt para el helper de notas — sin tools, modelo pequeño */
