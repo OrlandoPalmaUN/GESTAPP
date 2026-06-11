@@ -51,7 +51,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
       const [productos, stockCrit, ventas, pendientes, clientes] = await Promise.all([
         db.query<{ nombre: string; precio: number; stock: number }>(
           `SELECT nombre, precio_venta::numeric AS precio, stock_actual AS stock
-           FROM productos ORDER BY stock_actual DESC LIMIT 10`,
+           FROM productos ORDER BY stock_actual DESC LIMIT 5`,
         ),
         db.query<{ nombre: string; stock: number; minimo: number }>(
           `SELECT nombre, stock_actual AS stock, stock_minimo AS minimo
@@ -67,7 +67,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
           `SELECT COUNT(*)::int AS total FROM pedidos WHERE estado = 'pendiente'`,
         ),
         db.query<{ nombre: string }>(
-          `SELECT nombre FROM clientes ORDER BY created_at DESC LIMIT 8`,
+          `SELECT nombre FROM clientes ORDER BY created_at DESC LIMIT 5`,
         ),
       ])
 

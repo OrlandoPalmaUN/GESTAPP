@@ -24,28 +24,28 @@ export function buildSystemPrompt(biz: BusinessContext): string {
   // ── Bloque de datos del negocio ────────────────────────────────────────────
   let datosNegocio = ''
 
+  // Máximo 5 productos y 5 clientes para no inflar el prompt (rate limit)
   if (biz.topProductos?.length) {
-    const lista = biz.topProductos
-      .map(p => `${p.nombre} ($${p.precio.toLocaleString('es-CO')} — stock: ${p.stock})`)
-      .join(', ')
-    datosNegocio += `\nProductos en catálogo: ${lista}`
+    const lista = biz.topProductos.slice(0, 5)
+      .map(p => `${p.nombre} ($${Math.round(p.precio).toLocaleString('es-CO')})`)
+      .join(' | ')
+    datosNegocio += `\nProductos: ${lista}`
   }
 
   if (biz.stockCritico?.length) {
-    const lista = biz.stockCritico.map(p => `${p.nombre} (${p.stock}/${p.minimo})`).join(', ')
-    datosNegocio += `\n⚠ Stock crítico: ${lista}`
+    datosNegocio += `\n⚠ Stock crítico: ${biz.stockCritico.map(p => p.nombre).join(', ')}`
   }
 
   if (biz.ventasMes) {
-    datosNegocio += `\nVentas este mes: $${biz.ventasMes.total.toLocaleString('es-CO')} COP en ${biz.ventasMes.pedidos} pedidos`
+    datosNegocio += `\nVentas mes: $${biz.ventasMes.total.toLocaleString('es-CO')} COP (${biz.ventasMes.pedidos} pedidos)`
   }
 
   if (biz.pedidosPendientes != null) {
-    datosNegocio += `\nPedidos pendientes de despacho: ${biz.pedidosPendientes}`
+    datosNegocio += ` | Pendientes: ${biz.pedidosPendientes}`
   }
 
   if (biz.topClientes?.length) {
-    datosNegocio += `\nClientes recientes: ${biz.topClientes.map(c => c.nombre).join(', ')}`
+    datosNegocio += `\nClientes recientes: ${biz.topClientes.slice(0, 5).map(c => c.nombre).join(', ')}`
   }
 
   // ── Bloque IG (solo en contexto redes) ────────────────────────────────────
@@ -80,31 +80,22 @@ export function buildSystemPrompt(biz: BusinessContext): string {
 ## Módulo activo
 ${contextos[biz.context] ?? contextos.general}
 
-## Flujo para registrar una venta
-Solo ejecuta el flujo cuando tengas TODOS estos datos:
-- Nombre del cliente (real, no "X" ni "cliente")
-- Al menos un producto con nombre real (no "Y" ni "producto")
-- Cantidad de cada producto
+## Flujo para registrar una venta — ORDEN OBLIGATORIO
+Si falta nombre del cliente o nombre del producto, pregunta SOLO lo que falta. Nunca uses placeholders como "X" o "Y".
 
-Si falta alguno, pregunta SOLO lo que falta en una sola línea corta.
-Ejemplos:
-  - Falta todo → "¿Cómo se llama el cliente y qué compró?"
-  - Falta el cliente → "¿Cómo se llama el cliente?"
-  - Falta el producto → "¿Qué producto(s) compró?"
-  - Falta la cantidad → "¿Cuántas unidades de cada producto?"
+Cuando tengas nombre de cliente Y nombre(s) de producto(s):
+PASO 1 → Llama buscar_cliente(nombre_cliente)
+PASO 2 → Si no existe, llama crear_cliente(nombre_cliente)
+PASO 3 → Para CADA producto, llama buscar_producto(nombre_producto) — OBLIGATORIO antes de crear el pedido
+PASO 4 → Solo después de tener los IDs reales de los productos, llama crear_pedido(...)
+PASO 5 → Confirma: cliente + productos encontrados + total en COP
 
-Cuando tengas todo:
-1. buscar_cliente(nombre) → si no existe: crear_cliente(nombre)
-2. Para cada producto: buscar_producto(nombre) → usar el primer resultado
-3. crear_pedido con los IDs obtenidos
-4. Confirmar en 2 líneas: cliente + productos + total en COP
+REGLA CRÍTICA: NUNCA llames crear_pedido sin haber llamado buscar_producto primero para cada producto. Si buscar_producto no devuelve resultados para un producto, díselo al usuario y omite ese ítem.
 
-## Reglas
-- NUNCA uses "X", "Y" o placeholders — si no sabes un dato, pregúntalo
-- NUNCA pidas IDs — búscalos con las herramientas
-- Si un producto no aparece en búsqueda, dilo y crea el pedido con los que sí encontraste
-- Responde en español, sin markdown innecesario
-- Números monetarios en COP`
+## Reglas generales
+- NUNCA uses "X", "Y" ni UUIDs inventados — solo IDs reales de las herramientas
+- Responde en español, sin markdown
+- Números en COP`
 }
 
 /** Prompt para el helper de notas — sin tools, modelo pequeño */
