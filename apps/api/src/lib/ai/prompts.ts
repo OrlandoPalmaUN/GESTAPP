@@ -17,6 +17,7 @@ export interface BusinessContext {
   igSeguidores?: number | null
   igTopHashtags?: string[]
   igMejorHora?: string | null
+  igUltimosPosts?: { tipo: string; caption: string; likes: number; comentarios: number; fecha: string }[]
 }
 
 export function buildSystemPrompt(biz: BusinessContext): string {
@@ -55,6 +56,12 @@ export function buildSystemPrompt(biz: BusinessContext): string {
     if (biz.igSeguidores) datosIG += ` — ${biz.igSeguidores.toLocaleString('es-CO')} seguidores`
     if (biz.igTopHashtags?.length) datosIG += `\nHashtags con mejor engagement: ${biz.igTopHashtags.slice(0, 6).map(h => `#${h}`).join(' ')}`
     if (biz.igMejorHora) datosIG += `\nMejor hora para publicar: ${biz.igMejorHora}`
+    if (biz.igUltimosPosts?.length) {
+      datosIG += `\nÚltimos ${biz.igUltimosPosts.length} posts:`
+      biz.igUltimosPosts.forEach(p => {
+        datosIG += `\n  [${p.fecha}] ${p.tipo.toUpperCase()} — ${p.caption}… (❤${p.likes} 💬${p.comentarios})`
+      })
+    }
   }
 
   // ── Contexto por módulo ────────────────────────────────────────────────────
