@@ -2375,10 +2375,10 @@ export default function AppHome() {
                     </div>
 
                     {/* Sección Gráficos e Historial */}
-                    <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-                      
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
                       {/* Vista de los próximos 7 días — eventos del módulo de Comunicaciones */}
-                      <div className="neo-card bg-white xl:col-span-2 flex flex-col gap-4">
+                      <div className="neo-card bg-white lg:col-span-2 flex flex-col gap-4">
                         <div className="flex justify-between items-center border-b border-black pb-3">
                           <div className="flex items-center gap-2">
                             <CalendarDays size={18} className="text-brand-blue shrink-0" />

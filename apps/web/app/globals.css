@@ -64,6 +64,39 @@
   }
 }
 
+/* Loading screen — pantalla de carga inicial (mientras conecta al backend) */
+.loading-screen-root {
+  position: fixed;
+  inset: 0;
+  background: #f4f1ea;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 26px;
+  z-index: 9999;
+}
+.loading-seg {
+  position: relative;
+  width: 300px;
+  height: 6px;
+  background: #e3e0d8;
+  overflow: hidden;
+}
+.loading-seg::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  height: 100%;
+  width: 40%;
+  background: #0c0c0c;
+  animation: seg-slide 1.6s cubic-bezier(0.65, 0, 0.35, 1) infinite;
+}
+@keyframes seg-slide {
+  0%   { left: -45%; }
+  100% { left: 105%; }
+}
+
 /* Neo-Brutalist Styling Utilities */
 @layer utilities {
   .neo-border {
