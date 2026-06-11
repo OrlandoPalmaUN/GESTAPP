@@ -41,6 +41,8 @@ function ToolBadge({ tool }: { tool: string }) {
     buscar_producto: '🔍 Producto buscado',
     buscar_cliente: '🔍 Cliente buscado',
     consultar_resumen_negocio: '📊 Datos del negocio',
+    consultar_posts_ig: '📸 Posts de Instagram',
+    consultar_metricas_ig: '📈 Métricas de Instagram',
   }
   return (
     <span className="inline-flex items-center gap-1 text-[9px] font-mono bg-green-50 border border-green-400 text-green-700 px-1.5 py-0.5 rounded">

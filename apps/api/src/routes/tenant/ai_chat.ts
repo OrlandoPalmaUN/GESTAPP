@@ -87,7 +87,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
 
       // Datos de IG solo en contexto redes
       if (context === 'redes') {
-        const [igCuenta, igHashtags, igHeatmap, igPosts] = await Promise.all([
+        const [igCuenta, igHashtags, igHeatmap] = await Promise.all([
           db.query<{ handle: string; seguidores: number }>(
             `SELECT c.handle, s.seguidores
              FROM ig_cuentas c
@@ -107,20 +107,11 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
                     AVG(likes + comentarios) AS eng
              FROM ig_posts GROUP BY 1,2 ORDER BY eng DESC LIMIT 1`,
           ),
-          db.query<{ tipo: string; caption: string; likes: number; comentarios: number; fecha: string }>(
-            `SELECT tipo_contenido AS tipo,
-                    LEFT(caption, 80) AS caption,
-                    likes, comentarios,
-                    TO_CHAR(publicado_en, 'DD Mon') AS fecha
-             FROM ig_posts
-             ORDER BY publicado_en DESC LIMIT 6`,
-          ),
         ])
 
         biz.igHandle      = igCuenta.rows[0]?.handle ?? null
         biz.igSeguidores  = igCuenta.rows[0]?.seguidores ?? null
         biz.igTopHashtags = igHashtags.rows.map(r => r.hashtag)
-        biz.igUltimosPosts = igPosts.rows
 
         const mejor = igHeatmap.rows[0]
         if (mejor) {

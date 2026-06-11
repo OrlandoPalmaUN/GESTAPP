@@ -27,6 +27,14 @@ export async function executeTool(
         return await crearPedido(args as unknown as CrearPedidoArgs, db)
       case 'consultar_resumen_negocio':
         return await consultarResumenNegocio(db)
+      case 'consultar_posts_ig':
+        return await consultarPostsIg(
+          (args.limite as number | undefined) ?? 10,
+          (args.tipo as string | undefined) ?? null,
+          db,
+        )
+      case 'consultar_metricas_ig':
+        return await consultarMetricasIg(db)
       default:
         return { success: false, error: `Herramienta desconocida: ${name}` }
     }
@@ -137,6 +145,86 @@ async function crearPedido(args: CrearPedidoArgs, db: PoolClient): Promise<ToolR
       clienteNombre: args.cliente_nombre,
       items: itemsConPrecio.length,
       total,
+    },
+  }
+}
+
+async function consultarPostsIg(
+  limite: number,
+  tipo: string | null,
+  db: PoolClient,
+): Promise<ToolResult> {
+  const limit = Math.min(Math.max(1, limite), 20)
+  const { rows } = await db.query(
+    `SELECT
+       tipo_contenido AS tipo,
+       caption,
+       likes,
+       comentarios,
+       reproducciones AS vistas,
+       TO_CHAR(publicado_en, 'YYYY-MM-DD') AS fecha,
+       hashtags,
+       url
+     FROM ig_posts
+     WHERE ($1::text IS NULL OR tipo_contenido = $1)
+     ORDER BY publicado_en DESC
+     LIMIT $2`,
+    [tipo, limit],
+  )
+  return { success: true, data: rows }
+}
+
+async function consultarMetricasIg(db: PoolClient): Promise<ToolResult> {
+  const [cuenta, hashtags, heatmap, resumen] = await Promise.all([
+    db.query(`
+      SELECT c.handle, s.seguidores, s.seguidos, s.publicaciones,
+             s.er_promedio AS engagement_rate
+      FROM ig_cuentas c
+      LEFT JOIN ig_cuenta_snapshots s ON s.cuenta_id = c.id
+      ORDER BY s.fecha DESC LIMIT 1
+    `),
+    db.query(`
+      SELECT hashtag, ROUND(AVG(likes + comentarios)) AS eng_promedio
+      FROM (
+        SELECT UNNEST(hashtags) AS hashtag, likes, comentarios
+        FROM ig_posts WHERE publicado_en >= NOW() - INTERVAL '30 days'
+      ) t
+      GROUP BY hashtag ORDER BY eng_promedio DESC LIMIT 8
+    `),
+    db.query(`
+      SELECT
+        EXTRACT(DOW FROM publicado_en)::int AS dia,
+        EXTRACT(HOUR FROM publicado_en)::int AS hora,
+        ROUND(AVG(likes + comentarios)) AS eng
+      FROM ig_posts
+      GROUP BY 1,2 ORDER BY eng DESC LIMIT 3
+    `),
+    db.query(`
+      SELECT
+        COUNT(*) AS total_posts,
+        ROUND(AVG(likes)) AS avg_likes,
+        ROUND(AVG(comentarios)) AS avg_comentarios,
+        ROUND(AVG(reproducciones)) AS avg_vistas,
+        MAX(likes) AS mejor_post_likes
+      FROM ig_posts
+      WHERE publicado_en >= NOW() - INTERVAL '30 days'
+    `),
+  ])
+
+  const dias = ['domingo','lunes','martes','miércoles','jueves','viernes','sábado']
+  const mejoresHoras = heatmap.rows.map(r => ({
+    dia: dias[r.dia as number] ?? 'día',
+    hora: `${r.hora}:00`,
+    engagement: r.eng,
+  }))
+
+  return {
+    success: true,
+    data: {
+      cuenta: cuenta.rows[0] ?? null,
+      mejoresHashtags: hashtags.rows,
+      mejoresHorasPublicacion: mejoresHoras,
+      resumen30d: resumen.rows[0] ?? null,
     },
   }
 }

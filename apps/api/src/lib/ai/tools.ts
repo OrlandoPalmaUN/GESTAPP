@@ -91,4 +91,38 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_posts_ig',
+      description: 'Obtiene los últimos posts de Instagram del negocio: tipo de contenido, caption, likes, comentarios, vistas y fecha. Úsalo cuando el usuario pida ideas de contenido, análisis de posts, o cualquier pregunta sobre sus publicaciones.',
+      parameters: {
+        type: 'object',
+        properties: {
+          limite: {
+            type: 'number',
+            description: 'Cuántos posts traer (máx 20, default 10)',
+          },
+          tipo: {
+            type: 'string',
+            enum: ['VIDEO', 'CAROUSEL', 'IMAGE'],
+            description: 'Filtrar por tipo de contenido (opcional)',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_metricas_ig',
+      description: 'Obtiene métricas agregadas de Instagram: seguidores, engagement rate, mejores hashtags, mejor hora para publicar y resumen de los últimos 30 días.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
 ]
