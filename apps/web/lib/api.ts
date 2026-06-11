@@ -13,6 +13,21 @@ type TenantDeSesion = Pick<Tenant, 'id' | 'name' | 'slug' | 'status'> & { plan: 
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
+const TOKEN_KEY = 'gestapp_token'
+
+/** Guarda el JWT en localStorage (para iOS Safari que bloquea cookies cross-origin) */
+export function saveToken(token: string) {
+  if (typeof window !== 'undefined') localStorage.setItem(TOKEN_KEY, token)
+}
+/** Limpia el JWT del localStorage al hacer logout */
+export function clearToken() {
+  if (typeof window !== 'undefined') localStorage.removeItem(TOKEN_KEY)
+}
+function getToken(): string | null {
+  if (typeof window === 'undefined') return null
+  return localStorage.getItem(TOKEN_KEY)
+}
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -34,10 +49,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // set to 'application/json'" si declaramos JSON pero el request (p.ej. los
   // `DELETE` de eliminarCategoria/eliminarProducto/etc., que no mandan body)
   // va vacío.
+  const token = getToken()
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: 'include',
-    headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), ...init?.headers },
+    headers: {
+      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+      // Enviar como Bearer header además de cookie — resuelve iOS Safari ITP
+      // que bloquea cookies cross-origin (vercel.app → onrender.com)
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...init?.headers,
+    },
   })
 
   if (!res.ok) {
@@ -51,7 +73,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
 export const api = {
   login: (email: string, password: string) =>
-    request<{ usuario: Usuario }>('/auth/login', {
+    request<{ usuario: Usuario; token: string }>('/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     }),

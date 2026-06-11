@@ -46,21 +46,36 @@ export default fp(
       cookie: { cookieName: COOKIE_NAME, signed: false },
     })
 
-    fastify.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
+    /** Verifica JWT desde cookie httpOnly O desde Authorization: Bearer header (para iOS Safari ITP) */
+    async function verificarJwt(request: FastifyRequest, reply: FastifyReply): Promise<boolean> {
+      // 1. Intentar con cookie (comportamiento estándar)
       try {
         await request.jwtVerify()
+        return true
       } catch {
-        return reply.unauthorized('Sesión inválida o expirada — inicia sesión de nuevo.')
+        // 2. Fallback: Authorization: Bearer <token>
+        const auth = request.headers.authorization
+        if (auth?.startsWith('Bearer ')) {
+          try {
+            const token = auth.slice(7)
+            request.user = fastify.jwt.verify<SesionJWT>(token)
+            return true
+          } catch {
+            // token inválido
+          }
+        }
       }
+      reply.unauthorized('Sesión inválida o expirada — inicia sesión de nuevo.')
+      return false
+    }
+
+    fastify.decorate('authenticate', async (request: FastifyRequest, reply: FastifyReply) => {
+      await verificarJwt(request, reply)
     })
 
     fastify.decorate('requireRole', (...roles: RolUsuario[]) => {
       return async (request: FastifyRequest, reply: FastifyReply) => {
-        try {
-          await request.jwtVerify()
-        } catch {
-          return reply.unauthorized('Sesión inválida o expirada — inicia sesión de nuevo.')
-        }
+        if (!(await verificarJwt(request, reply))) return
         if (!roles.includes(request.user.rol)) {
           return reply.forbidden('No tienes permisos para realizar esta acción.')
         }

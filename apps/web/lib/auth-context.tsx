@@ -3,7 +3,7 @@
 import type { PlanId, Tenant, Usuario } from '@antigravity/shared'
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react'
 
-import { api } from './api'
+import { api, saveToken, clearToken } from './api'
 
 /** Info mínima del tenant del usuario logueado — la resuelve `tenant-resolver` en la API y viaja en `/auth/me`. */
 export type TenantDeSesion = Pick<Tenant, 'id' | 'name' | 'slug' | 'status'> & { plan: PlanId }
@@ -42,7 +42,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback(async (email: string, password: string): Promise<Usuario> => {
-    const { usuario } = await api.login(email, password)
+    const { usuario, token } = await api.login(email, password)
+    saveToken(token) // persiste para iOS Safari (ITP bloquea cookies cross-origin)
     setUsuario(usuario)
     // El login no trae el tenant — lo hidratamos con `/auth/me` justo después.
     try {
@@ -56,6 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     await api.logout().catch(() => undefined)
+    clearToken()
     setUsuario(null)
     setTenant(null)
   }, [])

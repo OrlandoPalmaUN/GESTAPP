@@ -68,7 +68,9 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
       maxAge: SESION_COOKIE.maxAgeSeconds,
     })
 
-    return reply.send({ usuario: aUsuarioDeCable(usuario) })
+    // Devolvemos el token también en el body para clientes que no pueden
+    // usar cookies cross-origin (iOS Safari ITP, WebViews, etc.)
+    return reply.send({ usuario: aUsuarioDeCable(usuario), token })
   })
 
   // POST /auth/logout — limpia la cookie de sesión.
