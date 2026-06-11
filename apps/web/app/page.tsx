@@ -3062,9 +3062,6 @@ export default function AppHome() {
                       );
 
                       const todosLosEstados: Order['estado'][] = ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'];
-                      const transitions: Record<Order['estado'], Order['estado'][]> = Object.fromEntries(
-                        todosLosEstados.map(e => [e, todosLosEstados.filter(x => x !== e)])
-                      ) as Record<Order['estado'], Order['estado'][]>;
 
                       return (
                         <div className="flex flex-col gap-1">
@@ -3198,11 +3195,6 @@ export default function AppHome() {
                       const estadosKanban: Order['estado'][] = ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'];
                       const semanaAtras = new Date();
                       semanaAtras.setDate(semanaAtras.getDate() - 7);
-
-                      const todosLosEstados: Order['estado'][] = ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'];
-                      const transitions: Record<Order['estado'], Order['estado'][]> = Object.fromEntries(
-                        todosLosEstados.map(e => [e, todosLosEstados.filter(x => x !== e)])
-                      ) as Record<Order['estado'], Order['estado'][]>;
 
                       const pedidosSemana = orders.filter(ord => new Date(ord.fecha) >= semanaAtras);
                       const estadoColores: Record<string, string> = {
