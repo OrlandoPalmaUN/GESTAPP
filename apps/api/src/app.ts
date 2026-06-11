@@ -7,12 +7,16 @@ import { loggerOptions } from './lib/logger.js'
 import { releaseTenantConnection, tenantResolver } from './middleware/tenant-resolver.js'
 import authPlugin from './plugins/auth.js'
 import dbPlugin from './plugins/db.js'
+import { igCronPlugin } from './plugins/ig_cron.js'
 import { adminTenantsRoutes } from './routes/admin/tenants.js'
 import { adminUsuariosRoutes } from './routes/admin/usuarios.js'
 import { authRoutes } from './routes/auth.js'
 import { healthRoutes } from './routes/health.js'
 import { clientesRoutes } from './routes/tenant/clientes.js'
 import { comunicacionesRoutes } from './routes/tenant/comunicaciones.js'
+import { redesSocialesRoutes } from './routes/tenant/redes_sociales.js'
+import { aiChatRoutes } from './routes/tenant/ai_chat.js'
+import { webhookApifyRoutes } from './routes/webhook_apify.js'
 import { crmRoutes } from './routes/tenant/crm.js'
 import { finanzasRoutes } from './routes/tenant/finanzas.js'
 import { inventarioRoutes } from './routes/tenant/inventario.js'
@@ -83,6 +87,10 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(crmRoutes)
   await app.register(finanzasRoutes)
   await app.register(comunicacionesRoutes)
+  await app.register(redesSocialesRoutes)
+  await app.register(aiChatRoutes)
+  await app.register(webhookApifyRoutes)
+  await app.register(igCronPlugin)
   await app.register(papeleraRoutes)
 
   return app

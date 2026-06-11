@@ -12,7 +12,7 @@
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && cp tenant-migrations/*.sql dist/tenant-migrations/",
     "generate": "prisma generate",
     "migrate:dev": "prisma migrate dev",
     "studio": "prisma studio",

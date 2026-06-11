@@ -1,6 +1,9 @@
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import { IgDashboard } from '../components/redes/IgDashboard';
+import { AiChat } from '../components/ai/AiChat';
+import { AiNotasHelper } from '../components/ai/AiNotasHelper';
 import { useRouter } from 'next/navigation';
 import {
   LayoutDashboard,
@@ -17,7 +20,6 @@ import {
   TrendingUp,
   Building,
 
-  Info,
   MessageCircle,
   Instagram,
   Facebook,
@@ -74,8 +76,6 @@ const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
 import { api, ApiError } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import {
-  INITIAL_SOCIAL_STATS,
-  INITIAL_SOCIAL_POSTS,
   TENANTS_GLOBAL_METRICS,
   Product,
   Category,
@@ -85,8 +85,6 @@ import {
   Invoice,
   Order,
   PaymentAbono,
-  SocialAccountStats,
-  SocialPost,
 } from '../lib/mockData';
 
 // --- ADAPTADORES: la API/shared usa camelCase (Producto, Categoria,
@@ -284,8 +282,6 @@ export default function AppHome() {
   const [calendarEvents, setCalendarEvents] = useState<EventoCalendario[]>([]);
   const [comunicacionesCargando, setComunicacionesCargando] = useState(false);
   const [comunicacionesError, setComunicacionesError] = useState<string | null>(null);
-  const [socialStats] = useState<SocialAccountStats[]>(INITIAL_SOCIAL_STATS);
-  const [socialPosts] = useState<SocialPost[]>(INITIAL_SOCIAL_POSTS);
   const [comunicacionesSubTab, setComunicacionesSubTab] = useState<'calendario' | 'redes' | 'notas'>('calendario');
 
   // --- Notas internas ---
@@ -4497,6 +4493,14 @@ export default function AppHome() {
                                 </div>
                               )}
 
+                              {/* IA helper para nueva nota */}
+                              {notaForm.contenido.replace(/<[^>]+>/g, '').trim() && (
+                                <AiNotasHelper
+                                  texto={notaForm.contenido.replace(/<[^>]+>/g, ' ').trim()}
+                                  onAplicar={(txt) => setNotaForm({ ...notaForm, contenido: txt })}
+                                />
+                              )}
+
                               <label className="flex items-center gap-2 cursor-pointer select-none">
                                 <input type="checkbox" checked={notaForm.tieneCheckbox}
                                   onChange={(e) => setNotaForm({ ...notaForm, tieneCheckbox: e.target.checked })}
@@ -4606,70 +4610,10 @@ export default function AppHome() {
 
                     {comunicacionesSubTab === 'redes' && (
                       <div className="flex flex-col gap-4">
-                        <div className="bg-brand-yellow/20 border-2 border-black p-3 text-xs font-mono flex items-center gap-2">
-                          <Info size={16} />
-                          <span>
-                            Datos de muestra — para conectar tus cuentas reales se necesita registrar una app en Meta for Developers
-                            y vincular tu página de Facebook / cuenta de Instagram Business.
-                          </span>
-                        </div>
+                        {/* Dashboard de métricas reales (Apify) */}
+                        <IgDashboard />
 
-                        {/* Tarjetas de métricas por canal */}
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          {socialStats.map((s) => (
-                            <div key={s.canal} className="neo-card bg-white flex flex-col gap-2">
-                              <div className="flex items-center gap-2 border-b border-black pb-2">
-                                {s.canal === 'instagram' && <Instagram size={18} />}
-                                {s.canal === 'facebook' && <Facebook size={18} />}
-                                {s.canal === 'tiktok' && <TikTokIcon size={18} />}
-                                <span className="font-mono font-bold text-sm capitalize">{s.canal}</span>
-                                <span className="text-[10px] text-neutral-500 font-mono ml-auto">{s.handle}</span>
-                              </div>
-                              <div className="grid grid-cols-2 gap-3 text-xs">
-                                <div>
-                                  <div className="font-bold text-neutral-500 uppercase font-mono text-[9px]">Seguidores</div>
-                                  <div className="font-mono font-black text-lg">{s.seguidores.toLocaleString('es-CO')}</div>
-                                  <div className="text-green-700 font-mono text-[10px]">+{s.variacionSeguidores} (30d)</div>
-                                </div>
-                                <div>
-                                  <div className="font-bold text-neutral-500 uppercase font-mono text-[9px]">Engagement</div>
-                                  <div className="font-mono font-black text-lg">{s.engagementPct}%</div>
-                                </div>
-                                <div>
-                                  <div className="font-bold text-neutral-500 uppercase font-mono text-[9px]">Alcance</div>
-                                  <div className="font-mono font-bold">{s.alcance.toLocaleString('es-CO')}</div>
-                                </div>
-                                <div>
-                                  <div className="font-bold text-neutral-500 uppercase font-mono text-[9px]">Impresiones</div>
-                                  <div className="font-mono font-bold">{s.impresiones.toLocaleString('es-CO')}</div>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Publicaciones recientes */}
-                        <div className="bg-white border-2 border-black p-3 flex flex-col gap-2">
-                          <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Publicaciones recientes</h3>
-                          {socialPosts.map((post) => (
-                            <div key={post.id} className="flex items-center justify-between gap-3 border-b border-neutral-200 last:border-b-0 py-2 text-xs">
-                              <div className="flex items-center gap-2 min-w-0">
-                                {post.canal === 'instagram' && <Instagram size={14} className="shrink-0" />}
-                                {post.canal === 'facebook' && <Facebook size={14} className="shrink-0" />}
-                                {post.canal === 'tiktok' && <TikTokIcon size={14} />}
-                                <span className="font-mono text-neutral-500 text-[10px] shrink-0">{new Date(post.fecha).toLocaleDateString('es-CO')}</span>
-                                <span className="text-black truncate">{post.extracto}</span>
-                              </div>
-                              <div className="flex items-center gap-3 font-mono text-[10px] text-neutral-600 shrink-0">
-                                <span>♥ {post.likes}</span>
-                                <span>💬 {post.comentarios}</span>
-                                <span>👁 {post.alcance.toLocaleString('es-CO')}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                        {/* Planner de Contenido — Semana (Kanban de posts) */}
+                        {/* Planner de Contenido — Kanban de posts programados */}
                         {(() => {
                           const estadosPost = ['idea', 'grabado', 'editado', 'subido'] as const;
                           const dosSemanasAtras = new Date();
@@ -4690,47 +4634,53 @@ export default function AppHome() {
                           return (
                             <div className="bg-white border-2 border-black p-3 flex flex-col gap-3">
                               <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Planner de Contenido — 4 semanas</h3>
-                              <div className="flex overflow-x-auto gap-3 pb-2">
-                                {estadosPost.map(estado => {
-                                  const columna = postsSemana.filter(ev => ev.estado === estado);
-                                  const siguiente = TRANSICIONES_EVENTO_LOCAL[estado] ?? null;
-                                  const anterior = ESTADO_ANTERIOR_LOCAL[estado] ?? null;
-                                  return (
-                                    <div key={estado} className={`w-44 shrink-0 border-2 ${estadoColores[estado] ?? 'bg-white border-black'} flex flex-col`}>
-                                      <div className="px-2 py-1.5 border-b border-black bg-white/70">
-                                        <div className="font-mono text-[10px] font-bold uppercase">{estado}</div>
-                                        <div className="font-mono text-[10px] text-neutral-500">{columna.length} posts</div>
-                                      </div>
-                                      <div className="flex flex-col gap-1.5 p-1.5 max-h-60 overflow-y-auto">
-                                        {columna.length === 0 && (
-                                          <p className="text-[9px] text-neutral-400 font-mono italic text-center py-3">Vacío</p>
-                                        )}
-                                        {columna.map(ev => (
-                                          <div key={ev.id} className="bg-white border border-black p-1.5 flex flex-col gap-1 text-[9px]">
-                                            <div className="flex items-center gap-1">
-                                              {ev.canal === 'instagram' && <Instagram size={10} />}
-                                              {ev.canal === 'facebook' && <Facebook size={10} />}
-                                              {ev.canal === 'tiktok' && <TikTokIcon size={10} />}
-                                              <span className="font-bold text-black truncate leading-tight">{ev.titulo}</span>
+                              {postsSemana.length === 0 ? (
+                                <p className="text-xs font-mono text-neutral-400 text-center py-4">
+                                  Sin posts planeados — crea uno desde el Calendario con tipo &ldquo;Post planeado&rdquo;.
+                                </p>
+                              ) : (
+                                <div className="flex overflow-x-auto gap-3 pb-2">
+                                  {estadosPost.map(estado => {
+                                    const columna = postsSemana.filter(ev => ev.estado === estado);
+                                    const siguiente = TRANSICIONES_EVENTO_LOCAL[estado] ?? null;
+                                    const anterior = ESTADO_ANTERIOR_LOCAL[estado] ?? null;
+                                    return (
+                                      <div key={estado} className={`w-44 shrink-0 border-2 ${estadoColores[estado] ?? 'bg-white border-black'} flex flex-col`}>
+                                        <div className="px-2 py-1.5 border-b border-black bg-white/70">
+                                          <div className="font-mono text-[10px] font-bold uppercase">{estado}</div>
+                                          <div className="font-mono text-[10px] text-neutral-500">{columna.length} posts</div>
+                                        </div>
+                                        <div className="flex flex-col gap-1.5 p-1.5 max-h-60 overflow-y-auto">
+                                          {columna.length === 0 && (
+                                            <p className="text-[9px] text-neutral-400 font-mono italic text-center py-3">Vacío</p>
+                                          )}
+                                          {columna.map(ev => (
+                                            <div key={ev.id} className="bg-white border border-black p-1.5 flex flex-col gap-1 text-[9px]">
+                                              <div className="flex items-center gap-1">
+                                                {ev.canal === 'instagram' && <Instagram size={10} />}
+                                                {ev.canal === 'facebook' && <Facebook size={10} />}
+                                                {ev.canal === 'tiktok' && <TikTokIcon size={10} />}
+                                                <span className="font-bold text-black truncate leading-tight">{ev.titulo}</span>
+                                              </div>
+                                              <div className="font-mono text-neutral-400">{new Date(ev.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}</div>
+                                              <div className="flex gap-1">
+                                                {anterior && (
+                                                  <button type="button" onClick={() => void handlePopupCambiarEstado(ev, anterior)}
+                                                    className="border border-black bg-white hover:bg-neutral-100 px-1 py-0.5 font-mono font-bold flex-1">‹</button>
+                                                )}
+                                                {siguiente && (
+                                                  <button type="button" onClick={() => void handlePopupCambiarEstado(ev, siguiente)}
+                                                    className="border border-black bg-brand-blue text-white hover:opacity-90 px-1 py-0.5 font-mono font-bold flex-1">›</button>
+                                                )}
+                                              </div>
                                             </div>
-                                            <div className="font-mono text-neutral-400">{new Date(ev.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}</div>
-                                            <div className="flex gap-1">
-                                              {anterior && (
-                                                <button type="button" onClick={() => void handlePopupCambiarEstado(ev, anterior)}
-                                                  className="border border-black bg-white hover:bg-neutral-100 px-1 py-0.5 font-mono font-bold flex-1">‹</button>
-                                              )}
-                                              {siguiente && (
-                                                <button type="button" onClick={() => void handlePopupCambiarEstado(ev, siguiente)}
-                                                  className="border border-black bg-brand-blue text-white hover:opacity-90 px-1 py-0.5 font-mono font-bold flex-1">›</button>
-                                              )}
-                                            </div>
-                                          </div>
-                                        ))}
+                                          ))}
+                                        </div>
                                       </div>
-                                    </div>
-                                  );
-                                })}
-                              </div>
+                                    );
+                                  })}
+                                </div>
+                              )}
                             </div>
                           );
                         })()}
@@ -7060,6 +7010,20 @@ export default function AppHome() {
         </div>
       )}
 
+      {/* Burbuja IA flotante — contexto dinámico según tab activo */}
+      {!superAdminMode && (
+        <AiChat
+          context={
+            activeTab === 'pedidos' ? 'pedidos' :
+            activeTab === 'inventario' ? 'inventario' :
+            activeTab === 'crm' ? 'clientes' :
+            activeTab === 'finanzas' ? 'finanzas' :
+            activeTab === 'comunicaciones' && comunicacionesSubTab === 'redes' ? 'redes' :
+            activeTab === 'comunicaciones' && comunicacionesSubTab === 'notas' ? 'notas' :
+            'general'
+          }
+        />
+      )}
     </main>
   );
 }

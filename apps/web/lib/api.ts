@@ -1,4 +1,4 @@
-import type { Abono, Categoria, CategoriaGasto, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, Proveedor, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario } from '@antigravity/shared'
+import type { Abono, Categoria, CategoriaGasto, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, Proveedor, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario } from '@antigravity/shared'
 
 /** Un elemento en la papelera — puede ser de cualquier módulo (ver `EntidadPapelera` en la API). */
 export interface ItemPapelera {
@@ -432,6 +432,60 @@ export const api = {
 
   eliminarGasto: (id: string) => request<void>(`/finanzas/gastos/${id}`, { method: 'DELETE' }),
 
+  // --- Redes Sociales (Instagram via Apify) ---
+
+  igCuenta: () =>
+    request<{ cuenta: IgCuenta | null }>('/redes/ig/cuenta'),
+
+  igVincularCuenta: (handle: string) =>
+    request<{ cuenta: { id: string; handle: string; displayName: string | null }; mensaje: string }>(
+      '/redes/ig/cuenta',
+      { method: 'POST', body: JSON.stringify({ handle }) },
+    ),
+
+  igDesvincularCuenta: () =>
+    request<void>('/redes/ig/cuenta', { method: 'DELETE' }),
+
+  igResumen: (dias = 30) =>
+    request<{ resumen: IgResumen | null }>(`/redes/ig/resumen?dias=${dias}`),
+
+  igSeguidores: (dias = 90) =>
+    request<{ serie: IgSnapshotPerfil[] }>(`/redes/ig/seguidores?dias=${dias}`),
+
+  igPosts: (opts?: { limit?: number; order?: 'engagement' | 'fecha' }) => {
+    const p = new URLSearchParams()
+    if (opts?.limit) p.set('limit', String(opts.limit))
+    if (opts?.order) p.set('order', opts.order)
+    return request<{ posts: IgPost[] }>(`/redes/ig/posts?${p}`)
+  },
+
+  igPostDetalle: (id: string) =>
+    request<{ post: IgPostDetalle; serie: IgPostSnapshot[] }>(`/redes/ig/posts/${id}`),
+
+  igComentarios: (postId: string, opts?: { page?: number; filter?: 'todos' | 'sin-responder' | 'preguntas' }) => {
+    const p = new URLSearchParams()
+    if (opts?.page) p.set('page', String(opts.page))
+    if (opts?.filter) p.set('filter', opts.filter)
+    return request<{ comentarios: IgComentario[]; page: number; porPagina: number }>(
+      `/redes/ig/posts/${postId}/comentarios?${p}`,
+    )
+  },
+
+  igHashtags: (dias = 30) =>
+    request<{ hashtags: IgHashtagStat[] }>(`/redes/ig/hashtags?dias=${dias}`),
+
+  igMejoresHoras: (dias = 90) =>
+    request<{ heatmap: IgHeatmapPunto[]; disclaimer: string | null }>(`/redes/ig/mejores-horas?dias=${dias}`),
+
+  igRefresh: () =>
+    request<{ ok: boolean; postsActualizados: number; comentariosActualizados: number }>(
+      '/redes/ig/refresh',
+      { method: 'POST' },
+    ),
+
+  igRuns: (limit = 10) =>
+    request<{ runs: IgRun[] }>(`/redes/ig/runs?limit=${limit}`),
+
   // --- Papelera / deshacer (genérico para todos los módulos) ---
 
   listarPapelera: () => request<{ items: ItemPapelera[] }>('/papelera'),
@@ -448,5 +502,19 @@ export const api = {
     request<{ usuario: Usuario }>('/auth/perfil', {
       method: 'PATCH',
       body: JSON.stringify(data),
+    }),
+
+  // --- AI -------------------------------------------------------------------
+
+  aiChat: (messages: { role: 'user' | 'assistant'; content: string }[], context = 'general') =>
+    request<{ response: string; actions: { tool: string; result: unknown }[] }>('/ai/chat', {
+      method: 'POST',
+      body: JSON.stringify({ messages, context }),
+    }),
+
+  aiNotas: (texto: string, instruccion: 'mejorar' | 'formal' | 'resumir' | 'bullet' | 'custom', customPrompt?: string) =>
+    request<{ resultado: string }>('/ai/notas', {
+      method: 'POST',
+      body: JSON.stringify({ texto, instruccion, customPrompt }),
     }),
 }

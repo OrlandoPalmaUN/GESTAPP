@@ -82,6 +82,25 @@ model Usuario {
   @@schema("public")
 }
 
+/// Log global de runs de Apify — para billing, rate-limiting y observabilidad por tenant.
+model ApifyScrapeRun {
+  id            String    @id @default(uuid()) @db.Uuid
+  tenantId      String    @map("tenant_id") @db.Uuid
+  actor         String
+  apifyRunId    String?   @map("apify_run_id")
+  trigger       String    // 'cron' | 'manual' | 'backfill'
+  status        String    // 'pending' | 'running' | 'succeeded' | 'failed'
+  startedAt     DateTime  @default(now()) @map("started_at") @db.Timestamptz(6)
+  finishedAt    DateTime? @map("finished_at") @db.Timestamptz(6)
+  itemsCount    Int?      @map("items_count")
+  apifyUsageUsd Decimal?  @map("apify_usage_usd") @db.Decimal(10, 4)
+  errorMessage  String?   @map("error_message")
+
+  @@index([tenantId, startedAt])
+  @@map("apify_scrape_runs")
+  @@schema("public")
+}
+
 /// Registro de qué migración se aplicó a qué schema de tenant — la fuente
 /// de verdad que usa scripts/migrate-tenants.ts para no reaplicar migraciones.
 model MigrationLog {

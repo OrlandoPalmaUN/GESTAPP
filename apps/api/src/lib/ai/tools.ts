@@ -1,0 +1,94 @@
+import type Groq from 'groq-sdk'
+
+/**
+ * Herramientas que el agente puede llamar.
+ * El LLM decide cuál usar según el mensaje del usuario.
+ */
+export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'buscar_producto',
+      description: 'Busca productos en el inventario del negocio por nombre o descripción.',
+      parameters: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'Nombre o descripción del producto a buscar' },
+        },
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'crear_cliente',
+      description: 'Crea un nuevo cliente en el CRM del negocio.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nombre: { type: 'string', description: 'Nombre completo o razón social del cliente' },
+          email: { type: 'string', description: 'Email del cliente (opcional)' },
+          telefono: { type: 'string', description: 'Teléfono del cliente (opcional)' },
+        },
+        required: ['nombre'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'crear_pedido',
+      description: 'Crea un pedido de venta para un cliente existente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cliente_id: { type: 'string', description: 'ID del cliente (obtenido de crear_cliente o buscar_cliente)' },
+          cliente_nombre: { type: 'string', description: 'Nombre del cliente para confirmar' },
+          items: {
+            type: 'array',
+            description: 'Productos del pedido',
+            items: {
+              type: 'object',
+              properties: {
+                producto_id: { type: 'string', description: 'ID del producto' },
+                producto_nombre: { type: 'string', description: 'Nombre del producto' },
+                cantidad: { type: 'number', description: 'Cantidad a pedir' },
+                precio_unitario: { type: 'number', description: 'Precio por unidad (si se conoce)' },
+              },
+              required: ['producto_id', 'producto_nombre', 'cantidad'],
+            },
+          },
+          notas: { type: 'string', description: 'Notas adicionales del pedido (opcional)' },
+        },
+        required: ['cliente_id', 'cliente_nombre', 'items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'buscar_cliente',
+      description: 'Busca clientes existentes en el CRM por nombre.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nombre: { type: 'string', description: 'Nombre del cliente a buscar' },
+        },
+        required: ['nombre'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_resumen_negocio',
+      description: 'Obtiene un resumen del estado actual del negocio: ventas recientes, stock bajo, pedidos pendientes.',
+      parameters: {
+        type: 'object',
+        properties: {},
+        required: [],
+      },
+    },
+  },
+]
