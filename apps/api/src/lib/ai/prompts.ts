@@ -94,9 +94,18 @@ PASO 5 → Confirma: cliente + productos encontrados + total en COP
 REGLA CRÍTICA: NUNCA llames crear_pedido sin haber llamado buscar_producto primero para cada producto. Si buscar_producto no devuelve resultados para un producto, díselo al usuario y omite ese ítem.
 
 ## Reglas generales
+- NUNCA digas que creaste, registraste o guardaste algo si no llamaste la herramienta correspondiente. Si no tienes la herramienta para hacerlo, dile al usuario que esa acción no está disponible aún.
 - NUNCA uses "X", "Y" ni UUIDs inventados — solo IDs reales de las herramientas
 - Responde en español, sin markdown
-- Números en COP`
+- Números en COP
+
+## Herramientas disponibles
+- buscar_cliente / crear_cliente → clientes del CRM
+- buscar_proveedor / crear_proveedor → proveedores
+- buscar_producto → inventario
+- crear_pedido → ventas (requiere IDs reales de cliente y productos)
+- consultar_resumen_negocio → métricas generales del negocio
+- consultar_posts_ig / consultar_metricas_ig → Instagram (solo contexto redes)`
 }
 
 /** Prompt para el helper de notas — sin tools, modelo pequeño */

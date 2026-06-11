@@ -21,8 +21,12 @@ export async function executeTool(
         return await buscarProducto(args.query as string, db)
       case 'buscar_cliente':
         return await buscarCliente(args.nombre as string, db)
+      case 'buscar_proveedor':
+        return await buscarProveedor(args.nombre as string, db)
       case 'crear_cliente':
         return await crearCliente(args as { nombre: string; email?: string; telefono?: string }, db)
+      case 'crear_proveedor':
+        return await crearProveedor(args as { nombre: string; email?: string; telefono?: string; nit?: string }, db)
       case 'crear_pedido':
         return await crearPedido(args as unknown as CrearPedidoArgs, db)
       case 'consultar_resumen_negocio':
@@ -54,6 +58,30 @@ async function buscarProducto(query: string, db: PoolClient): Promise<ToolResult
     [`%${query}%`],
   )
   return { success: true, data: rows }
+}
+
+async function buscarProveedor(nombre: string, db: PoolClient): Promise<ToolResult> {
+  const { rows } = await db.query(
+    `SELECT id, nombre, email, telefono, nit
+     FROM proveedores
+     WHERE nombre ILIKE $1
+     LIMIT 5`,
+    [`%${nombre}%`],
+  )
+  return { success: true, data: rows }
+}
+
+async function crearProveedor(
+  args: { nombre: string; email?: string; telefono?: string; nit?: string },
+  db: PoolClient,
+): Promise<ToolResult> {
+  const { rows } = await db.query<{ id: string; nombre: string }>(
+    `INSERT INTO proveedores (nombre, email, telefono, nit)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, nombre`,
+    [args.nombre, args.email ?? null, args.telefono ?? null, args.nit ?? null],
+  )
+  return { success: true, data: rows[0] }
 }
 
 async function buscarCliente(nombre: string, db: PoolClient): Promise<ToolResult> {

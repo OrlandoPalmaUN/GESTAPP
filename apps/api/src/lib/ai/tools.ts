@@ -82,6 +82,37 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'crear_proveedor',
+      description: 'Crea un nuevo proveedor en el sistema.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nombre: { type: 'string', description: 'Nombre o razón social del proveedor' },
+          email: { type: 'string', description: 'Email del proveedor (opcional)' },
+          telefono: { type: 'string', description: 'Teléfono (opcional)' },
+          nit: { type: 'string', description: 'NIT o documento del proveedor (opcional)' },
+        },
+        required: ['nombre'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'buscar_proveedor',
+      description: 'Busca proveedores existentes por nombre.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nombre: { type: 'string', description: 'Nombre del proveedor a buscar' },
+        },
+        required: ['nombre'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'consultar_resumen_negocio',
       description: 'Obtiene un resumen del estado actual del negocio: ventas recientes, stock bajo, pedidos pendientes.',
       parameters: {
