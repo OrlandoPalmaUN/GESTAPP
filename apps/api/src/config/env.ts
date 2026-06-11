@@ -28,7 +28,7 @@ const envSchema = z.object({
     .transform((value) => value?.split(',').map((origin) => origin.trim()) ?? true),
 
   // --- Apify / Instagram Insights ----------------------------------------
-  APIFY_TOKEN: z.string().min(10),
+  APIFY_TOKEN: z.string().default(''),
   APIFY_WEBHOOK_SECRET: z.string().min(16).default('dev-apify-webhook-secret-1234'),
   APIFY_DEFAULT_ACTOR: z.string().default('apify/instagram-scraper'),
   IG_REFRESH_COOLDOWN_HOURS: z.coerce.number().int().positive().default(6),
