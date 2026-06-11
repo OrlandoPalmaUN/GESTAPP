@@ -36,6 +36,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
   const aiClient = new AiClient(
     fastify.config.GROQ_API_KEY,
     fastify.config.GROQ_API_KEY_2 || undefined,
+    fastify.config.GOOGLE_AI_KEY  || undefined,
   )
   const groq = getGroq(fastify.config.GROQ_API_KEY) // solo para /ai/notas
 

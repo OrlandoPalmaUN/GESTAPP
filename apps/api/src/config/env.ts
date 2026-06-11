@@ -37,6 +37,9 @@ const envSchema = z.object({
   GROQ_API_KEY: z.string().default(''),
   // Segunda key opcional — se usa como fallback cuando la primera alcanza el rate limit
   GROQ_API_KEY_2: z.string().default(''),
+  // Google AI Studio key — Gemini 2.0 Flash gratis: 1500 req/día
+  // Obtener en: aistudio.google.com/apikey
+  GOOGLE_AI_KEY: z.string().default(''),
 })
 
 export type Env = z.infer<typeof envSchema>
