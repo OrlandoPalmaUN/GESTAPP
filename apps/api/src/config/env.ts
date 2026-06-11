@@ -35,6 +35,8 @@ const envSchema = z.object({
 
   // --- Groq AI --------------------------------------------------------------
   GROQ_API_KEY: z.string().default(''),
+  // Segunda key opcional — se usa como fallback cuando la primera alcanza el rate limit
+  GROQ_API_KEY_2: z.string().default(''),
 })
 
 export type Env = z.infer<typeof envSchema>

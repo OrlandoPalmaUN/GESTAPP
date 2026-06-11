@@ -4,7 +4,7 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type Groq from 'groq-sdk'
-import { getGroq, AI_MODEL } from '../../lib/ai/client.js'
+import { AiClient, getGroq, AI_MODEL } from '../../lib/ai/client.js'
 import { getToolsForContext } from '../../lib/ai/tools.js'
 import { executeTool } from '../../lib/ai/executor.js'
 import { buildSystemPrompt, buildNotasPrompt, type BusinessContext } from '../../lib/ai/prompts.js'
@@ -33,7 +33,11 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
     return
   }
 
-  const groq = getGroq(fastify.config.GROQ_API_KEY)
+  const aiClient = new AiClient(
+    fastify.config.GROQ_API_KEY,
+    fastify.config.GROQ_API_KEY_2 || undefined,
+  )
+  const groq = getGroq(fastify.config.GROQ_API_KEY) // solo para /ai/notas
 
   // ─────────────────────────────────────────────────────────────────────────
   // POST /ai/chat
@@ -143,7 +147,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
 
     // Loop de tool calls — máximo 5 iteraciones para evitar ciclos infinitos
     for (let i = 0; i < 5; i++) {
-      const completion = await groq.chat.completions.create({
+      const completion = await aiClient.chat({
         model: AI_MODEL,
         messages: allMessages,
         tools,
@@ -189,7 +193,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     // Fallback — pedir confirmación final
-    const finalCompletion = await groq.chat.completions.create({
+    const finalCompletion = await aiClient.chat({
       model: AI_MODEL,
       messages: allMessages,
       temperature: 0.3,
