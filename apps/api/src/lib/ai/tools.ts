@@ -147,6 +147,112 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
+      name: 'crear_producto',
+      description: 'Crea un nuevo producto en el inventario.',
+      parameters: {
+        type: 'object',
+        properties: {
+          nombre: { type: 'string', description: 'Nombre del producto' },
+          precio_venta: { type: 'number', description: 'Precio de venta' },
+          precio_costo: { type: 'number', description: 'Precio de costo (opcional)' },
+          stock_inicial: { type: 'number', description: 'Unidades en stock al crearlo (default 0)' },
+          stock_minimo: { type: 'number', description: 'Stock mínimo para alertas (opcional)' },
+          unidad: { type: 'string', description: 'Unidad de medida (ej: unidad, kg, caja). Default: unidad' },
+          sku: { type: 'string', description: 'Código SKU (opcional)' },
+          descripcion: { type: 'string', description: 'Descripción del producto (opcional)' },
+        },
+        required: ['nombre', 'precio_venta'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ajustar_stock',
+      description: 'Ajusta el stock de un producto existente. Usa ajuste_positivo para agregar unidades, ajuste_negativo para reducir.',
+      parameters: {
+        type: 'object',
+        properties: {
+          producto_id: { type: 'string', description: 'ID del producto (obtenido de buscar_producto)' },
+          producto_nombre: { type: 'string', description: 'Nombre del producto para confirmar' },
+          cantidad: { type: 'number', description: 'Cantidad a ajustar (siempre positiva)' },
+          tipo: { type: 'string', enum: ['ajuste_positivo', 'ajuste_negativo'], description: 'Dirección del ajuste' },
+          notas: { type: 'string', description: 'Motivo del ajuste (opcional)' },
+        },
+        required: ['producto_id', 'producto_nombre', 'cantidad', 'tipo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'registrar_abono',
+      description: 'Registra un pago o abono de un cliente sobre su saldo pendiente. Busca la factura abierta y aplica el pago.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cliente_id: { type: 'string', description: 'ID del cliente' },
+          cliente_nombre: { type: 'string', description: 'Nombre del cliente para confirmar' },
+          monto: { type: 'number', description: 'Monto del abono en COP' },
+          medio_pago: { type: 'string', enum: ['efectivo', 'transferencia', 'tarjeta', 'cheque'], description: 'Medio de pago (default: efectivo)' },
+          referencia: { type: 'string', description: 'Número de comprobante o referencia (opcional)' },
+        },
+        required: ['cliente_id', 'cliente_nombre', 'monto'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'crear_nota',
+      description: 'Crea una nota interna en el sistema.',
+      parameters: {
+        type: 'object',
+        properties: {
+          titulo: { type: 'string', description: 'Título de la nota' },
+          contenido: { type: 'string', description: 'Contenido de la nota (opcional)' },
+        },
+        required: ['titulo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'actualizar_estado_pedido',
+      description: 'Modifica o cancela el estado de un pedido existente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          pedido_id: { type: 'string', description: 'ID del pedido' },
+          nuevo_estado: {
+            type: 'string',
+            enum: ['pendiente', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'],
+            description: 'Nuevo estado del pedido',
+          },
+          notas: { type: 'string', description: 'Nota sobre el cambio de estado (opcional)' },
+        },
+        required: ['pedido_id', 'nuevo_estado'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'ver_historial_cliente',
+      description: 'Muestra el historial completo de un cliente: pedidos, saldo pendiente y últimas interacciones.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cliente_id: { type: 'string', description: 'ID del cliente' },
+        },
+        required: ['cliente_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'consultar_metricas_ig',
       description: 'Obtiene métricas agregadas de Instagram: seguidores, engagement rate, mejores hashtags, mejor hora para publicar y resumen de los últimos 30 días.',
       parameters: {

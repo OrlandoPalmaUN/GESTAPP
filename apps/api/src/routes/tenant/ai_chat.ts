@@ -58,13 +58,18 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
 
       const [productos, stockCrit, ventas, pendientes, clientes] = await Promise.all([
         db.query<{ nombre: string; precio: number; stock: number }>(
-          `SELECT nombre, precio_venta::numeric AS precio, stock_actual AS stock
-           FROM productos ORDER BY stock_actual DESC LIMIT 5`,
+          `SELECT p.nombre, p.precio_venta::numeric AS precio,
+                  COALESCE((SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva') THEN cantidad ELSE -cantidad END) FROM movimientos_inventario WHERE producto_id = p.id),0) AS stock
+           FROM productos p WHERE p.deleted_at IS NULL ORDER BY stock DESC LIMIT 5`,
         ),
         db.query<{ nombre: string; stock: number; minimo: number }>(
-          `SELECT nombre, stock_actual AS stock, stock_minimo AS minimo
-           FROM productos
-           WHERE stock_minimo IS NOT NULL AND stock_actual <= stock_minimo LIMIT 5`,
+          `SELECT p.nombre,
+                  COALESCE((SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva') THEN cantidad ELSE -cantidad END) FROM movimientos_inventario WHERE producto_id = p.id),0) AS stock,
+                  p.stock_minimo AS minimo
+           FROM productos p
+           WHERE p.stock_minimo IS NOT NULL AND p.deleted_at IS NULL
+             AND COALESCE((SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva') THEN cantidad ELSE -cantidad END) FROM movimientos_inventario WHERE producto_id = p.id),0) <= p.stock_minimo
+           LIMIT 5`,
         ),
         db.query<{ total: number; pedidos: number }>(
           `SELECT COALESCE(SUM(total),0)::int AS total, COUNT(*)::int AS pedidos

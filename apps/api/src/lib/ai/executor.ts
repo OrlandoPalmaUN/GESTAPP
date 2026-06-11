@@ -39,6 +39,18 @@ export async function executeTool(
         )
       case 'consultar_metricas_ig':
         return await consultarMetricasIg(db)
+      case 'crear_producto':
+        return await crearProducto(args as unknown as CrearProductoArgs, db)
+      case 'ajustar_stock':
+        return await ajustarStock(args as unknown as AjustarStockArgs, db)
+      case 'registrar_abono':
+        return await registrarAbono(args as unknown as RegistrarAbonoArgs, db)
+      case 'crear_nota':
+        return await crearNota(args as unknown as { titulo: string; contenido?: string }, db)
+      case 'actualizar_estado_pedido':
+        return await actualizarEstadoPedido(args as unknown as ActualizarEstadoArgs, db)
+      case 'ver_historial_cliente':
+        return await verHistorialCliente(args.cliente_id as string, db)
       default:
         return { success: false, error: `Herramienta desconocida: ${name}` }
     }
@@ -49,15 +61,58 @@ export async function executeTool(
 
 // ─── Implementaciones ────────────────────────────────────────────────────────
 
+// SQL helper: stock real calculado de movimientos_inventario
+const STOCK_SUBQUERY = `
+  COALESCE((
+    SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva')
+                    THEN cantidad ELSE -cantidad END)
+    FROM movimientos_inventario WHERE producto_id = p.id
+  ), 0)`
+
 async function buscarProducto(query: string, db: PoolClient): Promise<ToolResult> {
   const { rows } = await db.query(
-    `SELECT id, nombre, precio_venta AS precio, stock_actual AS stock, unidad
-     FROM productos
-     WHERE nombre ILIKE $1 OR descripcion ILIKE $1
+    `SELECT p.id, p.nombre, p.precio_venta AS precio, ${STOCK_SUBQUERY} AS stock, p.unidad
+     FROM productos p
+     WHERE (p.nombre ILIKE $1 OR p.descripcion ILIKE $1) AND p.deleted_at IS NULL
      LIMIT 5`,
     [`%${query}%`],
   )
   return { success: true, data: rows }
+}
+
+// ─── Tipos auxiliares ─────────────────────────────────────────────────────────
+
+interface CrearProductoArgs {
+  nombre: string
+  precio_venta: number
+  precio_costo?: number
+  stock_inicial?: number
+  stock_minimo?: number
+  unidad?: string
+  sku?: string
+  descripcion?: string
+}
+
+interface AjustarStockArgs {
+  producto_id: string
+  producto_nombre: string
+  cantidad: number
+  tipo: 'ajuste_positivo' | 'ajuste_negativo'
+  notas?: string
+}
+
+interface RegistrarAbonoArgs {
+  cliente_id: string
+  cliente_nombre: string
+  monto: number
+  medio_pago?: string
+  referencia?: string
+}
+
+interface ActualizarEstadoArgs {
+  pedido_id: string
+  nuevo_estado: string
+  notas?: string
 }
 
 async function buscarProveedor(nombre: string, db: PoolClient): Promise<ToolResult> {
@@ -257,6 +312,139 @@ async function consultarMetricasIg(db: PoolClient): Promise<ToolResult> {
   }
 }
 
+async function crearProducto(args: CrearProductoArgs, db: PoolClient): Promise<ToolResult> {
+  const { rows } = await db.query<{ id: string; nombre: string }>(
+    `INSERT INTO productos (nombre, precio_venta, precio_costo, stock_minimo, unidad, sku, descripcion)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
+     RETURNING id, nombre`,
+    [
+      args.nombre,
+      args.precio_venta,
+      args.precio_costo ?? null,
+      args.stock_minimo ?? 0,
+      args.unidad ?? 'unidad',
+      args.sku ?? null,
+      args.descripcion ?? null,
+    ],
+  )
+  const producto = rows[0]!
+  if (args.stock_inicial && args.stock_inicial > 0) {
+    await db.query(
+      `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, notas)
+       VALUES ($1, 'ajuste_positivo', $2, 'Inventario inicial')`,
+      [producto.id, args.stock_inicial],
+    )
+  }
+  return { success: true, data: { ...producto, stock: args.stock_inicial ?? 0 } }
+}
+
+async function ajustarStock(args: AjustarStockArgs, db: PoolClient): Promise<ToolResult> {
+  await db.query(
+    `INSERT INTO movimientos_inventario (producto_id, tipo, cantidad, notas)
+     VALUES ($1, $2, $3, $4)`,
+    [args.producto_id, args.tipo, args.cantidad, args.notas ?? `Ajuste manual`],
+  )
+  const { rows } = await db.query(
+    `SELECT ${STOCK_SUBQUERY} AS stock FROM productos p WHERE p.id = $1`,
+    [args.producto_id],
+  )
+  return {
+    success: true,
+    data: {
+      producto: args.producto_nombre,
+      tipo: args.tipo,
+      cantidad: args.cantidad,
+      stockResultante: rows[0]?.stock ?? 0,
+    },
+  }
+}
+
+async function registrarAbono(args: RegistrarAbonoArgs, db: PoolClient): Promise<ToolResult> {
+  // Buscar la factura con saldo pendiente más antigua del cliente
+  const { rows: facturas } = await db.query<{ id: string; total: string; numero: string }>(
+    `SELECT fv.id, fv.total, fv.numero
+     FROM facturas_venta fv
+     WHERE fv.cliente_id = $1
+       AND fv.total > COALESCE((
+         SELECT SUM(a.monto) FROM abonos a
+         WHERE a.tipo_documento = 'factura_venta' AND a.documento_id = fv.id
+       ), 0)
+     ORDER BY fv.created_at ASC
+     LIMIT 1`,
+    [args.cliente_id],
+  )
+  if (!facturas.length) {
+    return { success: false, error: `${args.cliente_nombre} no tiene facturas con saldo pendiente.` }
+  }
+  const factura = facturas[0]!
+  await db.query(
+    `INSERT INTO abonos (tipo_documento, documento_id, monto, medio_pago, referencia)
+     VALUES ('factura_venta', $1, $2, $3, $4)`,
+    [factura.id, args.monto, args.medio_pago ?? 'efectivo', args.referencia ?? null],
+  )
+  return {
+    success: true,
+    data: {
+      cliente: args.cliente_nombre,
+      factura: factura.numero,
+      abono: args.monto,
+      medioPago: args.medio_pago ?? 'efectivo',
+    },
+  }
+}
+
+async function crearNota(args: { titulo: string; contenido?: string }, db: PoolClient): Promise<ToolResult> {
+  const { rows } = await db.query<{ id: string; titulo: string }>(
+    `INSERT INTO notas_internas (titulo, contenido)
+     VALUES ($1, $2)
+     RETURNING id, titulo`,
+    [args.titulo, args.contenido ?? null],
+  )
+  return { success: true, data: rows[0] }
+}
+
+async function actualizarEstadoPedido(args: ActualizarEstadoArgs, db: PoolClient): Promise<ToolResult> {
+  const { rows } = await db.query<{ id: string; numero: string; estado: string }>(
+    `UPDATE pedidos
+     SET estado = $1, notas = COALESCE($2, notas), updated_at = NOW()
+     WHERE id = $3
+     RETURNING id, numero, estado`,
+    [args.nuevo_estado, args.notas ?? null, args.pedido_id],
+  )
+  if (!rows.length) return { success: false, error: 'Pedido no encontrado.' }
+  return { success: true, data: rows[0] }
+}
+
+async function verHistorialCliente(clienteId: string, db: PoolClient): Promise<ToolResult> {
+  const [info, pedidos, saldo] = await Promise.all([
+    db.query(
+      `SELECT nombre, email, telefono FROM clientes WHERE id = $1`,
+      [clienteId],
+    ),
+    db.query(
+      `SELECT numero, estado, total, created_at::date AS fecha
+       FROM pedidos WHERE cliente_id = $1
+       ORDER BY created_at DESC LIMIT 10`,
+      [clienteId],
+    ),
+    db.query(
+      `SELECT COALESCE(SUM(fv.total),0) - COALESCE(SUM(ab.monto),0) AS saldo_pendiente
+       FROM facturas_venta fv
+       LEFT JOIN abonos ab ON ab.tipo_documento = 'factura_venta' AND ab.documento_id = fv.id
+       WHERE fv.cliente_id = $1`,
+      [clienteId],
+    ),
+  ])
+  return {
+    success: true,
+    data: {
+      cliente: info.rows[0] ?? null,
+      pedidos: pedidos.rows,
+      saldoPendiente: saldo.rows[0]?.saldo_pendiente ?? 0,
+    },
+  }
+}
+
 async function consultarResumenNegocio(db: PoolClient): Promise<ToolResult> {
   const [ventas, stockBajo, pedidosPendientes] = await Promise.all([
     db.query(`
@@ -266,9 +454,13 @@ async function consultarResumenNegocio(db: PoolClient): Promise<ToolResult> {
         AND estado NOT IN ('cancelado')
     `),
     db.query(`
-      SELECT nombre, stock_actual, stock_minimo
-      FROM productos
-      WHERE stock_minimo IS NOT NULL AND stock_actual <= stock_minimo
+      SELECT p.nombre,
+             ${STOCK_SUBQUERY} AS stock_actual,
+             p.stock_minimo
+      FROM productos p
+      WHERE p.stock_minimo IS NOT NULL
+        AND p.deleted_at IS NULL
+        AND ${STOCK_SUBQUERY} <= p.stock_minimo
       LIMIT 5
     `),
     db.query(`
