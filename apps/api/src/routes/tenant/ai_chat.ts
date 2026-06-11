@@ -4,7 +4,7 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type Groq from 'groq-sdk'
-import { AiClient, getGroq, AI_MODEL } from '../../lib/ai/client.js'
+import { AiClient, getGroq, AI_MODEL, isRateLimit } from '../../lib/ai/client.js'
 import { getToolsForContext } from '../../lib/ai/tools.js'
 import { executeTool } from '../../lib/ai/executor.js'
 import { buildSystemPrompt, buildNotasPrompt, type BusinessContext } from '../../lib/ai/prompts.js'
@@ -147,6 +147,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
     ]
 
     // Loop de tool calls — máximo 5 iteraciones para evitar ciclos infinitos
+    try {
     for (let i = 0; i < 5; i++) {
       const completion = await aiClient.chat({
         model: AI_MODEL,
@@ -205,6 +206,19 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
       response: finalCompletion.choices[0]?.message?.content ?? 'Listo.',
       actions: [],
     })
+    } catch (err) {
+      fastify.log.error({ err }, 'ai:chat error')
+      if (isRateLimit(err)) {
+        return reply.send({
+          response: '⏳ Límite diario de IA alcanzado. Intenta de nuevo en unos minutos.',
+          actions: [],
+        })
+      }
+      return reply.send({
+        response: '⚠ Error al procesar tu mensaje. Intenta de nuevo.',
+        actions: [],
+      })
+    }
   })
 
   // ─────────────────────────────────────────────────────────────────────────

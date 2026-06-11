@@ -80,7 +80,7 @@ export class AiClient {
   }
 }
 
-function isRateLimit(err: unknown): boolean {
+export function isRateLimit(err: unknown): boolean {
   if (err instanceof Error) {
     const msg = err.message.toLowerCase()
     return (

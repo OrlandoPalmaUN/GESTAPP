@@ -93,12 +93,19 @@ export function AiChat({ context = 'general' }: { context?: string }) {
         { role: 'assistant', content: res.response, actions: res.actions },
       ])
     } catch (err) {
+      let msg = 'Error al conectar con la IA.'
+      if (err instanceof ApiError) {
+        if (err.status === 429 || err.message.toLowerCase().includes('rate limit')) {
+          msg = '⏳ Límite diario de IA alcanzado. Intenta de nuevo en unos minutos.'
+        } else if (err.status === 503) {
+          msg = 'IA temporalmente no disponible. Intenta más tarde.'
+        } else {
+          msg = err.message
+        }
+      }
       setMessages([
         ...newMessages,
-        {
-          role: 'assistant',
-          content: `❌ ${err instanceof ApiError ? err.message : 'Error al conectar con la IA.'}`,
-        },
+        { role: 'assistant', content: `❌ ${msg}` },
       ])
     } finally {
       setLoading(false)
