@@ -486,6 +486,11 @@ export default function AppHome() {
 
   // 3. Crear pedido
   const [showCreateOrder, setShowCreateOrder] = useState(false);
+  // Inline: crear cliente desde el formulario de pedido
+  const [showInlineNewClient, setShowInlineNewClient] = useState(false);
+  const [inlineClientForm, setInlineClientForm] = useState({ nombre: '', email: '', telefono: '' });
+  const [inlineCreandoCliente, setInlineCreandoCliente] = useState(false);
+  const [inlineClientError, setInlineClientError] = useState<string | null>(null);
 
   // --- Gestor de pedido (popup) ---
   const [orderManager, setOrderManager] = useState<Order | null>(null);
@@ -1891,6 +1896,32 @@ export default function AppHome() {
         setOrderValidationError(err instanceof ApiError ? err.message : 'Ocurrió un error inesperado al crear el pedido.');
       }
     })();
+  };
+
+  // Crear cliente inline desde el formulario de pedido
+  const handleInlineCreateClient = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inlineClientForm.nombre.trim()) {
+      setInlineClientError('El nombre es obligatorio.');
+      return;
+    }
+    setInlineCreandoCliente(true);
+    setInlineClientError(null);
+    try {
+      const { cliente } = await api.crearCliente({
+        nombre: inlineClientForm.nombre.trim(),
+        email: inlineClientForm.email.trim() || undefined,
+        telefono: inlineClientForm.telefono.trim() || undefined,
+      });
+      await fetchPedidos(); // recarga customers
+      setSelectedCustomerId(cliente.id); // auto-selecciona el nuevo cliente
+      setShowInlineNewClient(false);
+      setInlineClientForm({ nombre: '', email: '', telefono: '' });
+    } catch (err) {
+      setInlineClientError(err instanceof ApiError ? err.message : 'No se pudo crear el cliente.');
+    } finally {
+      setInlineCreandoCliente(false);
+    }
   };
 
   /**
@@ -5104,22 +5135,73 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-lg w-full flex flex-col gap-4 relative">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR NUEVO PEDIDO</h3>
-              <button onClick={() => setShowCreateOrder(false)} className="font-mono font-bold text-lg hover:text-brand-red">×</button>
+              <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', email: '', telefono: '' }); }} className="font-mono font-bold text-lg hover:text-brand-red">×</button>
             </div>
 
             <form onSubmit={handleCreateOrder} className="flex flex-col gap-4 text-xs">
               
               <div className="flex flex-col gap-1">
-                <label className="font-mono font-bold">SELECCIONAR CLIENTE</label>
-                <select
-                  value={selectedCustomerId}
-                  onChange={(e) => setSelectedCustomerId(e.target.value)}
-                  className="neo-input"
-                >
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.id}>{c.nombre}{c.nit ? ` (${c.nit})` : ''}</option>
-                  ))}
-                </select>
+                <div className="flex items-center justify-between">
+                  <label className="font-mono font-bold">SELECCIONAR CLIENTE</label>
+                  <button
+                    type="button"
+                    onClick={() => { setShowInlineNewClient(v => !v); setInlineClientError(null); }}
+                    className="font-mono text-[10px] text-brand-blue hover:underline font-bold flex items-center gap-0.5"
+                  >
+                    {showInlineNewClient ? '✕ Cancelar' : '+ Nuevo cliente'}
+                  </button>
+                </div>
+
+                {!showInlineNewClient ? (
+                  <select
+                    value={selectedCustomerId}
+                    onChange={(e) => setSelectedCustomerId(e.target.value)}
+                    className="neo-input"
+                  >
+                    <option value="">— Sin cliente —</option>
+                    {customers.map((c) => (
+                      <option key={c.id} value={c.id}>{c.nombre}{c.nit ? ` (${c.nit})` : ''}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <div className="border border-black/20 bg-neutral-50 p-3 flex flex-col gap-2">
+                    <p className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Nuevo cliente</p>
+                    <form onSubmit={(e) => void handleInlineCreateClient(e)} className="flex flex-col gap-2">
+                      <input
+                        type="text"
+                        placeholder="Nombre *"
+                        value={inlineClientForm.nombre}
+                        onChange={e => setInlineClientForm(f => ({ ...f, nombre: e.target.value }))}
+                        className="neo-input text-xs"
+                        autoFocus
+                      />
+                      <input
+                        type="email"
+                        placeholder="Email (opcional)"
+                        value={inlineClientForm.email}
+                        onChange={e => setInlineClientForm(f => ({ ...f, email: e.target.value }))}
+                        className="neo-input text-xs"
+                      />
+                      <input
+                        type="tel"
+                        placeholder="Teléfono (opcional)"
+                        value={inlineClientForm.telefono}
+                        onChange={e => setInlineClientForm(f => ({ ...f, telefono: e.target.value }))}
+                        className="neo-input text-xs"
+                      />
+                      {inlineClientError && (
+                        <p className="text-brand-red font-mono text-[10px]">{inlineClientError}</p>
+                      )}
+                      <button
+                        type="submit"
+                        disabled={inlineCreandoCliente || !inlineClientForm.nombre.trim()}
+                        className="neo-btn bg-black text-white text-xs py-1.5 disabled:opacity-50"
+                      >
+                        {inlineCreandoCliente ? 'Creando…' : 'Crear y seleccionar'}
+                      </button>
+                    </form>
+                  </div>
+                )}
               </div>
 
               {/* Items agregados */}
