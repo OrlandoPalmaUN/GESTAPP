@@ -63,8 +63,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
 
   if (!res.ok) {
-    const body = (await res.json().catch(() => null)) as { message?: string } | null
-    throw new ApiError(body?.message ?? `Error ${res.status} al llamar ${path}`, res.status)
+    const body = (await res.json().catch(() => null)) as { message?: string; error?: string } | null
+    throw new ApiError(body?.message ?? body?.error ?? `Error ${res.status} al llamar ${path}`, res.status)
   }
 
   if (res.status === 204) return undefined as T
