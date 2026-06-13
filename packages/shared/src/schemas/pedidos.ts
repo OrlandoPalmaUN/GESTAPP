@@ -40,6 +40,14 @@ export const transicionarPedidoProveedorSchema = z.object({
   estado: estadoPedidoProveedorSchema,
   /** Al pasar a recibido/recibido_parcial se puede indicar un vencimiento para la CxP generada. */
   fechaVencimientoCxP: z.string().optional(),
+  /**
+   * Cantidades recibidas por ítem. Si se omite, se asume recepción total de cada ítem.
+   * Solo aplica al transicionar a 'recibido' o 'recibido_parcial'.
+   */
+  cantidades: z.array(z.object({
+    itemId: z.uuid(),
+    cantidadRecibida: z.number().nonnegative('La cantidad recibida no puede ser negativa.'),
+  })).optional(),
 })
 
 export const estadoPedidoSchema = z.enum(ESTADOS_PEDIDO)

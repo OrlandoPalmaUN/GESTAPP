@@ -34,7 +34,8 @@ import {
   GripVertical,
 } from 'lucide-react';
 
-import type { Abono, Categoria, CategoriaGasto, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor } from '@antigravity/shared';
+import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero } from '@antigravity/shared';
+import { CATEGORIAS_INGRESO } from '@antigravity/shared';
 
 // Helper para ajustar el brillo de un color hex
 // amount positivo = más claro (hacia blanco), negativo = más oscuro
@@ -260,6 +261,27 @@ export default function AppHome() {
   const [guardandoGasto, setGuardandoGasto] = useState(false);
   const [gastoFormError, setGastoFormError] = useState<string | null>(null);
 
+  // --- Ingresos bancarios manuales ---
+  const [ingresos, setIngresos] = useState<IngresoBancario[]>([]);
+  const [ingresosCargando, setIngresosCargando] = useState(false);
+  const [ingresosError, setIngresosError] = useState<string | null>(null);
+  const [showIngresoModal, setShowIngresoModal] = useState(false);
+  const [ingresoForm, setIngresoForm] = useState<{ descripcion: string; categoria: CategoriaIngreso; monto: string; fecha: string; medioPago: string; cuentaBancariaId: string; notas: string }>({
+    descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '',
+  });
+  const [guardandoIngreso, setGuardandoIngreso] = useState(false);
+  const [ingresoFormError, setIngresoFormError] = useState<string | null>(null);
+
+  // --- Resumen financiero ---
+  const [resumenFinanciero, setResumenFinanciero] = useState<ResumenFinanciero | null>(null);
+  const [resumenCargando, setResumenCargando] = useState(false);
+
+  // --- Modal recepción parcial de OC ---
+  const [showRecepcionModal, setShowRecepcionModal] = useState(false);
+  const [recepcionTarget, setRecepcionTarget] = useState<{ compra: PedidoProveedor; estado: EstadoPedidoProveedor } | null>(null);
+  const [recepcionCantidades, setRecepcionCantidades] = useState<Record<string, string>>({});
+  const [guardandoRecepcion, setGuardandoRecepcion] = useState(false);
+
   // --- CxP abono: modal de pago para facturas de proveedor ---
   const [showCxpAbonoModal, setShowCxpAbonoModal] = useState(false);
   const [selectedCxpInvoice, setSelectedCxpInvoice] = useState<{ id: string; numero: string; total: number; saldo: number } | null>(null);
@@ -346,7 +368,7 @@ export default function AppHome() {
   const [transicionandoCompra, setTransicionandoCompra] = useState(false);
 
   // --- SUB-TABS INTERNAS ---
-  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'bancos' | 'gastos'>('resumen');
+  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'bancos' | 'gastos' | 'ingresos'>('resumen');
 
   // --- BUSCADORES Y FILTROS ---
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -808,7 +830,7 @@ export default function AppHome() {
       });
       setShowGastoModal(false);
       setGastoForm({ descripcion: '', categoria: 'otros', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '' });
-      await Promise.all([fetchGastos(), fetchCuentasBancarias()]);
+      await Promise.all([fetchGastos(), fetchCuentasBancarias(), fetchResumen()]);
     } catch (error) {
       setGastoFormError(error instanceof ApiError ? error.message : 'No se pudo registrar el gasto.');
     } finally {
@@ -820,9 +842,121 @@ export default function AppHome() {
     if (!window.confirm(`¿Eliminar el gasto "${gasto.descripcion}"?`)) return;
     try {
       await api.eliminarGasto(gasto.id);
-      await fetchGastos();
+      await Promise.all([fetchGastos(), fetchResumen()]);
     } catch (error) {
       setGastosError(error instanceof ApiError ? error.message : 'No se pudo eliminar el gasto.');
+    }
+  };
+
+  // --- Ingresos bancarios manuales ---
+  const fetchIngresos = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    setIngresosCargando(true);
+    setIngresosError(null);
+    try {
+      const { ingresos: data } = await api.listarIngresos();
+      setIngresos(data);
+    } catch (error) {
+      setIngresosError(error instanceof ApiError ? error.message : 'No se pudieron cargar los ingresos.');
+    } finally {
+      setIngresosCargando(false);
+    }
+  }, [usuario?.tenantId]);
+
+  useEffect(() => { void fetchIngresos(); }, [fetchIngresos]);
+
+  const handleCrearIngreso = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const monto = parseFloat(ingresoForm.monto);
+    if (!ingresoForm.descripcion.trim() || !monto || monto <= 0) {
+      setIngresoFormError('Descripción y monto son obligatorios.');
+      return;
+    }
+    if (!ingresoForm.cuentaBancariaId) {
+      setIngresoFormError('Debes seleccionar una cuenta bancaria.');
+      return;
+    }
+    setGuardandoIngreso(true);
+    setIngresoFormError(null);
+    try {
+      await api.crearIngreso({
+        descripcion: ingresoForm.descripcion.trim(),
+        categoria: ingresoForm.categoria,
+        monto,
+        fecha: ingresoForm.fecha || undefined,
+        medioPago: ingresoForm.medioPago || undefined,
+        cuentaBancariaId: ingresoForm.cuentaBancariaId,
+        notas: ingresoForm.notas || undefined,
+      });
+      setShowIngresoModal(false);
+      setIngresoForm({ descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '' });
+      await Promise.all([fetchIngresos(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setIngresoFormError(error instanceof ApiError ? error.message : 'No se pudo registrar el ingreso.');
+    } finally {
+      setGuardandoIngreso(false);
+    }
+  };
+
+  const handleEliminarIngreso = async (ingreso: IngresoBancario) => {
+    if (!window.confirm(`¿Eliminar el ingreso "${ingreso.descripcion}"?`)) return;
+    try {
+      await api.eliminarIngreso(ingreso.id);
+      await Promise.all([fetchIngresos(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setIngresosError(error instanceof ApiError ? error.message : 'No se pudo eliminar el ingreso.');
+    }
+  };
+
+  // --- Resumen financiero ---
+  const fetchResumen = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    setResumenCargando(true);
+    try {
+      const { resumen } = await api.resumenFinanciero();
+      setResumenFinanciero(resumen);
+    } catch {
+      // resumen es informativo; si falla, no bloqueamos nada
+    } finally {
+      setResumenCargando(false);
+    }
+  }, [usuario?.tenantId]);
+
+  useEffect(() => { void fetchResumen(); }, [fetchResumen]);
+
+  // --- Recepción parcial de OC ---
+  const openRecepcionModal = (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
+    const cantidades: Record<string, string> = {};
+    for (const item of compra.items) {
+      // Preseleccionar la cantidad pendiente (cantidad total - ya recibida)
+      const pendiente = item.cantidad - (item.cantidadRecibida ?? 0);
+      cantidades[item.id] = estado === 'recibido' ? String(pendiente) : '';
+    }
+    setRecepcionCantidades(cantidades);
+    setRecepcionTarget({ compra, estado });
+    setShowRecepcionModal(true);
+  };
+
+  const handleConfirmarRecepcion = async () => {
+    if (!recepcionTarget) return;
+    setGuardandoRecepcion(true);
+    try {
+      const cantidades = recepcionTarget.compra.items
+        .map((item) => ({
+          itemId: item.id,
+          cantidadRecibida: (item.cantidadRecibida ?? 0) + (parseFloat(recepcionCantidades[item.id] ?? '0') || 0),
+        }))
+        .filter((c) => c.cantidadRecibida > 0);
+      const updated = await api.transicionarCompra(recepcionTarget.compra.id, recepcionTarget.estado, { cantidades });
+      setCompras(prev => prev.map(c => c.id === recepcionTarget.compra.id ? updated.pedido : c));
+      if (selectedCompra?.id === recepcionTarget.compra.id) setSelectedCompra(updated.pedido);
+      setShowRecepcionModal(false);
+      setRecepcionTarget(null);
+      await Promise.all([fetchCuentasBancarias(), fetchFinanzas(), fetchResumen()]);
+    } catch (error) {
+      alert(error instanceof ApiError ? error.message : 'Error al registrar recepción.');
+    } finally {
+      setGuardandoRecepcion(false);
     }
   };
 
@@ -887,7 +1021,7 @@ export default function AppHome() {
       });
       setShowCxpAbonoModal(false);
       setSelectedCxpInvoice(null);
-      await Promise.all([fetchFinanzas(), fetchCuentasBancarias()]);
+      await Promise.all([fetchFinanzas(), fetchCuentasBancarias(), fetchResumen()]);
     } catch (error) {
       setCxpAbonoError(error instanceof ApiError ? error.message : 'No se pudo registrar el pago.');
     } finally {
@@ -1097,6 +1231,11 @@ export default function AppHome() {
   };
 
   const handleTransicionarCompra = async (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
+    // Para recepciones, abrir modal de cantidades por ítem
+    if ((estado === 'recibido' || estado === 'recibido_parcial') && compra.items.some(i => i.productoId)) {
+      openRecepcionModal(compra, estado);
+      return;
+    }
     setTransicionandoCompra(true);
     try {
       const updated = await api.transicionarCompra(compra.id, estado);
@@ -1623,7 +1762,7 @@ export default function AppHome() {
         fecha: editAbonoForm.fecha || undefined,
       });
       setEditingAbono(null);
-      await fetchFinanzas();
+      await Promise.all([fetchFinanzas(), fetchResumen()]);
     } catch (error) {
       setFinanzasError(error instanceof ApiError ? error.message : 'No se pudo actualizar el abono.');
     }
@@ -1632,7 +1771,7 @@ export default function AppHome() {
     if (!window.confirm('¿Eliminar este abono? El saldo de la factura se recalculará. Podrás deshacerlo desde el aviso que aparecerá.')) return;
     try {
       await api.eliminarAbono(ab.id);
-      await fetchFinanzas();
+      await Promise.all([fetchFinanzas(), fetchResumen()]);
       mostrarUndoToast('Abono eliminado.', 'abono', ab.id);
     } catch (error) {
       setFinanzasError(error instanceof ApiError ? error.message : 'No se pudo eliminar el abono.');
@@ -1985,7 +2124,7 @@ export default function AppHome() {
       });
       setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' });
       // Refresh finanzas — updated invoice with new saldo comes back immediately.
-      await fetchFinanzas();
+      await Promise.all([fetchFinanzas(), fetchResumen()]);
     } catch (err) {
       setAbonoError(err instanceof ApiError ? err.message : 'No se pudo registrar el abono.');
     } finally {
@@ -2030,7 +2169,7 @@ export default function AppHome() {
       setShowCreateAbono(false);
       setAbonoMonto('');
       setAbonoReferencia('');
-      await fetchFinanzas();
+      await Promise.all([fetchFinanzas(), fetchResumen()]);
     } catch (error) {
       setFinanzasError(error instanceof ApiError ? error.message : 'No se pudo registrar el abono.');
     }
@@ -3292,7 +3431,7 @@ export default function AppHome() {
                     
                     {/* Tabs de Finanzas */}
                     <div className="flex flex-wrap border-b-2 border-black bg-white">
-                      {(['resumen', 'cxc', 'cxp', 'compras', 'bancos', 'gastos'] as const).map((tab) => (
+                      {(['resumen', 'cxc', 'cxp', 'compras', 'bancos', 'gastos', 'ingresos'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setFinanceSubTab(tab)}
@@ -3305,9 +3444,10 @@ export default function AppHome() {
                           {tab === 'resumen' && 'Resumen Financiero'}
                           {tab === 'cxc' && 'CxC · Por Cobrar'}
                           {tab === 'cxp' && 'CxP · Por Pagar'}
-                          {tab === 'compras' && '🛒 Compras / OC'}
+                          {tab === 'compras' && 'Compras / OC'}
                           {tab === 'bancos' && 'Cuentas Bancarias'}
-                          {tab === 'gastos' && '💸 Gastos Op.'}
+                          {tab === 'gastos' && 'Gastos Op.'}
+                          {tab === 'ingresos' && 'Ingresos'}
                         </button>
                       ))}
                     </div>
@@ -3333,36 +3473,81 @@ export default function AppHome() {
                     {/* Contenido de Tabs Financieros */}
                     {financeSubTab === 'resumen' && (
                       <div className="flex flex-col gap-6">
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                          <div className="neo-card bg-white">
-                            <span className="font-mono text-[10px] text-neutral-500 font-bold">TOTAL FACTURADO CxC</span>
-                            <span className="text-xl font-black text-black block mt-1">
-                              ${invoices.filter(i => i.tipo === 'cxc').reduce((a, b) => a + b.total, 0).toLocaleString('es-CO')}
-                            </span>
-                            <span className="text-[10px] text-neutral-500 font-mono">Facturas de Venta emitidas</span>
-                          </div>
+                        {resumenCargando && <p className="text-xs text-neutral-500 font-mono p-2">Calculando resumen financiero…</p>}
 
-                          <div className="neo-card bg-white">
-                            <span className="font-mono text-[10px] text-neutral-500 font-bold">TOTAL ABONADO / RECAUDADO</span>
-                            <span className="text-xl font-black text-green-700 block mt-1">
-                              ${abonos.reduce((a, b) => {
-                                const inv = invoices.find(i => i.id === b.factura_id);
-                                return inv?.tipo === 'cxc' ? a + b.monto : a;
-                              }, 0).toLocaleString('es-CO')}
-                            </span>
-                            <span className="text-[10px] text-green-600 font-mono">✓ Liquidado en bancos</span>
-                          </div>
+                        {resumenFinanciero && (
+                          <>
+                            {/* Fila principal: flujo neto + saldo en cuentas */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className={`neo-card ${resumenFinanciero.flujoNeto >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">FLUJO NETO DEL PERÍODO</span>
+                                <span className={`text-2xl font-black block mt-1 ${resumenFinanciero.flujoNeto >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
+                                  {resumenFinanciero.flujoNeto >= 0 ? '+' : ''}{resumenFinanciero.flujoNeto.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">
+                                  {resumenFinanciero.periodo.desde} → {resumenFinanciero.periodo.hasta}
+                                </span>
+                              </div>
+                              <div className="neo-card bg-white">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">SALDO TOTAL EN CUENTAS</span>
+                                <span className="text-2xl font-black text-black block mt-1">
+                                  {resumenFinanciero.saldoCuentas.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Suma de todas las cuentas bancarias activas</span>
+                              </div>
+                            </div>
 
-                          <div className="neo-card bg-white">
-                            <span className="font-mono text-[10px] text-neutral-500 font-bold">CARTERA PENDIENTE COBRO</span>
-                            <span className="text-xl font-black text-brand-red block mt-1">
-                              ${financialMetrics.totalCxC.toLocaleString('es-CO')}
-                            </span>
-                            <span className="text-[10px] text-brand-red font-mono">
-                              ${financialMetrics.vencidoCxC.toLocaleString('es-CO')} en mora vencida
-                            </span>
-                          </div>
-                        </div>
+                            {/* Ingresos vs Egresos */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              <div className="neo-card bg-white">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">COBROS CxC</span>
+                                <span className="text-lg font-black text-green-700 block mt-1">
+                                  +{resumenFinanciero.ingresosCxC.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Abonos de clientes</span>
+                              </div>
+                              <div className="neo-card bg-white">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUAL.</span>
+                                <span className="text-lg font-black text-green-700 block mt-1">
+                                  +{resumenFinanciero.ingresosManuales.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Capital, préstamos, etc.</span>
+                              </div>
+                              <div className="neo-card bg-white">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">PAGOS CxP</span>
+                                <span className="text-lg font-black text-brand-red block mt-1">
+                                  -{resumenFinanciero.egresosCxP.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Abonos a proveedores</span>
+                              </div>
+                              <div className="neo-card bg-white">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">GASTOS OP.</span>
+                                <span className="text-lg font-black text-brand-red block mt-1">
+                                  -{resumenFinanciero.egresosGastos.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Arriendo, nómina, etc.</span>
+                              </div>
+                            </div>
+
+                            {/* Cartera pendiente */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <div className="neo-card bg-white">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">CARTERA POR COBRAR (CxC)</span>
+                                <span className="text-xl font-black text-black block mt-1">
+                                  {resumenFinanciero.cxcPendiente.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Saldo pendiente de clientes</span>
+                              </div>
+                              <div className="neo-card bg-white">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">DEUDA CON PROVEEDORES (CxP)</span>
+                                <span className="text-xl font-black text-brand-red block mt-1">
+                                  {resumenFinanciero.cxpPendiente.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                </span>
+                                <span className="text-[10px] text-neutral-500 font-mono">Saldo pendiente de facturas de compra</span>
+                              </div>
+                            </div>
+                          </>
+                        )}
 
                         {/* Listado de Abonos Recientes */}
                         <div className="neo-card bg-white">
@@ -3826,6 +4011,81 @@ export default function AppHome() {
                               })}
                               {gastos.length === 0 && !gastosCargando && (
                                 <tr><td colSpan={7} className="p-8 text-center text-xs text-neutral-500 font-mono">No hay gastos operativos registrados.</td></tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* INGRESOS TAB */}
+                    {financeSubTab === 'ingresos' && (
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-center justify-between bg-white border-2 border-black p-3">
+                          <div>
+                            <span className="font-mono text-xs font-bold">INGRESOS BANCARIOS MANUALES</span>
+                            <span className="ml-2 text-xs text-neutral-500">Total: <strong>+${ingresos.reduce((a, i) => a + i.monto, 0).toLocaleString('es-CO')}</strong></span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setIngresoForm({ descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: bankAccounts[0]?.id ?? '', notas: '' });
+                              setIngresoFormError(null);
+                              setShowIngresoModal(true);
+                            }}
+                            className="neo-btn-secondary text-xs py-1.5 flex items-center gap-1.5"
+                          >
+                            <Plus size={14} /> Registrar Ingreso
+                          </button>
+                        </div>
+
+                        {ingresosCargando && <p className="text-xs text-neutral-500 font-mono p-4">Cargando ingresos…</p>}
+                        {ingresosError && <p className="text-xs text-brand-red font-mono p-4">{ingresosError}</p>}
+
+                        <div className="neo-card bg-white p-0">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
+                                <th className="p-3">DESCRIPCIÓN</th>
+                                <th className="p-3">CATEGORÍA</th>
+                                <th className="p-3 text-right">MONTO</th>
+                                <th className="p-3 text-center">FECHA</th>
+                                <th className="p-3">MEDIO PAGO</th>
+                                <th className="p-3">CUENTA DESTINO</th>
+                                <th className="p-3 text-center">ACCIONES</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {ingresos.map((ing) => {
+                                const cuenta = bankAccounts.find(b => b.id === ing.cuentaBancariaId);
+                                return (
+                                  <tr key={ing.id} className="border-b border-neutral-200 hover:bg-neutral-50">
+                                    <td className="p-3 font-semibold text-black">{ing.descripcion}</td>
+                                    <td className="p-3">
+                                      <span className="inline-block border border-neutral-300 text-[10px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
+                                        {ing.categoria.replace('_', ' ').toUpperCase()}
+                                      </span>
+                                    </td>
+                                    <td className="p-3 text-right font-mono font-bold text-green-700">
+                                      +${ing.monto.toLocaleString('es-CO')}
+                                    </td>
+                                    <td className="p-3 text-center font-mono text-neutral-600">{ing.fecha}</td>
+                                    <td className="p-3 text-neutral-600">{ing.medioPago ?? '—'}</td>
+                                    <td className="p-3 text-neutral-600">{cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—'}</td>
+                                    <td className="p-3 text-center">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleEliminarIngreso(ing)}
+                                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                        title="Eliminar ingreso"
+                                      >
+                                        <Trash2 size={12} />
+                                      </button>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                              {ingresos.length === 0 && !ingresosCargando && (
+                                <tr><td colSpan={7} className="p-8 text-center text-xs text-neutral-500 font-mono">No hay ingresos registrados. Usa el botón de arriba para registrar capital, préstamos, devoluciones, etc.</td></tr>
                               )}
                             </tbody>
                           </table>
@@ -5798,7 +6058,8 @@ export default function AppHome() {
                 <thead>
                   <tr className="bg-neutral-100 font-mono font-bold text-[10px]">
                     <th className="p-2 text-left">PRODUCTO / CONCEPTO</th>
-                    <th className="p-2 text-right">CANT.</th>
+                    <th className="p-2 text-right">PEDIDO</th>
+                    <th className="p-2 text-right">RECIBIDO</th>
                     <th className="p-2 text-right">P. UNIT.</th>
                     <th className="p-2 text-right">SUBTOTAL</th>
                   </tr>
@@ -5806,10 +6067,20 @@ export default function AppHome() {
                 <tbody>
                   {selectedCompra.items.map(item => {
                     const prod = item.productoId ? products.find(p => p.id === item.productoId) : null;
+                    const recibido = item.cantidadRecibida ?? 0;
+                    const pendiente = item.cantidad - recibido;
                     return (
                       <tr key={item.id} className="border-b border-neutral-100">
                         <td className="p-2">{prod?.nombre ?? item.concepto ?? '—'}</td>
                         <td className="p-2 text-right font-mono">{item.cantidad}</td>
+                        <td className="p-2 text-right font-mono">
+                          <span className={recibido >= item.cantidad ? 'text-green-700 font-bold' : recibido > 0 ? 'text-brand-yellow font-bold' : 'text-neutral-400'}>
+                            {recibido}
+                          </span>
+                          {pendiente > 0 && (
+                            <span className="text-[10px] text-neutral-400 ml-1">({pendiente} pend.)</span>
+                          )}
+                        </td>
                         <td className="p-2 text-right font-mono">${item.precioUnitario.toLocaleString('es-CO')}</td>
                         <td className="p-2 text-right font-mono font-bold">${item.subtotal.toLocaleString('es-CO')}</td>
                       </tr>
@@ -6926,6 +7197,157 @@ export default function AppHome() {
                 <button type="button" onClick={() => setShowGastoModal(false)} className="neo-btn flex-1 py-2">Cancelar</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: INGRESO BANCARIO ──────────────────────────────────────── */}
+      {showIngresoModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+            <div className="border-b-2 border-black p-4 flex justify-between items-center">
+              <h3 className="font-mono text-sm font-bold">REGISTRAR INGRESO BANCARIO</h3>
+              <button onClick={() => setShowIngresoModal(false)} className="neo-btn p-1">✕</button>
+            </div>
+            <form onSubmit={(e) => void handleCrearIngreso(e)} className="p-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">DESCRIPCIÓN *</label>
+                <input
+                  type="text"
+                  value={ingresoForm.descripcion}
+                  onChange={e => setIngresoForm(f => ({ ...f, descripcion: e.target.value }))}
+                  className="neo-input"
+                  placeholder="Ej: Aporte de capital inicial"
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">CATEGORÍA</label>
+                  <select value={ingresoForm.categoria} onChange={e => setIngresoForm(f => ({ ...f, categoria: e.target.value as CategoriaIngreso }))} className="neo-input font-mono text-sm">
+                    {CATEGORIAS_INGRESO.map(c => (
+                      <option key={c} value={c}>{c.replace('_', ' ').toUpperCase()}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">MONTO *</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0.01"
+                    value={ingresoForm.monto}
+                    onChange={e => setIngresoForm(f => ({ ...f, monto: e.target.value }))}
+                    className="neo-input font-mono"
+                    required
+                    placeholder="0.00"
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">FECHA</label>
+                  <input type="date" value={ingresoForm.fecha} onChange={e => setIngresoForm(f => ({ ...f, fecha: e.target.value }))} className="neo-input font-mono" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">MEDIO DE PAGO</label>
+                  <select value={ingresoForm.medioPago} onChange={e => setIngresoForm(f => ({ ...f, medioPago: e.target.value }))} className="neo-input font-mono text-sm">
+                    <option value="">— Sin especificar —</option>
+                    <option value="efectivo">Efectivo</option>
+                    <option value="transferencia">Transferencia</option>
+                    <option value="tarjeta">Tarjeta</option>
+                    <option value="cheque">Cheque</option>
+                  </select>
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">ACREDITAR A CUENTA *</label>
+                <select value={ingresoForm.cuentaBancariaId} onChange={e => setIngresoForm(f => ({ ...f, cuentaBancariaId: e.target.value }))} className="neo-input font-mono" required>
+                  <option value="">— Selecciona cuenta —</option>
+                  {bankAccounts.map(b => (
+                    <option key={b.id} value={b.id}>{b.banco} · {b.numero} (${b.saldo.toLocaleString('es-CO')})</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">NOTAS</label>
+                <textarea value={ingresoForm.notas} onChange={e => setIngresoForm(f => ({ ...f, notas: e.target.value }))} className="neo-input resize-none h-16" placeholder="Observaciones adicionales..." />
+              </div>
+              {ingresoFormError && <p className="text-xs text-brand-red font-mono">{ingresoFormError}</p>}
+              <div className="flex gap-2 pt-2">
+                <button type="submit" disabled={guardandoIngreso} className="neo-btn-secondary flex-1 py-2 font-bold">
+                  {guardandoIngreso ? 'Registrando…' : '+ Registrar Ingreso'}
+                </button>
+                <button type="button" onClick={() => setShowIngresoModal(false)} className="neo-btn flex-1 py-2">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ─── MODAL: RECEPCIÓN OC CON CANTIDADES ───────────────────────────── */}
+      {showRecepcionModal && recepcionTarget && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border-2 border-black w-full max-w-lg shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]">
+            <div className="border-b-2 border-black p-4 flex justify-between items-center">
+              <div>
+                <h3 className="font-mono text-sm font-bold">RECEPCIÓN {recepcionTarget.estado === 'recibido_parcial' ? 'PARCIAL' : 'TOTAL'}</h3>
+                <p className="text-[10px] text-neutral-500 font-mono">OC {recepcionTarget.compra.numero} — Ingresa las cantidades recibidas</p>
+              </div>
+              <button onClick={() => { setShowRecepcionModal(false); setRecepcionTarget(null); }} className="neo-btn p-1">✕</button>
+            </div>
+            <div className="p-4 flex flex-col gap-4">
+              <table className="w-full text-xs border-collapse">
+                <thead>
+                  <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold">
+                    <th className="p-2 text-left">ÍTEM</th>
+                    <th className="p-2 text-center">PEDIDO</th>
+                    <th className="p-2 text-center">YA RECIBIDO</th>
+                    <th className="p-2 text-center">RECIBIR AHORA</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {recepcionTarget.compra.items.map(item => {
+                    const label = item.productoId
+                      ? (products.find(p => p.id === item.productoId)?.nombre ?? item.productoId.slice(0, 8))
+                      : (item.concepto ?? '—');
+                    const pendiente = item.cantidad - (item.cantidadRecibida ?? 0);
+                    return (
+                      <tr key={item.id} className="border-b border-neutral-200">
+                        <td className="p-2 font-semibold">{label}</td>
+                        <td className="p-2 text-center font-mono">{item.cantidad}</td>
+                        <td className="p-2 text-center font-mono text-neutral-500">{item.cantidadRecibida ?? 0}</td>
+                        <td className="p-2">
+                          <input
+                            type="number"
+                            step="0.001"
+                            min="0"
+                            max={pendiente}
+                            value={recepcionCantidades[item.id] ?? ''}
+                            onChange={e => setRecepcionCantidades(prev => ({ ...prev, [item.id]: e.target.value }))}
+                            className="neo-input font-mono text-center w-24"
+                            placeholder={`máx ${pendiente}`}
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  disabled={guardandoRecepcion}
+                  onClick={() => void handleConfirmarRecepcion()}
+                  className="neo-btn-secondary flex-1 py-2 font-bold text-sm"
+                >
+                  {guardandoRecepcion ? 'Registrando…' : `Confirmar Recepción ${recepcionTarget.estado === 'recibido_parcial' ? 'Parcial' : 'Total'}`}
+                </button>
+                <button type="button" onClick={() => { setShowRecepcionModal(false); setRecepcionTarget(null); }} className="neo-btn py-2 px-4">
+                  Cancelar
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}

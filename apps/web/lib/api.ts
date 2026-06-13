@@ -1,4 +1,4 @@
-import type { Abono, Categoria, CategoriaGasto, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, Proveedor, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario } from '@antigravity/shared'
+import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, Proveedor, ResumenFinanciero, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario } from '@antigravity/shared'
 
 /** Un elemento en la papelera — puede ser de cualquier módulo (ver `EntidadPapelera` en la API). */
 export interface ItemPapelera {
@@ -404,11 +404,43 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  transicionarCompra: (id: string, estado: EstadoPedidoProveedor, fechaVencimientoCxP?: string) =>
+  transicionarCompra: (
+    id: string,
+    estado: EstadoPedidoProveedor,
+    opts?: { fechaVencimientoCxP?: string; cantidades?: { itemId: string; cantidadRecibida: number }[] },
+  ) =>
     request<{ pedido: PedidoProveedor }>(`/compras/${id}/estado`, {
       method: 'PATCH',
-      body: JSON.stringify({ estado, ...(fechaVencimientoCxP ? { fechaVencimientoCxP } : {}) }),
+      body: JSON.stringify({ estado, ...opts }),
     }),
+
+  listarIngresos: () =>
+    request<{ ingresos: IngresoBancario[] }>('/finanzas/ingresos'),
+
+  crearIngreso: (data: {
+    descripcion: string
+    categoria: CategoriaIngreso
+    monto: number
+    fecha?: string
+    medioPago?: string
+    cuentaBancariaId: string
+    notas?: string
+  }) =>
+    request<{ ingreso: IngresoBancario }>('/finanzas/ingresos', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  eliminarIngreso: (id: string) =>
+    request<void>(`/finanzas/ingresos/${id}`, { method: 'DELETE' }),
+
+  resumenFinanciero: (desde?: string, hasta?: string) => {
+    const params = new URLSearchParams()
+    if (desde) params.set('desde', desde)
+    if (hasta) params.set('hasta', hasta)
+    const qs = params.toString()
+    return request<{ resumen: ResumenFinanciero }>(`/finanzas/resumen${qs ? `?${qs}` : ''}`)
+  },
 
   eliminarCompra: (id: string) =>
     request<void>(`/compras/${id}`, { method: 'DELETE' }),

@@ -8,14 +8,18 @@ import {
   crearCuentaBancariaSchema,
   crearFacturaSchema,
   crearGastoOperativoSchema,
+  crearIngresoBancarioSchema,
   crearTransferenciaSchema,
   TIPO_DOCUMENTO_POR_TIPO_FACTURA,
   tipoFacturaSchema,
   type Abono,
+  type CategoriaGasto,
+  type CategoriaIngreso,
   type CuentaBancaria,
   type Factura,
   type GastoOperativo,
-  type CategoriaGasto,
+  type IngresoBancario,
+  type ResumenFinanciero,
   type TipoFactura,
   type TransferenciaBancaria,
 } from '@antigravity/shared'
@@ -89,6 +93,19 @@ interface FilaGasto {
   created_at: Date
 }
 
+interface FilaIngreso {
+  id: string
+  descripcion: string
+  categoria: string
+  monto: string
+  fecha: Date
+  medio_pago: string | null
+  cuenta_bancaria_id: string
+  notas: string | null
+  usuario_id: string | null
+  created_at: Date
+}
+
 function aCuentaBancaria(row: FilaCuentaBancaria): CuentaBancaria {
   return {
     id: row.id,
@@ -132,6 +149,21 @@ function aGasto(row: FilaGasto): GastoOperativo {
     id: row.id,
     descripcion: row.descripcion,
     categoria: row.categoria as CategoriaGasto,
+    monto: Number(row.monto),
+    fecha: row.fecha.toISOString().slice(0, 10),
+    medioPago: row.medio_pago,
+    cuentaBancariaId: row.cuenta_bancaria_id,
+    notas: row.notas,
+    usuarioId: row.usuario_id,
+    createdAt: row.created_at.toISOString(),
+  }
+}
+
+function aIngreso(row: FilaIngreso): IngresoBancario {
+  return {
+    id: row.id,
+    descripcion: row.descripcion,
+    categoria: row.categoria as CategoriaIngreso,
     monto: Number(row.monto),
     fecha: row.fecha.toISOString().slice(0, 10),
     medioPago: row.medio_pago,
@@ -198,7 +230,10 @@ function exigirTenant(request: FastifyRequest, reply: FastifyReply): request is 
 async function generarNumeroFactura(tenantDb: FastifyRequest['tenantDb'] & {}, tipo: TipoFactura): Promise<string> {
   const tabla = tipo === 'cxc' ? 'facturas_venta' : 'facturas_compra'
   const prefijo = tipo === 'cxc' ? 'FV' : 'FC'
+  const lockKey = tipo === 'cxc' ? 'numero_factura_venta' : 'numero_factura_compra'
   const anio = new Date().getFullYear()
+  // Advisory lock por tipo — previene colisiones bajo carga concurrente.
+  await tenantDb.query(`SELECT pg_advisory_xact_lock(hashtext('${lockKey}'))`)
   const { rows } = await tenantDb.query<{ total: string }>(
     `SELECT COUNT(*)::text AS total FROM ${tabla} WHERE numero LIKE $1`,
     [`${prefijo}-${anio}-%`],
@@ -216,7 +251,7 @@ async function cargarAbonosPorFactura(
   if (facturaIds.length === 0) return new Map()
   const { rows } = await tenantDb.query<FilaAbono>(
     `SELECT id, tipo_documento, documento_id, monto, fecha, medio_pago, referencia, usuario_id, created_at
-     FROM abonos WHERE tipo_documento = $1 AND documento_id = ANY($2::uuid[])
+     FROM abonos WHERE tipo_documento = $1 AND documento_id = ANY($2::uuid[]) AND deleted_at IS NULL
      ORDER BY fecha DESC, created_at DESC`,
     [tipoDocumento, facturaIds],
   )
@@ -379,7 +414,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
 
       const abonosRes = await client.query<FilaAbono>(
         `SELECT id, tipo_documento, documento_id, monto, fecha, medio_pago, referencia, usuario_id, created_at
-         FROM abonos WHERE tipo_documento = $1 AND documento_id = $2 FOR UPDATE`,
+         FROM abonos WHERE tipo_documento = $1 AND documento_id = $2 AND deleted_at IS NULL FOR UPDATE`,
         [tipoDocumento, factura.id],
       )
       const saldoActual = calcularSaldoPendiente(Number(factura.total), abonosRes.rows.map(aAbono))
@@ -519,14 +554,41 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   // DELETE /finanzas/abonos/:id — borrado suave: el saldo de la factura se
   // recalcula automáticamente al excluir este abono (nunca se guarda, ver
   // `calcularSaldoPendiente`) — deshacerlo desde /papelera revierte el efecto al instante.
+  // Si el abono tenía cuenta bancaria asociada, se revierte el movimiento de saldo en la misma tx.
   fastify.delete<{ Params: { id: string } }>('/finanzas/abonos/:id', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
-    const { rowCount } = await request.tenantDb.query(
-      'UPDATE abonos SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
-      [request.params.id],
-    )
-    if (rowCount === 0) return reply.notFound('Abono no encontrado.')
-    return reply.status(204).send()
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const { rows, rowCount } = await client.query<{ tipo_documento: string; monto: string; cuenta_bancaria_id: string | null }>(
+        'SELECT tipo_documento, monto, cuenta_bancaria_id FROM abonos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [request.params.id],
+      )
+      if (rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Abono no encontrado.')
+      }
+
+      await client.query('UPDATE abonos SET deleted_at = NOW() WHERE id = $1', [request.params.id])
+
+      const abono = rows[0]!
+      if (abono.cuenta_bancaria_id) {
+        // Al crear: CxC suma (+), CxP resta (-). Al eliminar: operación inversa.
+        const operacion = abono.tipo_documento === 'factura_venta' ? '-' : '+'
+        await client.query(
+          `UPDATE cuentas_bancarias SET saldo = saldo ${operacion} $1 WHERE id = $2 AND deleted_at IS NULL`,
+          [abono.monto, abono.cuenta_bancaria_id],
+        )
+      }
+
+      await client.query('COMMIT')
+      return reply.status(204).send()
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
   })
 
   // --- Cuentas bancarias (antes hardcodeadas como `INITIAL_BANK_ACCOUNTS`) ---
@@ -740,13 +802,216 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   // DELETE /finanzas/gastos/:id — borrado suave.
+  // Si el gasto tenía cuenta bancaria, se revierte el descuento del saldo en la misma tx.
   fastify.delete<{ Params: { id: string } }>('/finanzas/gastos/:id', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
-    const { rowCount } = await request.tenantDb.query(
-      'UPDATE gastos_operativos SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
-      [request.params.id],
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const { rows, rowCount } = await client.query<{ monto: string; cuenta_bancaria_id: string | null }>(
+        'SELECT monto, cuenta_bancaria_id FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [request.params.id],
+      )
+      if (rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Gasto no encontrado.')
+      }
+
+      await client.query('UPDATE gastos_operativos SET deleted_at = NOW() WHERE id = $1', [request.params.id])
+
+      const gasto = rows[0]!
+      if (gasto.cuenta_bancaria_id) {
+        // Al crear: se restó el monto. Al eliminar: se devuelve.
+        await client.query(
+          'UPDATE cuentas_bancarias SET saldo = saldo + $1 WHERE id = $2 AND deleted_at IS NULL',
+          [gasto.monto, gasto.cuenta_bancaria_id],
+        )
+      }
+
+      await client.query('COMMIT')
+      return reply.status(204).send()
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
+  // ─── INGRESOS BANCARIOS ───────────────────────────────────────────────────
+
+  // GET /finanzas/ingresos — historial de ingresos manuales.
+  fastify.get('/finanzas/ingresos', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const { rows } = await request.tenantDb.query<FilaIngreso>(
+      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+       FROM ingresos_bancarios WHERE deleted_at IS NULL ORDER BY fecha DESC, created_at DESC`,
     )
-    if (rowCount === 0) return reply.notFound('Gasto no encontrado.')
-    return reply.status(204).send()
+    return reply.send({ ingresos: rows.map(aIngreso) })
+  })
+
+  // POST /finanzas/ingresos — registra un ingreso y suma el monto a la cuenta bancaria.
+  fastify.post('/finanzas/ingresos', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const body = crearIngresoBancarioSchema.safeParse(request.body)
+    if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const cuentaRes = await client.query<{ id: string; saldo: string }>(
+        'SELECT id, saldo FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [body.data.cuentaBancariaId],
+      )
+      if (cuentaRes.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.badRequest('La cuenta bancaria seleccionada no existe.')
+      }
+
+      const fecha = body.data.fecha ?? new Date().toISOString().slice(0, 10)
+      const { rows } = await client.query<FilaIngreso>(
+        `INSERT INTO ingresos_bancarios (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+        [
+          body.data.descripcion,
+          body.data.categoria,
+          body.data.monto,
+          fecha,
+          body.data.medioPago ?? null,
+          body.data.cuentaBancariaId,
+          body.data.notas ?? null,
+          request.user.sub,
+        ],
+      )
+
+      await client.query(
+        'UPDATE cuentas_bancarias SET saldo = saldo + $1 WHERE id = $2',
+        [body.data.monto, body.data.cuentaBancariaId],
+      )
+
+      await client.query('COMMIT')
+      return reply.status(201).send({ ingreso: aIngreso(rows[0]!) })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
+  // DELETE /finanzas/ingresos/:id — borrado suave; revierte el saldo bancario.
+  fastify.delete<{ Params: { id: string } }>('/finanzas/ingresos/:id', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const { rows, rowCount } = await client.query<{ monto: string; cuenta_bancaria_id: string }>(
+        'SELECT monto, cuenta_bancaria_id FROM ingresos_bancarios WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [request.params.id],
+      )
+      if (rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Ingreso no encontrado.')
+      }
+
+      await client.query('UPDATE ingresos_bancarios SET deleted_at = NOW() WHERE id = $1', [request.params.id])
+
+      const ingreso = rows[0]!
+      await client.query(
+        'UPDATE cuentas_bancarias SET saldo = saldo - $1 WHERE id = $2 AND deleted_at IS NULL',
+        [ingreso.monto, ingreso.cuenta_bancaria_id],
+      )
+
+      await client.query('COMMIT')
+      return reply.status(204).send()
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
+  // ─── RESUMEN FINANCIERO ───────────────────────────────────────────────────
+
+  // GET /finanzas/resumen?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+  // Si no se pasan fechas, usa el mes en curso.
+  fastify.get<{ Querystring: { desde?: string; hasta?: string } }>('/finanzas/resumen', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const hoy = new Date()
+    const desde = request.query.desde ?? new Date(hoy.getFullYear(), hoy.getMonth(), 1).toISOString().slice(0, 10)
+    const hasta = request.query.hasta ?? new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).toISOString().slice(0, 10)
+
+    const db = request.tenantDb
+
+    const [cxcRes, cxpRes, gastosRes, ingresosRes, saldoRes, facturasCxcRes, facturasCxpRes] = await Promise.all([
+      // Abonos CxC cobrados en el periodo
+      db.query<{ total: string }>(
+        `SELECT COALESCE(SUM(monto), 0)::text AS total FROM abonos
+         WHERE tipo_documento = 'factura_venta' AND deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+        [desde, hasta],
+      ),
+      // Abonos CxP pagados en el periodo
+      db.query<{ total: string }>(
+        `SELECT COALESCE(SUM(monto), 0)::text AS total FROM abonos
+         WHERE tipo_documento = 'factura_compra' AND deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+        [desde, hasta],
+      ),
+      // Gastos operativos del periodo
+      db.query<{ total: string }>(
+        `SELECT COALESCE(SUM(monto), 0)::text AS total FROM gastos_operativos
+         WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+        [desde, hasta],
+      ),
+      // Ingresos manuales del periodo
+      db.query<{ total: string }>(
+        `SELECT COALESCE(SUM(monto), 0)::text AS total FROM ingresos_bancarios
+         WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+        [desde, hasta],
+      ),
+      // Saldo total en cuentas bancarias activas
+      db.query<{ total: string }>(
+        `SELECT COALESCE(SUM(saldo), 0)::text AS total FROM cuentas_bancarias WHERE deleted_at IS NULL`,
+      ),
+      // Facturas CxC activas con sus abonos (para calcular saldo pendiente)
+      db.query<{ total: string; abonado: string }>(
+        `SELECT fv.total::text, COALESCE(SUM(ab.monto), 0)::text AS abonado
+         FROM facturas_venta fv
+         LEFT JOIN abonos ab ON ab.documento_id = fv.id AND ab.tipo_documento = 'factura_venta' AND ab.deleted_at IS NULL
+         WHERE fv.deleted_at IS NULL
+         GROUP BY fv.id, fv.total`,
+      ),
+      // Facturas CxP activas con sus abonos
+      db.query<{ total: string; abonado: string }>(
+        `SELECT fc.total::text, COALESCE(SUM(ab.monto), 0)::text AS abonado
+         FROM facturas_compra fc
+         LEFT JOIN abonos ab ON ab.documento_id = fc.id AND ab.tipo_documento = 'factura_compra' AND ab.deleted_at IS NULL
+         WHERE fc.deleted_at IS NULL
+         GROUP BY fc.id, fc.total`,
+      ),
+    ])
+
+    const cxcPendiente = facturasCxcRes.rows.reduce((acc, r) => acc + Math.max(0, Number(r.total) - Number(r.abonado)), 0)
+    const cxpPendiente = facturasCxpRes.rows.reduce((acc, r) => acc + Math.max(0, Number(r.total) - Number(r.abonado)), 0)
+
+    const ingresosCxC = Number(cxcRes.rows[0]!.total)
+    const ingresosManuales = Number(ingresosRes.rows[0]!.total)
+    const egresosCxP = Number(cxpRes.rows[0]!.total)
+    const egresosGastos = Number(gastosRes.rows[0]!.total)
+
+    const resumen: ResumenFinanciero = {
+      periodo: { desde, hasta },
+      ingresosCxC,
+      ingresosManuales,
+      egresosCxP,
+      egresosGastos,
+      flujoNeto: (ingresosCxC + ingresosManuales) - (egresosCxP + egresosGastos),
+      saldoCuentas: Number(saldoRes.rows[0]!.total),
+      cxcPendiente,
+      cxpPendiente,
+    }
+
+    return reply.send({ resumen })
   })
 }

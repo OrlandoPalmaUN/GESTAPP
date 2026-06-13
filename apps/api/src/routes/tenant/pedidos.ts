@@ -77,6 +77,9 @@ function exigirTenant(request: FastifyRequest, reply: FastifyReply): request is 
 /** `PED-<año>-<consecutivo>` — consecutivo por año, basado en el conteo actual de pedidos de ese año. */
 async function generarNumeroPedido(tenantDb: FastifyRequest['tenantDb'] & {}): Promise<string> {
   const anio = new Date().getFullYear()
+  // Advisory lock por tipo de secuencia — previene colisiones entre requests concurrentes.
+  // Se libera automáticamente al COMMIT/ROLLBACK de la transacción.
+  await tenantDb.query("SELECT pg_advisory_xact_lock(hashtext('numero_pedido'))")
   const { rows } = await tenantDb.query<{ total: string }>(
     `SELECT COUNT(*)::text AS total FROM pedidos WHERE numero LIKE $1`,
     [`PED-${anio}-%`],
@@ -88,6 +91,7 @@ async function generarNumeroPedido(tenantDb: FastifyRequest['tenantDb'] & {}): P
 /** `FV-<año>-<consecutivo>` — mismo esquema que `generarNumeroFactura` en finanzas.ts (no se exporta de allá, así que lo replicamos acá para la cxc automática). */
 async function generarNumeroFacturaVenta(tenantDb: FastifyRequest['tenantDb'] & {}): Promise<string> {
   const anio = new Date().getFullYear()
+  await tenantDb.query("SELECT pg_advisory_xact_lock(hashtext('numero_factura_venta'))")
   const { rows } = await tenantDb.query<{ total: string }>(
     `SELECT COUNT(*)::text AS total FROM facturas_venta WHERE numero LIKE $1`,
     [`FV-${anio}-%`],
@@ -109,8 +113,8 @@ async function crearCxcAutomaticaSiAplica(
 ): Promise<void> {
   if (pedido.cliente_id === null) return // sin cliente no hay a quién cobrarle — el usuario puede crearla manual si hace falta
 
-  const existente = await client.query('SELECT id FROM facturas_venta WHERE pedido_id = $1', [pedido.id])
-  if ((existente.rowCount ?? 0) > 0) return // ya tiene su cxc (defensivo — no debería pasar en el flujo normal)
+  const existente = await client.query('SELECT id FROM facturas_venta WHERE pedido_id = $1 AND deleted_at IS NULL', [pedido.id])
+  if ((existente.rowCount ?? 0) > 0) return // ya tiene su cxc activa — no crear duplicada
 
   const numero = await generarNumeroFacturaVenta(client)
   const fechaVencimiento = new Date()
@@ -361,51 +365,136 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
   // PATCH /pedidos/:id — edición "administrativa" (cliente, notas). Cambiar
   // ítems/total/estado sigue yendo por sus propios flujos (ver arriba):
   // tocarlos aquí desbalancearía reservas e inventario ya aplicados.
+  // Si se asigna un clienteId y el pedido no tiene CxC activa, se genera automáticamente.
   fastify.patch<{ Params: { id: string } }>('/pedidos/:id', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const body = actualizarPedidoSchema.safeParse(request.body)
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
     if (Object.keys(body.data).length === 0) return reply.badRequest('No enviaste ningún campo para actualizar.')
 
-    if (body.data.clienteId) {
-      const cli = await request.tenantDb.query('SELECT id FROM clientes WHERE id = $1 AND deleted_at IS NULL', [body.data.clienteId])
-      if (cli.rowCount === 0) return reply.badRequest('El cliente seleccionado no existe.')
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      if (body.data.clienteId) {
+        const cli = await client.query('SELECT id FROM clientes WHERE id = $1 AND deleted_at IS NULL', [body.data.clienteId])
+        if (cli.rowCount === 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest('El cliente seleccionado no existe.')
+        }
+      }
+
+      const campos: Record<string, unknown> = {
+        cliente_id: body.data.clienteId,
+        notas: body.data.notas,
+      }
+      const entradas = Object.entries(campos).filter(([, v]) => v !== undefined)
+      const sets = entradas.map(([col], idx) => `${col} = $${idx + 2}`).join(', ')
+      const valores = entradas.map(([, v]) => v)
+
+      const { rows, rowCount } = await client.query<FilaPedido>(
+        `UPDATE pedidos SET ${sets}, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL
+         RETURNING id, numero, cliente_id, estado, total, notas, usuario_id, created_at, updated_at`,
+        [request.params.id, ...valores],
+      )
+      if (rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Pedido no encontrado.')
+      }
+
+      // Si se asignó un cliente, asegurarse de que exista la CxC correspondiente.
+      if (body.data.clienteId) {
+        await crearCxcAutomaticaSiAplica(client, rows[0]!)
+      }
+
+      await client.query('COMMIT')
+
+      const itemsRes = await client.query<FilaPedidoItem>(
+        `SELECT id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1`,
+        [request.params.id],
+      )
+      return reply.send({ pedido: aPedido(rows[0]!, itemsRes.rows.map(aPedidoItem)) })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
     }
-
-    const campos: Record<string, unknown> = {
-      cliente_id: body.data.clienteId,
-      notas: body.data.notas,
-    }
-    const entradas = Object.entries(campos).filter(([, v]) => v !== undefined)
-    const sets = entradas.map(([col], idx) => `${col} = $${idx + 2}`).join(', ')
-    const valores = entradas.map(([, v]) => v)
-
-    const { rows, rowCount } = await request.tenantDb.query<FilaPedido>(
-      `UPDATE pedidos SET ${sets}, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL
-       RETURNING id, numero, cliente_id, estado, total, notas, usuario_id, created_at, updated_at`,
-      [request.params.id, ...valores],
-    )
-    if (rowCount === 0) return reply.notFound('Pedido no encontrado.')
-
-    const itemsRes = await request.tenantDb.query<FilaPedidoItem>(
-      `SELECT id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1`,
-      [request.params.id],
-    )
-    return reply.send({ pedido: aPedido(rows[0]!, itemsRes.rows.map(aPedidoItem)) })
   })
 
   // DELETE /pedidos/:id — borrado suave, recuperable desde /papelera.
-  // Se permite en cualquier estado (incluyendo entregado/confirmado): el usuario
-  // puede necesitar eliminar pedidos finalizados por error o limpieza de datos.
+  // Si el pedido tiene una CxC sin abonos, se borra en cascada.
+  // Si la CxC ya tiene abonos, se bloquea (los pagos registrados no se pueden huerfanar).
   fastify.delete<{ Params: { id: string } }>('/pedidos/:id', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
-    const actual = await request.tenantDb.query<{ estado: string }>(
-      'SELECT estado FROM pedidos WHERE id = $1 AND deleted_at IS NULL',
-      [request.params.id],
-    )
-    if (actual.rowCount === 0) return reply.notFound('Pedido no encontrado.')
 
-    await request.tenantDb.query('UPDATE pedidos SET deleted_at = NOW() WHERE id = $1', [request.params.id])
-    return reply.status(204).send()
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const actual = await client.query<{ estado: string; numero: string }>(
+        'SELECT estado, numero FROM pedidos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [request.params.id],
+      )
+      if (actual.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Pedido no encontrado.')
+      }
+      const estadoActual = actual.rows[0]!.estado as EstadoPedido
+      const numeroPedido = actual.rows[0]!.numero
+
+      // Buscar la CxC activa asociada
+      const cxcRes = await client.query<{ id: string; numero: string }>(
+        'SELECT id, numero FROM facturas_venta WHERE pedido_id = $1 AND deleted_at IS NULL',
+        [request.params.id],
+      )
+      const cxc = cxcRes.rows[0]
+
+      if (cxc) {
+        const conAbonos = await client.query(
+          'SELECT id FROM abonos WHERE tipo_documento = $1 AND documento_id = $2 AND deleted_at IS NULL LIMIT 1',
+          ['factura_venta', cxc.id],
+        )
+        if ((conAbonos.rowCount ?? 0) > 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            `No se puede eliminar el pedido: la factura ${cxc.numero} ya tiene abonos registrados. Elimínalos primero desde Finanzas.`,
+          )
+        }
+        // Cascada: borrar la CxC junto con el pedido
+        await client.query('UPDATE facturas_venta SET deleted_at = NOW() WHERE id = $1', [cxc.id])
+      }
+
+      // Si el pedido tenía movimientos de reserva activos (estado confirmado o en_preparacion),
+      // crearlos compensatorios para liberar el stock — de lo contrario quedarían reservados
+      // para siempre aunque el pedido ya no exista.
+      if (estadoActual === 'confirmado' || estadoActual === 'en_preparacion') {
+        const itemsRes = await client.query<FilaPedidoItem>(
+          'SELECT id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1',
+          [request.params.id],
+        )
+        for (const item of itemsRes.rows) {
+          if (item.producto_id === null) continue // cargos libres no tienen stock
+          await client.query(
+            `INSERT INTO movimientos_inventario
+               (producto_id, tipo, cantidad, precio_unitario, referencia_tipo, referencia_id, notas, usuario_id)
+             VALUES ($1, 'liberacion_reserva', $2, $3, 'pedido', $4, $5, $6)`,
+            [
+              item.producto_id,
+              item.cantidad,
+              item.precio_unitario,
+              request.params.id,
+              `Liberación de reserva por eliminación de Pedido ${numeroPedido}`,
+              request.user.sub,
+            ],
+          )
+        }
+      }
+
+      await client.query('UPDATE pedidos SET deleted_at = NOW() WHERE id = $1', [request.params.id])
+      await client.query('COMMIT')
+      return reply.status(204).send()
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
   })
 }

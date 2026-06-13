@@ -30,6 +30,7 @@ interface FilaPedidoProveedorItem {
   producto_id: string | null
   concepto: string | null
   cantidad: string
+  cantidad_recibida: string
   precio_unitario: string
   subtotal: string
 }
@@ -41,6 +42,7 @@ function aItem(row: FilaPedidoProveedorItem): PedidoProveedorItem {
     productoId: row.producto_id,
     concepto: row.concepto,
     cantidad: Number(row.cantidad),
+    cantidadRecibida: Number(row.cantidad_recibida),
     precioUnitario: Number(row.precio_unitario),
     subtotal: Number(row.subtotal),
   }
@@ -81,6 +83,7 @@ function exigirTenant(
 
 async function generarNumeroOC(tenantDb: NonNullable<FastifyRequest['tenantDb']>): Promise<string> {
   const anio = new Date().getFullYear()
+  await tenantDb.query("SELECT pg_advisory_xact_lock(hashtext('numero_oc'))")
   const { rows } = await tenantDb.query<{ total: string }>(
     `SELECT COUNT(*)::text AS total FROM pedidos_proveedor WHERE EXTRACT(YEAR FROM created_at) = $1`,
     [anio],
@@ -91,6 +94,7 @@ async function generarNumeroOC(tenantDb: NonNullable<FastifyRequest['tenantDb']>
 
 async function generarNumeroFacturaCompra(tenantDb: NonNullable<FastifyRequest['tenantDb']>): Promise<string> {
   const anio = new Date().getFullYear()
+  await tenantDb.query("SELECT pg_advisory_xact_lock(hashtext('numero_factura_compra'))")
   const { rows } = await tenantDb.query<{ total: string }>(
     `SELECT COUNT(*)::text AS total FROM facturas_compra WHERE EXTRACT(YEAR FROM created_at) = $1`,
     [anio],
@@ -117,9 +121,9 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
 
     const ids = pedidos.map((p) => p.id)
     const { rows: items } = await request.tenantDb.query<FilaPedidoProveedorItem>(
-      `SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario, subtotal
+      `SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal
        FROM pedidos_proveedor_items
-       WHERE pedido_proveedor_id = ANY($1::uuid[])`,
+       WHERE pedido_proveedor_id = ANY($1::uuid[]) ORDER BY id`,
       [ids],
     )
 
@@ -148,7 +152,7 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
     if (rows.length === 0) return reply.notFound('Pedido a proveedor no encontrado.')
 
     const { rows: items } = await request.tenantDb.query<FilaPedidoProveedorItem>(
-      `SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario, subtotal
+      `SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal
        FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1`,
       [idParsed.data],
     )
@@ -314,7 +318,7 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
       await request.tenantDb.query('COMMIT')
 
       const { rows: items } = await request.tenantDb.query<FilaPedidoProveedorItem>(
-        'SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario, subtotal FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1',
+        'SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1',
         [idParsed.data],
       )
 
@@ -351,43 +355,143 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
       )
     }
 
-    await request.tenantDb.query('BEGIN')
+    const db = request.tenantDb
+    await db.query('BEGIN')
     try {
-      // Al recibir (total o parcial) — generar CxP si tiene proveedor y no tiene ya una
-      let facturaCompraId = actual[0]!.factura_compra_id
-      if ((estadoNuevo === 'recibido' || estadoNuevo === 'recibido_parcial') && !facturaCompraId && actual[0]!.proveedor_id) {
-        const numeroFC = await generarNumeroFacturaCompra(request.tenantDb)
+      const esRecepcion = estadoNuevo === 'recibido' || estadoNuevo === 'recibido_parcial'
+      const oc = actual[0]!
+
+      // Cargar ítems actuales con sus cantidades ya recibidas
+      const { rows: itemsActuales } = await db.query<FilaPedidoProveedorItem>(
+        `SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal
+         FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1`,
+        [idParsed.data],
+      )
+
+      // Guardar valores anteriores para calcular el delta de movimientos de inventario
+      const cantidadAnteriorPorItem = new Map(itemsActuales.map((i) => [i.id, Number(i.cantidad_recibida)]))
+
+      // --- Actualizar cantidad_recibida si aplica ---
+      if (esRecepcion && body.data.cantidades) {
+        const mapa = new Map(body.data.cantidades.map((c) => [c.itemId, c.cantidadRecibida]))
+        for (const item of itemsActuales) {
+          const nueva = mapa.get(item.id)
+          if (nueva === undefined) continue
+          const cantMax = Number(item.cantidad)
+          const cantValida = Math.min(Math.max(0, nueva), cantMax)
+          await db.query(
+            'UPDATE pedidos_proveedor_items SET cantidad_recibida = $1 WHERE id = $2',
+            [cantValida, item.id],
+          )
+          item.cantidad_recibida = String(cantValida)
+        }
+      } else if (esRecepcion) {
+        // Sin cantidades explícitas → se recibe todo lo pendiente
+        for (const item of itemsActuales) {
+          if (Number(item.cantidad_recibida) < Number(item.cantidad)) {
+            await db.query(
+              'UPDATE pedidos_proveedor_items SET cantidad_recibida = cantidad WHERE id = $1',
+              [item.id],
+            )
+            item.cantidad_recibida = item.cantidad
+          }
+        }
+      }
+
+      // --- CxP: crear o actualizar según lo recibido ---
+      let facturaCompraId = oc.factura_compra_id
+      if (esRecepcion && oc.proveedor_id) {
+        const totalRecibido = itemsActuales.reduce(
+          (acc, i) => acc + Number(i.cantidad_recibida) * Number(i.precio_unitario), 0,
+        )
         const fechaVenc = body.data.fechaVencimientoCxP ?? (() => {
           const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10)
         })()
 
-        const { rows: [fc] } = await request.tenantDb.query<{ id: string }>(
-          `INSERT INTO facturas_compra (numero, proveedor_id, fecha_vencimiento, total, notas, pedido_proveedor_id)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING id`,
-          [
-            numeroFC,
-            actual[0]!.proveedor_id,
-            fechaVenc,
-            actual[0]!.total,
-            `Generada automáticamente al recibir OC ${actual[0]!.numero}`,
-            idParsed.data,
-          ],
-        )
-        facturaCompraId = fc!.id
+        if (!facturaCompraId) {
+          // Primera recepción: crear la CxP con lo recibido hasta ahora
+          const numeroFC = await generarNumeroFacturaCompra(db)
+          const { rows: [fc] } = await db.query<{ id: string }>(
+            `INSERT INTO facturas_compra (numero, proveedor_id, fecha_vencimiento, total, notas, pedido_proveedor_id)
+             VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+            [
+              numeroFC,
+              oc.proveedor_id,
+              fechaVenc,
+              totalRecibido,
+              `Generada automáticamente al recibir OC ${oc.numero}`,
+              idParsed.data,
+            ],
+          )
+          facturaCompraId = fc!.id
+        } else if (estadoNuevo === 'recibido') {
+          // Recepción final: actualizar total de la CxP si no tiene abonos
+          const conAbonos = await db.query(
+            `SELECT id FROM abonos WHERE tipo_documento = 'factura_compra' AND documento_id = $1 AND deleted_at IS NULL LIMIT 1`,
+            [facturaCompraId],
+          )
+          if ((conAbonos.rowCount ?? 0) === 0) {
+            await db.query('UPDATE facturas_compra SET total = $1 WHERE id = $2', [totalRecibido, facturaCompraId])
+          } else {
+            // Ya tiene abonos — crear CxP adicional por la diferencia entre total anterior y recibido final
+            const cxpActual = await db.query<{ total: string }>(
+              'SELECT total FROM facturas_compra WHERE id = $1',
+              [facturaCompraId],
+            )
+            const diferencia = totalRecibido - Number(cxpActual.rows[0]!.total)
+            if (diferencia > 0) {
+              const numeroFC2 = await generarNumeroFacturaCompra(db)
+              await db.query(
+                `INSERT INTO facturas_compra (numero, proveedor_id, fecha_vencimiento, total, notas, pedido_proveedor_id)
+                 VALUES ($1, $2, $3, $4, $5, $6)`,
+                [
+                  numeroFC2,
+                  oc.proveedor_id,
+                  fechaVenc,
+                  diferencia,
+                  `Complemento final OC ${oc.numero}`,
+                  idParsed.data,
+                ],
+              )
+            }
+          }
+        }
       }
 
-      const { rows: [pedidoActualizado] } = await request.tenantDb.query<FilaPedidoProveedor>(
+      // --- Movimientos de inventario: solo el delta de lo recibido en ESTA transición ---
+      if (esRecepcion) {
+        for (const item of itemsActuales) {
+          if (item.producto_id === null) continue
+          const anterior = cantidadAnteriorPorItem.get(item.id) ?? 0
+          const delta = Number(item.cantidad_recibida) - anterior
+          if (delta <= 0) continue
+          await db.query(
+            `INSERT INTO movimientos_inventario
+               (producto_id, tipo, cantidad, precio_unitario, referencia_tipo, referencia_id, notas, usuario_id)
+             VALUES ($1, 'entrada_compra', $2, $3, 'factura_compra', $4, $5, $6)`,
+            [
+              item.producto_id,
+              delta,
+              item.precio_unitario,
+              facturaCompraId ?? idParsed.data,
+              `Recepción OC ${oc.numero}`,
+              request.user.sub,
+            ],
+          )
+        }
+      }
+
+      const { rows: [pedidoActualizado] } = await db.query<FilaPedidoProveedor>(
         `UPDATE pedidos_proveedor SET estado = $1, factura_compra_id = $2, updated_at = NOW()
          WHERE id = $3
          RETURNING id, numero, proveedor_id, estado, fecha_esperada, notas, total, factura_compra_id, usuario_id, created_at, updated_at`,
         [estadoNuevo, facturaCompraId, idParsed.data],
       )
 
-      await request.tenantDb.query('COMMIT')
+      await db.query('COMMIT')
 
       const { rows: items } = await request.tenantDb.query<FilaPedidoProveedorItem>(
-        'SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario, subtotal FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1',
+        'SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1',
         [idParsed.data],
       )
 

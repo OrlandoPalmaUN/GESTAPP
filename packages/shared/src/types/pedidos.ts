@@ -26,6 +26,7 @@ export interface PedidoProveedorItem {
   productoId: string | null
   concepto: string | null
   cantidad: number
+  cantidadRecibida: number
   precioUnitario: number
   subtotal: number
 }

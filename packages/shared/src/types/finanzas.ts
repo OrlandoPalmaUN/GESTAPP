@@ -92,6 +92,36 @@ export interface GastoOperativo {
   createdAt: string
 }
 
+export const CATEGORIAS_INGRESO = ['capital', 'prestamo', 'devolucion', 'venta_activo', 'otro'] as const
+export type CategoriaIngreso = (typeof CATEGORIAS_INGRESO)[number]
+
+/** Ingreso manual a una cuenta bancaria — capital, préstamos, devoluciones, etc. */
+export interface IngresoBancario {
+  id: string
+  descripcion: string
+  categoria: CategoriaIngreso
+  monto: number
+  fecha: string
+  medioPago: string | null
+  cuentaBancariaId: string
+  notas: string | null
+  usuarioId: string | null
+  createdAt: string
+}
+
+/** Resumen financiero del periodo — ingresos, egresos y flujo neto. */
+export interface ResumenFinanciero {
+  periodo: { desde: string; hasta: string }
+  ingresosCxC: number      // abonos CxC cobrados en el periodo
+  ingresosManuales: number // ingresos_bancarios del periodo
+  egresosCxP: number       // abonos CxP pagados en el periodo
+  egresosGastos: number    // gastos_operativos del periodo
+  flujoNeto: number        // (ingresosCxC + ingresosManuales) - (egresosCxP + egresosGastos)
+  saldoCuentas: number     // suma actual de saldo en cuentas_bancarias activas
+  cxcPendiente: number     // total por cobrar (saldoPendiente CxC no pagadas)
+  cxpPendiente: number     // total por pagar (saldoPendiente CxP no pagadas)
+}
+
 /** `total - Σ(abonos)`, nunca negativo (un abono no puede exceder el saldo — lo valida la API al crear). */
 export function calcularSaldoPendiente(total: number, abonos: Pick<Abono, 'monto'>[]): number {
   const abonado = abonos.reduce((acc, a) => acc + a.monto, 0)

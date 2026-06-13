@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { CATEGORIAS_GASTO, TIPOS_CUENTA_BANCARIA, TIPOS_FACTURA } from '../types/finanzas.js'
+import { CATEGORIAS_GASTO, CATEGORIAS_INGRESO, TIPOS_CUENTA_BANCARIA, TIPOS_FACTURA } from '../types/finanzas.js'
 
 export const tipoFacturaSchema = z.enum(TIPOS_FACTURA)
 export const tipoCuentaBancariaSchema = z.enum(TIPOS_CUENTA_BANCARIA)
@@ -87,6 +87,19 @@ export const crearTransferenciaSchema = z.object({
 })
 
 export const categoriaGastoSchema = z.enum(CATEGORIAS_GASTO)
+export const categoriaIngresoSchema = z.enum(CATEGORIAS_INGRESO)
+
+/** Registrar un ingreso manual a una cuenta bancaria. */
+export const crearIngresoBancarioSchema = z.object({
+  descripcion: z.string().trim().min(1, 'La descripción es obligatoria.'),
+  categoria: categoriaIngresoSchema.default('otro'),
+  monto: z.number().positive('El monto debe ser mayor que cero.'),
+  fecha: z.string().optional(),
+  medioPago: z.string().optional(),
+  /** Cuenta que recibe el ingreso — obligatoria (a diferencia de gastos donde es opcional). */
+  cuentaBancariaId: z.uuid('La cuenta bancaria es obligatoria.'),
+  notas: z.string().optional(),
+})
 
 /** Registrar un gasto operativo. */
 export const crearGastoOperativoSchema = z.object({
