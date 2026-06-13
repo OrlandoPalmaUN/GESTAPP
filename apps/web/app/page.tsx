@@ -35,7 +35,10 @@ import {
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero } from '@antigravity/shared';
-import { CATEGORIAS_INGRESO } from '@antigravity/shared';
+
+// Definido localmente para no forzar un import de valor de @antigravity/shared
+// (el tsconfig apunta al source TS que usa extensiones .js — solo funciona con import type).
+const CATEGORIAS_INGRESO_LOCAL: CategoriaIngreso[] = ['capital', 'prestamo', 'devolucion', 'venta_activo', 'otro'];
 
 // Helper para ajustar el brillo de un color hex
 // amount positivo = más claro (hacia blanco), negativo = más oscuro
@@ -7225,7 +7228,7 @@ export default function AppHome() {
                 <div className="flex flex-col gap-1">
                   <label className="font-mono text-xs font-bold">CATEGORÍA</label>
                   <select value={ingresoForm.categoria} onChange={e => setIngresoForm(f => ({ ...f, categoria: e.target.value as CategoriaIngreso }))} className="neo-input font-mono text-sm">
-                    {CATEGORIAS_INGRESO.map(c => (
+                    {CATEGORIAS_INGRESO_LOCAL.map(c => (
                       <option key={c} value={c}>{c.replace('_', ' ').toUpperCase()}</option>
                     ))}
                   </select>
