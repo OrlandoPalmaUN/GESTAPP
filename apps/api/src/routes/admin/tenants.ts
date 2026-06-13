@@ -43,6 +43,35 @@ export async function adminTenantsRoutes(fastify: FastifyInstance): Promise<void
     return reply.send({ tenants: tenants.map(aTenantDeCable) })
   })
 
+  // POST /admin/migrate-tenants — aplica migraciones pendientes en TODOS los tenants.
+  // Idempotente: solo corre lo que no se ha corrido según migration_log.
+  // Usar cada vez que se agrega un nuevo archivo en tenant-migrations/.
+  fastify.post('/admin/migrate-tenants', soloSuperadmin, async (_request, reply) => {
+    const tenants = await fastify.prisma.tenant.findMany({ where: { status: 'active' } })
+    const resultados: { slug: string; aplicadas: string[]; error?: string }[] = []
+
+    for (const tenant of tenants) {
+      try {
+        const aplicadas = await provisionarSchemaDeTenant(fastify.pg, tenant.schemaName)
+        resultados.push({ slug: tenant.slug, aplicadas })
+        if (aplicadas.length > 0) {
+          fastify.log.info({ slug: tenant.slug, aplicadas }, 'migraciones de tenant aplicadas')
+        }
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error)
+        resultados.push({ slug: tenant.slug, aplicadas: [], error: msg })
+        fastify.log.error({ slug: tenant.slug, err: error }, 'error al migrar tenant')
+      }
+    }
+
+    const conErrores = resultados.filter((r) => r.error)
+    return reply.send({
+      ok: conErrores.length === 0,
+      totalTenants: tenants.length,
+      resultados,
+    })
+  })
+
   // POST /admin/tenants — crea una empresa nueva.
   fastify.post('/admin/tenants', soloSuperadmin, async (request, reply) => {
     const body = crearTenantSchema.safeParse(request.body)
