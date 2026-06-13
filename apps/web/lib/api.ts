@@ -532,7 +532,7 @@ export const api = {
     request<{ heatmap: IgHeatmapPunto[]; disclaimer: string | null }>(`/redes/ig/mejores-horas?dias=${dias}`),
 
   igRefresh: () =>
-    request<{ ok: boolean; postsActualizados: number; comentariosActualizados: number }>(
+    request<{ ok: boolean; async?: boolean; mensaje?: string; postsActualizados?: number; comentariosActualizados?: number }>(
       '/redes/ig/refresh',
       { method: 'POST' },
     ),

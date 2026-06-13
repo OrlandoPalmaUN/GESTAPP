@@ -458,8 +458,12 @@ export function IgDashboard() {
     setRefreshMsg(null)
     try {
       const r = await api.igRefresh()
-      setRefreshMsg(`✅ ${r.postsActualizados} posts y ${r.comentariosActualizados} comentarios actualizados.`)
-      await cargarTodo()
+      if (r.async) {
+        setRefreshMsg(`⏳ ${r.mensaje ?? 'Actualización en proceso — recarga en 1-2 minutos.'}`)
+      } else {
+        setRefreshMsg(`✅ ${r.postsActualizados ?? 0} posts y ${r.comentariosActualizados ?? 0} comentarios actualizados.`)
+        await cargarTodo()
+      }
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         setRefreshMsg(`⏳ ${err.message}`)

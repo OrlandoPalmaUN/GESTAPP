@@ -371,7 +371,7 @@ export default function AppHome() {
   const [transicionandoCompra, setTransicionandoCompra] = useState(false);
 
   // --- SUB-TABS INTERNAS ---
-  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'bancos' | 'gastos' | 'ingresos'>('resumen');
+  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos'>('resumen');
 
   // --- BUSCADORES Y FILTROS ---
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -3434,7 +3434,7 @@ export default function AppHome() {
                     
                     {/* Tabs de Finanzas */}
                     <div className="flex flex-wrap border-b-2 border-black bg-white">
-                      {(['resumen', 'cxc', 'cxp', 'compras', 'bancos', 'gastos', 'ingresos'] as const).map((tab) => (
+                      {(['resumen', 'cxc', 'cxp', 'compras', 'gastos', 'ingresos'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setFinanceSubTab(tab)}
@@ -3448,7 +3448,6 @@ export default function AppHome() {
                           {tab === 'cxc' && 'CxC · Por Cobrar'}
                           {tab === 'cxp' && 'CxP · Por Pagar'}
                           {tab === 'compras' && 'Compras / OC'}
-                          {tab === 'bancos' && 'Cuentas Bancarias'}
                           {tab === 'gastos' && 'Gastos Op.'}
                           {tab === 'ingresos' && 'Ingresos'}
                         </button>
@@ -3551,6 +3550,51 @@ export default function AppHome() {
                             </div>
                           </>
                         )}
+
+                        {/* Cuentas Bancarias */}
+                        <div className="neo-card bg-white">
+                          <div className="flex justify-between items-center border-b border-black pb-2 mb-3">
+                            <h3 className="font-mono text-xs font-bold">CUENTAS BANCARIAS</h3>
+                            <button
+                              type="button"
+                              onClick={openCreateBankAccountModal}
+                              className="neo-button text-[11px] px-3 py-1.5 flex items-center gap-1.5"
+                            >
+                              <Plus size={12} /> Nueva cuenta
+                            </button>
+                          </div>
+                          {bankAccountsError && (
+                            <div className="bg-red-50 border border-red-400 text-red-700 p-2 text-xs font-mono mb-3">
+                              {bankAccountsError}
+                              <button type="button" onClick={() => void fetchCuentasBancarias()} className="ml-2 underline">Reintentar</button>
+                            </div>
+                          )}
+                          {bankAccountsCargando && <p className="text-xs text-neutral-500 font-mono py-2">Cargando cuentas…</p>}
+                          {!bankAccountsCargando && bankAccounts.length === 0 && (
+                            <p className="text-xs text-neutral-400 italic text-center py-4">Sin cuentas bancarias registradas. Crea la primera con &quot;Nueva cuenta&quot;.</p>
+                          )}
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                            {bankAccounts.map((ac) => (
+                              <div key={ac.id} className="border-2 border-black p-3 flex justify-between items-center gap-3">
+                                <div className="min-w-0">
+                                  <div className="font-bold text-black truncate">{ac.banco}</div>
+                                  <div className="text-[10px] text-neutral-500 font-mono mt-0.5">{ac.numero} · {ac.tipo.toUpperCase()}</div>
+                                  <div className="font-mono font-black text-sm text-black mt-1">${ac.saldo.toLocaleString('es-CO')} COP</div>
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                  <button
+                                    type="button"
+                                    onClick={() => { setTransferenciaForm(f => ({ ...f, cuentaOrigenId: ac.id })); setShowTransferenciaModal(true); }}
+                                    className="neo-btn px-2 py-1 text-[10px] font-mono font-bold hover:bg-brand-sage/40"
+                                    title="Transferir desde esta cuenta"
+                                  >⇌ Transferir</button>
+                                  <button type="button" onClick={() => openEditBankAccountModal(ac)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar"><Pencil size={13} /></button>
+                                  <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar"><Trash2 size={13} /></button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
 
                         {/* Listado de Abonos Recientes */}
                         <div className="neo-card bg-white">
@@ -3872,83 +3916,6 @@ export default function AppHome() {
                     )}
 
                     {/* BANCOS TAB */}
-                    {financeSubTab === 'bancos' && (
-                      <div className="space-y-4">
-
-                        {bankAccountsError && (
-                          <div className="bg-red-50 border-2 border-red-600 text-red-700 p-3 text-xs font-mono flex items-center justify-between gap-3">
-                            <span>{bankAccountsError}</span>
-                            <button type="button" onClick={() => void fetchCuentasBancarias()} className="neo-button text-[11px] px-2 py-1">
-                              Reintentar
-                            </button>
-                          </div>
-                        )}
-
-                        <div className="flex justify-between items-center border-b border-black pb-2">
-                          <h3 className="font-mono text-xs font-bold">CUENTAS BANCARIAS</h3>
-                          <button
-                            type="button"
-                            onClick={openCreateBankAccountModal}
-                            className="neo-button text-[11px] px-3 py-1.5 flex items-center gap-1.5"
-                          >
-                            <Plus size={12} /> Nueva cuenta
-                          </button>
-                        </div>
-
-                        {bankAccountsCargando && (
-                          <div className="bg-white border-2 border-black p-3 text-xs font-mono text-neutral-500">
-                            Cargando cuentas bancarias desde el servidor...
-                          </div>
-                        )}
-
-                        {!bankAccountsCargando && bankAccounts.length === 0 && (
-                          <div className="neo-card bg-white text-xs text-neutral-400 italic text-center py-8">
-                            No hay cuentas bancarias registradas todavía. Crea la primera con &quot;Nueva cuenta&quot;.
-                          </div>
-                        )}
-
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          {bankAccounts.map((ac) => (
-                            <div key={ac.id} className="neo-card bg-white flex justify-between items-center gap-3">
-                              <div className="min-w-0">
-                                <div className="font-bold text-black truncate">{ac.banco}</div>
-                                <div className="text-[10px] text-neutral-500 font-mono mt-0.5">{ac.numero} · Tipo {ac.tipo.toUpperCase()}</div>
-                                <div className="font-mono font-black text-sm text-black mt-1">
-                                  ${ac.saldo.toLocaleString('es-CO')} COP
-                                </div>
-                              </div>
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <button
-                                  type="button"
-                                  onClick={() => { setTransferenciaForm(f => ({ ...f, cuentaOrigenId: ac.id })); setShowTransferenciaModal(true); }}
-                                  className="neo-btn px-2 py-1 text-[10px] font-mono font-bold hover:bg-brand-sage/40"
-                                  title="Transferir desde esta cuenta"
-                                >
-                                  ⇌ Transferir
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => openEditBankAccountModal(ac)}
-                                  className="neo-btn p-1.5 hover:bg-neutral-100"
-                                  title="Editar cuenta"
-                                >
-                                  <Pencil size={13} />
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={() => void handleDeleteBankAccount(ac)}
-                                  className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
-                                  title="Eliminar cuenta"
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-
-                      </div>
-                    )}
 
                     {/* GASTOS OPERATIVOS TAB */}
                     {financeSubTab === 'gastos' && (

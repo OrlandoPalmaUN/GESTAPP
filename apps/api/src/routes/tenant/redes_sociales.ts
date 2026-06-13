@@ -507,28 +507,46 @@ export async function redesSocialesRoutes(fastify: FastifyInstance): Promise<voi
       WHERE cuenta_id = (SELECT id FROM ig_cuentas LIMIT 1)
     `)
 
-    // Scrape
-    let postsActualizados = 0
-    let comentariosActualizados = 0
-    try {
-      const result = await scrapeIgProfile(cfg.handle, APIFY_TOKEN, APIFY_DEFAULT_ACTOR, {
-        postsLimit: cfg.posts_por_run,
-        comentariosLimit: cfg.comentarios_por_post,
+    // Lanzar el scrape en segundo plano — igual que el backfill de onboarding.
+    // El refresh puede tardar 1-2 min (2 runs Apify en paralelo); bloquearlo
+    // en el HTTP response haría que el usuario vea un spinner colgado.
+    const schemaName = request.tenant!.schemaName
+    const handle = cfg.handle
+    scrapeIgProfile(handle, APIFY_TOKEN, APIFY_DEFAULT_ACTOR, {
+      postsLimit: cfg.posts_por_run,
+      comentariosLimit: cfg.comentarios_por_post,
+    })
+      .then(async (result) => {
+        const client = await fastify.pg.connect()
+        try {
+          await client.query(`SET search_path TO "${schemaName}", public`)
+          await persistIgScrape(client, result)
+        } finally {
+          await client.query('RESET search_path')
+          client.release()
+        }
       })
-      const stats = await persistIgScrape(request.tenantDb, result)
-      postsActualizados = stats.postsUpserted
-      comentariosActualizados = stats.comentariosUpserted
-    } catch (err) {
-      // Revertir cooldown si el scrape falló para no bloquear al usuario
-      await request.tenantDb.query(`
-        UPDATE ig_config SET ultimo_refresh_manual = NULL
-        WHERE cuenta_id = (SELECT id FROM ig_cuentas LIMIT 1)
-      `)
-      const msg = err instanceof Error ? err.message : String(err)
-      return reply.internalServerError(`El scrape falló: ${msg}`)
-    }
+      .catch(async (err) => {
+        fastify.log.error({ err, handle }, 'ig refresh error — revirtiendo cooldown')
+        // Revertir cooldown si el scrape falló para no bloquear el próximo intento
+        const client = await fastify.pg.connect()
+        try {
+          await client.query(`SET search_path TO "${schemaName}", public`)
+          await client.query(`
+            UPDATE ig_config SET ultimo_refresh_manual = NULL
+            WHERE cuenta_id = (SELECT id FROM ig_cuentas LIMIT 1)
+          `)
+        } finally {
+          await client.query('RESET search_path')
+          client.release()
+        }
+      })
 
-    return reply.send({ ok: true, postsActualizados, comentariosActualizados })
+    return reply.send({
+      ok: true,
+      async: true,
+      mensaje: 'Actualización en proceso. Los datos estarán listos en 1-2 minutos — recarga la página para verlos.',
+    })
   })
 
   // ─────────────────────────────────────────────────────────────────────────

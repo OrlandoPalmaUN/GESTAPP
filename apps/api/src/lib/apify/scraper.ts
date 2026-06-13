@@ -119,6 +119,8 @@ export async function scrapeIgProfileOnly(
   const cleanHandle = handle.replace(/^@/, '')
   const profileUrl = `https://www.instagram.com/${cleanHandle}/`
 
+  // Timeout corto: solo necesitamos 1 item para validar el handle.
+  // Evita que el onboarding bloquee 120 s (el default) al usuario.
   const { items } = await apifyRunSync<ApifyIgProfileDetail>(
     actor,
     {
@@ -127,6 +129,7 @@ export async function scrapeIgProfileOnly(
       resultsLimit: 1,
     },
     token,
+    25, // 25 s es más que suficiente para un perfil público
   )
 
   const p = items[0]
