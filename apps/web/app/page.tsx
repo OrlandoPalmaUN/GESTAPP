@@ -331,7 +331,7 @@ export default function AppHome() {
   const [calendarEvents, setCalendarEvents] = useState<EventoCalendario[]>([]);
   const [comunicacionesCargando, setComunicacionesCargando] = useState(false);
   const [comunicacionesError, setComunicacionesError] = useState<string | null>(null);
-  const [comunicacionesSubTab, setComunicacionesSubTab] = useState<'calendario' | 'redes' | 'notas'>('calendario');
+  const [comunicacionesSubTab, setComunicacionesSubTab] = useState<'calendario' | 'redes' | 'notas'>('redes');
 
   // --- Notas internas ---
   const [notasInternas, setNotasInternas] = useState<NotaInterna[]>([]);
@@ -4440,7 +4440,7 @@ export default function AppHome() {
 
                     {/* Sub-tabs */}
                     <div className="flex border-b-2 border-black bg-white">
-                      {(['calendario', 'notas', 'redes'] as const).map((tab) => (
+                      {(['redes', 'calendario', 'notas'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setComunicacionesSubTab(tab)}
@@ -4450,9 +4450,9 @@ export default function AppHome() {
                               : 'text-black hover:bg-neutral-50'
                           }`}
                         >
+                          {tab === 'redes' && '📊 Redes Sociales'}
                           {tab === 'calendario' && 'Calendario / Planner'}
                           {tab === 'notas' && '📝 Notas'}
-                          {tab === 'redes' && '📊 Redes Sociales'}
                         </button>
                       ))}
                     </div>
