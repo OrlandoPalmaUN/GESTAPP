@@ -20,7 +20,6 @@ import {
   TrendingUp,
   Building,
   BarChart3,
-  MessageCircle,
   Instagram,
   Facebook,
   Trash2,
