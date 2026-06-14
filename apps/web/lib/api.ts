@@ -588,4 +588,39 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ texto, instruccion, customPrompt }),
     }),
+
+  // --- Reportes (resumen periódico + análisis IA) ----------------------------
+
+  reportesOverview: (tipo: 'meses' | 'semanas', año: number) =>
+    request<{
+      tipo: 'meses' | 'semanas'
+      año: number
+      periodos: Array<{
+        label: string
+        desde: string
+        hasta: string
+        mes?: number
+        semana?: number
+        año: number
+        pedidos: number
+        ventas: number
+        gastos: number
+        gananciaAprox: number
+        tieneDatos: boolean
+      }>
+    }>(`/reportes/overview?tipo=${tipo}&año=${año}`),
+
+  reportesPeriodo: (tipo: 'meses' | 'semanas', año: number, mes?: number, semana?: number) => {
+    const p = new URLSearchParams({ tipo, año: String(año) })
+    if (mes !== undefined) p.set('mes', String(mes))
+    if (semana !== undefined) p.set('semana', String(semana))
+    return request<Record<string, unknown>>(`/reportes/periodo?${p}`)
+  },
+
+  reportesIA: (tipo: 'meses' | 'semanas', año: number, mes?: number, semana?: number) => {
+    const p = new URLSearchParams({ tipo, año: String(año) })
+    if (mes !== undefined) p.set('mes', String(mes))
+    if (semana !== undefined) p.set('semana', String(semana))
+    return request<{ analisis: string }>(`/reportes/ia?${p}`)
+  },
 }

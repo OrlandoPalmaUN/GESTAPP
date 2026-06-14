@@ -105,6 +105,12 @@ function parseQuery(q: Record<string, string | string[] | undefined>): RangoFech
   return rangoMes(año, mes)
 }
 
+/** Retorna cuántas semanas ISO tiene un año (52 o 53). */
+function semanasEnAño(año: number): number {
+  // La semana 53 existe si el 28 de diciembre cae en semana 53
+  return isoWeek(new Date(Date.UTC(año, 11, 28))) === 53 ? 53 : 52
+}
+
 export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
 
@@ -254,6 +260,128 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         ventasTotal: Number(r.ventasTotal),
       })),
     })
+  })
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // GET /reportes/overview?tipo=meses&año=2026
+  // Resumen rápido de todos los meses o semanas del año — una sola query.
+  // Usado para la vista de tarjetas en el frontend.
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.get('/reportes/overview', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const q = request.query as Record<string, string>
+    const tipo = q.tipo === 'semanas' ? 'semanas' : 'meses'
+    const now = new Date()
+    const año = parseInt(q.año ?? String(now.getFullYear()), 10)
+    const db = request.tenantDb
+
+    if (tipo === 'meses') {
+      const desdeAño = `${año}-01-01`
+      const hastaAño = `${año + 1}-01-01`
+
+      const [ventasQ, gastosQ] = await Promise.all([
+        db.query<{ mes: string; pedidos: string; ventas: string }>(`
+          SELECT
+            TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM-DD') AS mes,
+            COUNT(*) FILTER (WHERE estado != 'cancelado')                         AS pedidos,
+            COALESCE(SUM(total) FILTER (WHERE estado != 'cancelado'), 0)          AS ventas
+          FROM pedidos
+          WHERE created_at >= $1 AND created_at < $2 AND deleted_at IS NULL
+          GROUP BY DATE_TRUNC('month', created_at)
+          ORDER BY DATE_TRUNC('month', created_at)
+        `, [desdeAño, hastaAño]),
+
+        db.query<{ mes: string; gastos: string }>(`
+          SELECT
+            TO_CHAR(DATE_TRUNC('month', fecha), 'YYYY-MM-DD') AS mes,
+            COALESCE(SUM(monto), 0) AS gastos
+          FROM gastos_operativos
+          WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
+          GROUP BY DATE_TRUNC('month', fecha)
+        `, [desdeAño, hastaAño]),
+      ])
+
+      const gastosPorMes = new Map(gastosQ.rows.map((r) => [r.mes, Number(r.gastos)]))
+      const ventasPorMes = new Map(ventasQ.rows.map((r) => [r.mes, r]))
+
+      const periodos = Array.from({ length: 12 }, (_, i) => {
+        const mes = i + 1
+        const key = `${año}-${String(mes).padStart(2, '0')}-01`
+        const v = ventasPorMes.get(key)
+        const gastos = gastosPorMes.get(key) ?? 0
+        const ventas = Number(v?.ventas ?? 0)
+        const r = rangoMes(año, mes)
+        return {
+          label: r.label,
+          desde: r.desde,
+          hasta: r.hasta,
+          mes,
+          año,
+          pedidos: Number(v?.pedidos ?? 0),
+          ventas,
+          gastos,
+          gananciaAprox: ventas - gastos,
+          tieneDatos: !!v,
+        }
+      })
+
+      return reply.send({ tipo: 'meses', año, periodos })
+    }
+
+    // ── Semanas ───────────────────────────────────────────────────────────
+    const totalSemanas = semanasEnAño(año)
+    const desdeAño = mondayOfISOWeek(año, 1).toISOString().slice(0, 10)
+    const hastaAño = mondayOfISOWeek(año === semanasEnAño(año) ? año + 1 : año, 1).toISOString().slice(0, 10)
+
+    const [ventasQ, gastosQ] = await Promise.all([
+      db.query<{ semana: string; añoiso: string; pedidos: string; ventas: string }>(`
+        SELECT
+          EXTRACT(WEEK FROM created_at)::text     AS semana,
+          EXTRACT(ISOYEAR FROM created_at)::text  AS añoiso,
+          COUNT(*) FILTER (WHERE estado != 'cancelado')                AS pedidos,
+          COALESCE(SUM(total) FILTER (WHERE estado != 'cancelado'), 0) AS ventas
+        FROM pedidos
+        WHERE created_at >= $1 AND created_at < $2 AND deleted_at IS NULL
+        GROUP BY EXTRACT(WEEK FROM created_at), EXTRACT(ISOYEAR FROM created_at)
+      `, [desdeAño, hastaAño]),
+
+      db.query<{ semana: string; añoiso: string; gastos: string }>(`
+        SELECT
+          EXTRACT(WEEK FROM fecha)::text     AS semana,
+          EXTRACT(ISOYEAR FROM fecha)::text  AS añoiso,
+          COALESCE(SUM(monto), 0)            AS gastos
+        FROM gastos_operativos
+        WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
+        GROUP BY EXTRACT(WEEK FROM fecha), EXTRACT(ISOYEAR FROM fecha)
+      `, [desdeAño, hastaAño]),
+    ])
+
+    const ventasMap = new Map(ventasQ.rows.map((r) => [`${r.añoiso}-${r.semana}`, r]))
+    const gastosMap = new Map(gastosQ.rows.map((r) => [`${r.añoiso}-${r.semana}`, Number(r.gastos)]))
+
+    const periodos = Array.from({ length: totalSemanas }, (_, i) => {
+      const sem = i + 1
+      const key = `${año}-${sem}`
+      const v = ventasMap.get(key)
+      const gastos = gastosMap.get(key) ?? 0
+      const ventas = Number(v?.ventas ?? 0)
+      const r = rangoSemana(año, sem)
+      return {
+        label: r.label,
+        desde: r.desde,
+        hasta: r.hasta,
+        semana: sem,
+        año,
+        pedidos: Number(v?.pedidos ?? 0),
+        ventas,
+        gastos,
+        gananciaAprox: ventas - gastos,
+        tieneDatos: !!v,
+      }
+    })
+
+    return reply.send({ tipo: 'semanas', año, periodos })
   })
 
   // ──────────────────────────────────────────────────────────────────────────

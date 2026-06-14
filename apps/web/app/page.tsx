@@ -205,16 +205,16 @@ export default function AppHome() {
   // --- ESTADOS GENERALES DE LA APP ---
   const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'config'>('dashboard');
   // --- REPORTES ---
-  const [reportesTipo, setReportesTipo] = useState<'mes' | 'semana'>('mes');
+  const [reportesTipo, setReportesTipo] = useState<'meses' | 'semanas'>('meses');
   const [reportesAño, setReportesAño] = useState(() => new Date().getFullYear());
-  const [reportesMes, setReportesMes] = useState(() => new Date().getMonth() + 1);
-  const [reportesSemana, setReportesSemana] = useState<number>(() => {
-    const d = new Date(); const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-    tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
-    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
-    return Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
-  });
-  const [reportesData, setReportesData] = useState<null | {
+  const [reportesOverview, setReportesOverview] = useState<Array<{
+    label: string; desde: string; hasta: string; mes?: number; semana?: number; año: number;
+    pedidos: number; ventas: number; gastos: number; gananciaAprox: number; tieneDatos: boolean;
+  }> | null>(null);
+  const [reportesOverviewCargando, setReportesOverviewCargando] = useState(false);
+  const [reportesOverviewError, setReportesOverviewError] = useState<string | null>(null);
+  const [reportesSeleccionado, setReportesSeleccionado] = useState<number | null>(null);
+  const [reportesDetalle, setReportesDetalle] = useState<null | {
     periodo: { label: string; desde: string; hasta: string };
     ventas: { total: number; pedidos: number; ticketPromedio: number; delta: number | null; deltaPedidos: number | null };
     compras: { total: number; oc: number; delta: number | null };
@@ -224,8 +224,7 @@ export default function AppHome() {
     utilidadNeta: number;
     topProductos: { nombre: string; categoria: string | null; unidades: number; ventasTotal: number }[];
   }>(null);
-  const [reportesCargando, setReportesCargando] = useState(false);
-  const [reportesError, setReportesError] = useState<string | null>(null);
+  const [reportesDetalleCargando, setReportesDetalleCargando] = useState(false);
   const [reportesIA, setReportesIA] = useState<string | null>(null);
   const [reportesIACargando, setReportesIACargando] = useState(false);
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
@@ -953,67 +952,57 @@ export default function AppHome() {
   useEffect(() => { void fetchResumen(); }, [fetchResumen]);
 
   // --- Reportes ---
-  const fetchReportes = useCallback(async () => {
+  const fetchReportesOverview = useCallback(async (tipo: 'meses' | 'semanas', año: number) => {
     if (!usuario?.tenantId) return;
-    setReportesCargando(true);
-    setReportesError(null);
+    setReportesOverviewCargando(true);
+    setReportesOverviewError(null);
+    setReportesOverview(null);
+    setReportesSeleccionado(null);
+    setReportesDetalle(null);
+    setReportesIA(null);
     try {
-      const params = new URLSearchParams({ tipo: reportesTipo, año: String(reportesAño) });
-      if (reportesTipo === 'mes') params.set('mes', String(reportesMes));
-      else params.set('semana', String(reportesSemana));
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/reportes/periodo?${params}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('gestapp_token') ?? ''}` },
-      });
-      if (!res.ok) throw new Error('Error al cargar reportes');
-      setReportesData(await res.json());
+      const res = await api.reportesOverview(tipo, año);
+      setReportesOverview(res.periodos);
     } catch (e) {
-      setReportesError(e instanceof Error ? e.message : 'Error');
+      setReportesOverviewError(e instanceof Error ? e.message : 'Error al cargar resumen');
     } finally {
-      setReportesCargando(false);
+      setReportesOverviewCargando(false);
     }
-  }, [usuario?.tenantId, reportesTipo, reportesAño, reportesMes, reportesSemana]);
+  }, [usuario?.tenantId]);
 
-  const fetchReportesIA = useCallback(async () => {
+  const fetchReportesDetalle = useCallback(async (tipo: 'meses' | 'semanas', año: number, mes?: number, semana?: number) => {
+    if (!usuario?.tenantId) return;
+    setReportesDetalleCargando(true);
+    setReportesDetalle(null);
+    setReportesIA(null);
+    try {
+      const res = await api.reportesPeriodo(tipo, año, mes, semana);
+      setReportesDetalle(res as typeof reportesDetalle);
+    } catch (e) {
+      console.error('Error detalle reportes', e);
+    } finally {
+      setReportesDetalleCargando(false);
+    }
+  }, [usuario?.tenantId]);
+
+  const fetchReportesIA = useCallback(async (tipo: 'meses' | 'semanas', año: number, mes?: number, semana?: number) => {
     if (!usuario?.tenantId) return;
     setReportesIACargando(true);
     setReportesIA(null);
     try {
-      const params = new URLSearchParams({ tipo: reportesTipo, año: String(reportesAño) });
-      if (reportesTipo === 'mes') params.set('mes', String(reportesMes));
-      else params.set('semana', String(reportesSemana));
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/reportes/ia?${params}`, {
-        headers: { Authorization: `Bearer ${localStorage.getItem('gestapp_token') ?? ''}` },
-      });
-      if (!res.ok) throw new Error('Error en análisis IA');
-      const d = await res.json() as { analisis: string };
-      setReportesIA(d.analisis);
+      const res = await api.reportesIA(tipo, año, mes, semana);
+      setReportesIA(res.analisis);
     } catch (e) {
-      setReportesIA(`❌ ${e instanceof Error ? e.message : 'Error'}`);
+      setReportesIA(`❌ ${e instanceof Error ? e.message : 'Error en análisis IA'}`);
     } finally {
       setReportesIACargando(false);
     }
-  }, [usuario?.tenantId, reportesTipo, reportesAño, reportesMes, reportesSemana]);
+  }, [usuario?.tenantId]);
 
   useEffect(() => {
-    if (activeTab === 'reportes') void fetchReportes();
-  }, [activeTab, fetchReportes]);
-
-  // Helpers navegación de período
-  const moverPeriodo = (dir: 1 | -1) => {
-    if (reportesTipo === 'mes') {
-      let m = reportesMes + dir;
-      let y = reportesAño;
-      if (m > 12) { m = 1; y += 1; }
-      if (m < 1) { m = 12; y -= 1; }
-      setReportesMes(m); setReportesAño(y);
-    } else {
-      let s = reportesSemana + dir;
-      let y = reportesAño;
-      if (s > 52) { s = 1; y += 1; }
-      if (s < 1) { s = 52; y -= 1; }
-      setReportesSemana(s); setReportesAño(y);
-    }
-  };
+    if (activeTab === 'reportes') void fetchReportesOverview(reportesTipo, reportesAño);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   // --- Recepción parcial de OC ---
   const openRecepcionModal = (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
@@ -5053,181 +5042,285 @@ export default function AppHome() {
                 {activeTab === 'reportes' && (
                   <div className="flex flex-col gap-4">
 
-                    {/* Selector tipo + navegación período */}
+                    {/* Barra de controles: tipo + navegación de año */}
                     <div className="flex flex-wrap items-center gap-3 bg-white border-2 border-black p-3">
+                      {/* Toggle meses / semanas */}
                       <div className="flex border-2 border-black overflow-hidden">
-                        {(['mes', 'semana'] as const).map((t) => (
+                        {(['meses', 'semanas'] as const).map((t) => (
                           <button
                             key={t}
                             type="button"
-                            onClick={() => { setReportesTipo(t); setReportesData(null); setReportesIA(null); }}
+                            onClick={() => {
+                              setReportesTipo(t);
+                              void fetchReportesOverview(t, reportesAño);
+                            }}
                             className={`font-mono text-xs font-bold px-4 py-2 ${reportesTipo === t ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-100'}`}
                           >
-                            {t === 'mes' ? 'Por Mes' : 'Por Semana'}
+                            {t === 'meses' ? 'Por Mes' : 'Por Semana'}
                           </button>
                         ))}
                       </div>
 
+                      {/* Navegación de año */}
                       <div className="flex items-center gap-2 ml-auto">
-                        <button type="button" onClick={() => moverPeriodo(-1)} className="neo-btn p-1.5 hover:bg-neutral-100">
+                        <button
+                          type="button"
+                          onClick={() => { const y = reportesAño - 1; setReportesAño(y); void fetchReportesOverview(reportesTipo, y); }}
+                          className="neo-btn p-1.5 hover:bg-neutral-100"
+                        >
                           <ChevronLeft size={16} />
                         </button>
-                        <span className="font-mono text-sm font-bold min-w-[180px] text-center">
-                          {reportesData?.periodo.label ?? (reportesTipo === 'mes'
-                            ? new Date(reportesAño, reportesMes - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })
-                            : `Semana ${reportesSemana} · ${reportesAño}`)}
-                        </span>
-                        <button type="button" onClick={() => moverPeriodo(1)} className="neo-btn p-1.5 hover:bg-neutral-100">
+                        <span className="font-mono text-sm font-bold w-16 text-center">{reportesAño}</span>
+                        <button
+                          type="button"
+                          onClick={() => { const y = reportesAño + 1; setReportesAño(y); void fetchReportesOverview(reportesTipo, y); }}
+                          className="neo-btn p-1.5 hover:bg-neutral-100"
+                        >
                           <ChevronRight size={16} />
                         </button>
-                        <button type="button" onClick={() => void fetchReportes()} className="neo-btn p-1.5 hover:bg-neutral-100" title="Recargar">
+                        <button
+                          type="button"
+                          onClick={() => void fetchReportesOverview(reportesTipo, reportesAño)}
+                          className="neo-btn p-1.5 hover:bg-neutral-100"
+                          title="Recargar"
+                        >
                           <RefreshCw size={14} />
                         </button>
                       </div>
                     </div>
 
-                    {reportesCargando && <p className="text-xs font-mono text-neutral-500 p-2">Calculando reporte…</p>}
-                    {reportesError && <p className="text-xs font-mono text-brand-red p-2">{reportesError}</p>}
+                    {/* Estado de carga / error */}
+                    {reportesOverviewCargando && (
+                      <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 p-2">
+                        <RefreshCw size={13} className="animate-spin" /> Cargando períodos…
+                      </div>
+                    )}
+                    {reportesOverviewError && (
+                      <p className="text-xs font-mono text-brand-red p-2">{reportesOverviewError}</p>
+                    )}
 
-                    {reportesData && (
-                      <>
-                        {/* KPIs principales */}
-                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                          {[
-                            {
-                              label: 'VENTAS TOTALES',
-                              value: `$${reportesData.ventas.total.toLocaleString('es-CO')}`,
-                              sub: `${reportesData.ventas.pedidos} pedido${reportesData.ventas.pedidos !== 1 ? 's' : ''}`,
-                              delta: reportesData.ventas.delta,
-                              color: 'text-green-700',
-                            },
-                            {
-                              label: 'MARGEN BRUTO',
-                              value: `$${reportesData.margenBruto.total.toLocaleString('es-CO')}`,
-                              sub: `${reportesData.margenBruto.porcentaje}% sobre ventas`,
-                              delta: reportesData.margenBruto.delta,
-                              color: reportesData.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red',
-                            },
-                            {
-                              label: 'COMPRAS / OC',
-                              value: `$${reportesData.compras.total.toLocaleString('es-CO')}`,
-                              sub: `${reportesData.compras.oc} orden${reportesData.compras.oc !== 1 ? 'es' : ''}`,
-                              delta: reportesData.compras.delta !== null ? -reportesData.compras.delta : null,
-                              color: 'text-black',
-                            },
-                            {
-                              label: 'UTILIDAD NETA',
-                              value: `$${reportesData.utilidadNeta.toLocaleString('es-CO')}`,
-                              sub: `Gastos: $${reportesData.gastos.total.toLocaleString('es-CO')}`,
-                              delta: null,
-                              color: reportesData.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red',
-                            },
-                          ].map((kpi) => (
-                            <div key={kpi.label} className="neo-card bg-white flex flex-col gap-1">
-                              <span className="font-mono text-[10px] text-neutral-500 font-bold">{kpi.label}</span>
-                              <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
-                              <span className="text-[10px] font-mono text-neutral-500">{kpi.sub}</span>
-                              {kpi.delta !== null && (
-                                <span className={`text-[10px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
-                                  {kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs período anterior
+                    {/* Grid de tarjetas */}
+                    {reportesOverview && (
+                      <div className={`grid gap-3 ${reportesTipo === 'meses' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6'}`}>
+                        {reportesOverview.map((periodo) => {
+                          const id = reportesTipo === 'meses' ? (periodo.mes ?? 0) : (periodo.semana ?? 0);
+                          const isSelected = reportesSeleccionado === id;
+                          const hayDatos = periodo.tieneDatos;
+                          return (
+                            <button
+                              key={id}
+                              type="button"
+                              onClick={() => {
+                                if (isSelected) { setReportesSeleccionado(null); setReportesDetalle(null); setReportesIA(null); return; }
+                                setReportesSeleccionado(id);
+                                if (reportesTipo === 'meses') {
+                                  void fetchReportesDetalle('meses', reportesAño, periodo.mes);
+                                } else {
+                                  void fetchReportesDetalle('semanas', reportesAño, undefined, periodo.semana);
+                                }
+                              }}
+                              className={`text-left p-3 border-2 transition-all flex flex-col gap-1.5 ${
+                                isSelected
+                                  ? 'bg-black text-white border-black'
+                                  : hayDatos
+                                    ? 'bg-white border-black hover:bg-neutral-50 hover:shadow-[2px_2px_0px_rgba(0,0,0,0.15)]'
+                                    : 'bg-neutral-50 border-neutral-200 hover:bg-neutral-100'
+                              }`}
+                            >
+                              <span className={`font-mono text-[11px] font-black uppercase tracking-wide ${isSelected ? 'text-white' : 'text-black'}`}>
+                                {periodo.label}
+                              </span>
+                              {hayDatos ? (
+                                <>
+                                  <div className="mt-1">
+                                    <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Ventas</span>
+                                    <span className={`font-black text-sm block leading-tight ${isSelected ? 'text-white' : 'text-green-700'}`}>
+                                      ${periodo.ventas.toLocaleString('es-CO')}
+                                    </span>
+                                  </div>
+                                  <div>
+                                    <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Pedidos</span>
+                                    <span className={`font-bold text-xs block ${isSelected ? 'text-white' : 'text-black'}`}>{periodo.pedidos}</span>
+                                  </div>
+                                  <div>
+                                    <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Ganancia aprox.</span>
+                                    <span className={`font-bold text-xs block ${
+                                      isSelected ? 'text-white' : periodo.gananciaAprox >= 0 ? 'text-green-700' : 'text-red-600'
+                                    }`}>
+                                      ${periodo.gananciaAprox.toLocaleString('es-CO')}
+                                    </span>
+                                  </div>
+                                  <span className={`font-mono text-[9px] mt-1 ${isSelected ? 'text-neutral-400' : 'text-neutral-400'}`}>
+                                    {isSelected ? '▲ ver menos' : '▼ ver detalle'}
+                                  </span>
+                                </>
+                              ) : (
+                                <span className={`font-mono text-[10px] italic mt-1 ${isSelected ? 'text-neutral-400' : 'text-neutral-300'}`}>
+                                  Sin datos
                                 </span>
                               )}
-                            </div>
-                          ))}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Panel de detalle del período seleccionado */}
+                    {reportesSeleccionado !== null && (
+                      <div className="border-2 border-black bg-white p-4 flex flex-col gap-4">
+
+                        {/* Header del panel */}
+                        <div className="flex items-center justify-between border-b border-black pb-2">
+                          <h3 className="font-mono text-sm font-black">
+                            {reportesOverview?.find((p) => (reportesTipo === 'meses' ? p.mes : p.semana) === reportesSeleccionado)?.label ?? ''}
+                          </h3>
+                          <button type="button" onClick={() => { setReportesSeleccionado(null); setReportesDetalle(null); setReportesIA(null); }} className="neo-btn p-1 text-neutral-500 hover:bg-neutral-100 text-xs font-mono">✕</button>
                         </div>
 
-                        {/* Métricas secundarias */}
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                          <div className="neo-card bg-white">
-                            <span className="font-mono text-[10px] text-neutral-500 font-bold">CxC COBRADA</span>
-                            <span className="text-lg font-black text-green-700 block mt-1">${reportesData.cxcCobrada.toLocaleString('es-CO')}</span>
-                            <span className="text-[10px] font-mono text-neutral-400">Abonos de clientes en el período</span>
-                          </div>
-                          <div className="neo-card bg-white">
-                            <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
-                            <span className="text-lg font-black text-black block mt-1">${reportesData.ingresosManuales.toLocaleString('es-CO')}</span>
-                            <span className="text-[10px] font-mono text-neutral-400">Capital, préstamos, etc.</span>
-                          </div>
-                          <div className="neo-card bg-white">
-                            <span className="font-mono text-[10px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
-                            <span className="text-lg font-black text-black block mt-1">${reportesData.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
-                            <span className="text-[10px] font-mono text-neutral-400">Por pedido</span>
-                          </div>
-                        </div>
-
-                        {/* Top productos */}
-                        {reportesData.topProductos.length > 0 && (
-                          <div className="neo-card bg-white">
-                            <h3 className="font-mono text-xs font-bold border-b border-black pb-2 mb-3">🏆 TOP PRODUCTOS DEL PERÍODO</h3>
-                            <div className="space-y-2">
-                              {reportesData.topProductos.map((p, i) => (
-                                <div key={p.nombre} className="flex items-center gap-3 text-xs">
-                                  <span className="font-mono font-black text-neutral-400 w-4">{i + 1}</span>
-                                  <div className="flex-1 min-w-0">
-                                    <span className="font-bold text-black truncate block">{p.nombre}</span>
-                                    {p.categoria && <span className="text-[10px] text-neutral-400 font-mono">{p.categoria}</span>}
-                                  </div>
-                                  <span className="font-mono text-neutral-500 shrink-0">{p.unidades} uds</span>
-                                  <span className="font-mono font-bold text-black shrink-0">${p.ventasTotal.toLocaleString('es-CO')}</span>
-                                  {/* Barra visual */}
-                                  <div className="w-16 bg-neutral-100 h-1.5 border border-black shrink-0">
-                                    <div
-                                      className="bg-black h-full"
-                                      style={{ width: `${Math.round((p.ventasTotal / (reportesData.topProductos[0]?.ventasTotal || 1)) * 100)}%` }}
-                                    />
-                                  </div>
-                                </div>
-                              ))}
-                            </div>
+                        {reportesDetalleCargando && (
+                          <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 py-4">
+                            <RefreshCw size={13} className="animate-spin" /> Calculando detalle…
                           </div>
                         )}
 
-                        {/* Análisis IA */}
-                        <div className="neo-card bg-white">
-                          <div className="flex items-center justify-between border-b border-black pb-2 mb-3">
-                            <h3 className="font-mono text-xs font-bold flex items-center gap-2">
-                              <Sparkles size={14} /> ANÁLISIS IA DEL PERÍODO
-                            </h3>
-                            <button
-                              type="button"
-                              onClick={() => void fetchReportesIA()}
-                              disabled={reportesIACargando}
-                              className="neo-button text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
-                            >
-                              {reportesIACargando
-                                ? <><RefreshCw size={11} className="animate-spin" /> Analizando…</>
-                                : <><Sparkles size={11} /> {reportesIA ? 'Re-analizar' : 'Generar análisis'}</>
-                              }
-                            </button>
-                          </div>
-                          {!reportesIA && !reportesIACargando && (
-                            <p className="text-xs font-mono text-neutral-400 italic text-center py-4">
-                              Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales del período.
-                            </p>
-                          )}
-                          {reportesIACargando && (
-                            <div className="flex items-center gap-2 py-4 text-xs font-mono text-neutral-500">
-                              <RefreshCw size={14} className="animate-spin" />
-                              Analizando datos del período con IA… (puede tomar unos segundos)
+                        {reportesDetalle && !reportesDetalleCargando && (
+                          <>
+                            {/* KPIs principales */}
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                              {[
+                                {
+                                  label: 'VENTAS TOTALES',
+                                  value: `$${reportesDetalle.ventas.total.toLocaleString('es-CO')}`,
+                                  sub: `${reportesDetalle.ventas.pedidos} pedido${reportesDetalle.ventas.pedidos !== 1 ? 's' : ''}`,
+                                  delta: reportesDetalle.ventas.delta,
+                                  color: 'text-green-700',
+                                },
+                                {
+                                  label: 'MARGEN BRUTO',
+                                  value: `$${reportesDetalle.margenBruto.total.toLocaleString('es-CO')}`,
+                                  sub: `${reportesDetalle.margenBruto.porcentaje}% sobre ventas`,
+                                  delta: reportesDetalle.margenBruto.delta,
+                                  color: reportesDetalle.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red',
+                                },
+                                {
+                                  label: 'COMPRAS / OC',
+                                  value: `$${reportesDetalle.compras.total.toLocaleString('es-CO')}`,
+                                  sub: `${reportesDetalle.compras.oc} orden${reportesDetalle.compras.oc !== 1 ? 'es' : ''}`,
+                                  delta: reportesDetalle.compras.delta !== null ? -reportesDetalle.compras.delta : null,
+                                  color: 'text-black',
+                                },
+                                {
+                                  label: 'UTILIDAD NETA',
+                                  value: `$${reportesDetalle.utilidadNeta.toLocaleString('es-CO')}`,
+                                  sub: `Gastos: $${reportesDetalle.gastos.total.toLocaleString('es-CO')}`,
+                                  delta: null,
+                                  color: reportesDetalle.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red',
+                                },
+                              ].map((kpi) => (
+                                <div key={kpi.label} className="border border-black p-3 flex flex-col gap-1 bg-neutral-50">
+                                  <span className="font-mono text-[10px] text-neutral-500 font-bold">{kpi.label}</span>
+                                  <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
+                                  <span className="text-[10px] font-mono text-neutral-500">{kpi.sub}</span>
+                                  {kpi.delta !== null && (
+                                    <span className={`text-[10px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
+                                      {kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs período anterior
+                                    </span>
+                                  )}
+                                </div>
+                              ))}
                             </div>
-                          )}
-                          {reportesIA && !reportesIACargando && (
-                            <div className="prose prose-sm max-w-none font-mono text-xs leading-relaxed space-y-2">
-                              {reportesIA.split('\n').map((line, i) => {
-                                if (line.startsWith('## ')) return <h4 key={i} className="font-bold text-black mt-3 mb-1 border-b border-neutral-200 pb-1">{line.replace('## ', '')}</h4>;
-                                if (line.startsWith('- ')) return <p key={i} className="text-neutral-700 pl-2">• {line.slice(2)}</p>;
-                                if (line.trim() === '') return null;
-                                return <p key={i} className="text-neutral-700">{line}</p>;
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      </>
-                    )}
 
-                    {!reportesData && !reportesCargando && !reportesError && (
-                      <div className="neo-card bg-white text-center py-10 text-xs font-mono text-neutral-400 italic">
-                        Selecciona un período y haz clic en ↺ para cargar el reporte.
+                            {/* Métricas secundarias */}
+                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                              <div className="border border-black p-3 bg-neutral-50">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">CxC COBRADA</span>
+                                <span className="text-lg font-black text-green-700 block mt-1">${reportesDetalle.cxcCobrada.toLocaleString('es-CO')}</span>
+                                <span className="text-[10px] font-mono text-neutral-400">Abonos de clientes</span>
+                              </div>
+                              <div className="border border-black p-3 bg-neutral-50">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
+                                <span className="text-lg font-black text-black block mt-1">${reportesDetalle.ingresosManuales.toLocaleString('es-CO')}</span>
+                                <span className="text-[10px] font-mono text-neutral-400">Capital, préstamos, etc.</span>
+                              </div>
+                              <div className="border border-black p-3 bg-neutral-50">
+                                <span className="font-mono text-[10px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
+                                <span className="text-lg font-black text-black block mt-1">${reportesDetalle.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
+                                <span className="text-[10px] font-mono text-neutral-400">Por pedido</span>
+                              </div>
+                            </div>
+
+                            {/* Top productos */}
+                            {reportesDetalle.topProductos.length > 0 && (
+                              <div>
+                                <h4 className="font-mono text-xs font-bold border-b border-black pb-2 mb-3">🏆 TOP PRODUCTOS</h4>
+                                <div className="space-y-2">
+                                  {reportesDetalle.topProductos.map((p, i) => (
+                                    <div key={p.nombre} className="flex items-center gap-3 text-xs">
+                                      <span className="font-mono font-black text-neutral-400 w-4">{i + 1}</span>
+                                      <div className="flex-1 min-w-0">
+                                        <span className="font-bold text-black truncate block">{p.nombre}</span>
+                                        {p.categoria && <span className="text-[10px] text-neutral-400 font-mono">{p.categoria}</span>}
+                                      </div>
+                                      <span className="font-mono text-neutral-500 shrink-0">{p.unidades} uds</span>
+                                      <span className="font-mono font-bold text-black shrink-0">${p.ventasTotal.toLocaleString('es-CO')}</span>
+                                      <div className="w-16 bg-neutral-100 h-1.5 border border-black shrink-0">
+                                        <div
+                                          className="bg-black h-full"
+                                          style={{ width: `${Math.round((p.ventasTotal / (reportesDetalle.topProductos[0]?.ventasTotal || 1)) * 100)}%` }}
+                                        />
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+
+                            {/* Análisis IA */}
+                            <div className="border-t border-black pt-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="font-mono text-xs font-bold flex items-center gap-2">
+                                  <Sparkles size={13} /> ANÁLISIS IA
+                                </h4>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    const sel = reportesOverview?.find((p) => (reportesTipo === 'meses' ? p.mes : p.semana) === reportesSeleccionado);
+                                    if (!sel) return;
+                                    void fetchReportesIA(reportesTipo, reportesAño, sel.mes, sel.semana);
+                                  }}
+                                  disabled={reportesIACargando}
+                                  className="neo-button text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+                                >
+                                  {reportesIACargando
+                                    ? <><RefreshCw size={11} className="animate-spin" /> Analizando…</>
+                                    : <><Sparkles size={11} /> {reportesIA ? 'Re-analizar' : 'Generar análisis'}</>
+                                  }
+                                </button>
+                              </div>
+                              {!reportesIA && !reportesIACargando && (
+                                <p className="text-xs font-mono text-neutral-400 italic text-center py-3">
+                                  Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales.
+                                </p>
+                              )}
+                              {reportesIACargando && (
+                                <div className="flex items-center gap-2 py-4 text-xs font-mono text-neutral-500">
+                                  <RefreshCw size={14} className="animate-spin" />
+                                  Analizando con IA… (puede tomar unos segundos)
+                                </div>
+                              )}
+                              {reportesIA && !reportesIACargando && (
+                                <div className="font-mono text-xs leading-relaxed space-y-2">
+                                  {reportesIA.split('\n').map((line, i) => {
+                                    if (line.startsWith('## ')) return <h5 key={i} className="font-bold text-black mt-3 mb-1 border-b border-neutral-200 pb-1">{line.replace('## ', '')}</h5>;
+                                    if (line.startsWith('- ')) return <p key={i} className="text-neutral-700 pl-2">• {line.slice(2)}</p>;
+                                    if (line.trim() === '') return null;
+                                    return <p key={i} className="text-neutral-700">{line}</p>;
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          </>
+                        )}
                       </div>
                     )}
                   </div>
