@@ -45,7 +45,7 @@ export async function webhookApifyRoutes(fastify: FastifyInstance): Promise<void
         return reply.code(401).send({ error: 'Firma inválida.' })
       }
 
-      const { runId, status, datasetId, tenantId, tenantSchemaName } = request.body
+      const { runId, status, datasetId, tenantSchemaName } = request.body
 
       // ── 2. Actualizar estado del run en la tabla pública ─────────────────
       await fastify.prisma.apifyScrapeRun.updateMany({

@@ -41,8 +41,8 @@ try {
   `)
   console.log('\n🔄 Migraciones aplicadas:')
   r2.rows.forEach(row => console.log(` - ${row.filename} (${row.applied_at})`))
-} catch (e: any) {
-  console.log('\n⚠️  No se pudo leer schema_migrations:', e.message)
+} catch (e) {
+  console.log('\n⚠️  No se pudo leer schema_migrations:', e instanceof Error ? e.message : String(e))
 }
 
 // Tenants

@@ -18,6 +18,7 @@ import { redesSocialesRoutes } from './routes/tenant/redes_sociales.js'
 import { aiChatRoutes } from './routes/tenant/ai_chat.js'
 import { webhookApifyRoutes } from './routes/webhook_apify.js'
 import { crmRoutes } from './routes/tenant/crm.js'
+import { dashboardRoutes } from './routes/tenant/dashboard.js'
 import { finanzasRoutes } from './routes/tenant/finanzas.js'
 import { inventarioRoutes } from './routes/tenant/inventario.js'
 import { papeleraRoutes } from './routes/tenant/papelera.js'
@@ -92,6 +93,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(webhookApifyRoutes)
   await app.register(igCronPlugin)
   await app.register(papeleraRoutes)
+  await app.register(dashboardRoutes)
 
   return app
 }

@@ -12,8 +12,7 @@
 import fp from 'fastify-plugin'
 import cron from 'node-cron'
 import type { FastifyInstance } from 'fastify'
-import { scrapeIgProfile } from '../lib/apify/scraper.js'
-import { persistIgScrape } from '../lib/apify/persistor.js'
+import { executeIgScrapeRun } from '../lib/apify/runs.js'
 
 export const igCronPlugin = fp(async (fastify: FastifyInstance) => {
   const { APIFY_TOKEN, APIFY_DEFAULT_ACTOR } = fastify.config
@@ -27,7 +26,6 @@ export const igCronPlugin = fp(async (fastify: FastifyInstance) => {
   cron.schedule('0 8 * * *', async () => {
     fastify.log.info('igCron: iniciando scrape diario de Instagram')
 
-    // Obtener todos los tenants activos con cuenta IG y cron activado
     let tenants: { tenantId: string; schemaName: string }[]
     try {
       const { rows } = await fastify.pg.query<{
@@ -47,11 +45,13 @@ export const igCronPlugin = fp(async (fastify: FastifyInstance) => {
     }
 
     for (const tenant of tenants) {
+      // Solo necesitamos una conexión para leer el handle + config del tenant.
+      // El scrape real reabre su propia conexión vía executeIgScrapeRun para
+      // no mantener el search_path setteado durante el HTTP call a Apify.
       const client = await fastify.pg.connect()
+      let cfg: { handle: string; postsRun: number; comentariosRun: number } | null = null
       try {
         await client.query(`SET search_path TO "${tenant.schemaName}", public`)
-
-        // ¿Existe cuenta IG con cron activo?
         const { rows: cfgRows } = await client.query<{
           handle: string
           postsRun: number
@@ -63,30 +63,42 @@ export const igCronPlugin = fp(async (fastify: FastifyInstance) => {
           WHERE cfg.cron_activado = TRUE
           LIMIT 1
         `)
-
-        if (!cfgRows[0]) {
-          fastify.log.debug({ schema: tenant.schemaName }, 'igCron: sin cuenta IG o cron desactivado, saltando')
-          continue
-        }
-
-        const { handle, postsRun, comentariosRun } = cfgRows[0]
-        fastify.log.info({ schema: tenant.schemaName, handle }, 'igCron: scraping')
-
-        const result = await scrapeIgProfile(handle, APIFY_TOKEN, APIFY_DEFAULT_ACTOR, {
-          postsLimit: postsRun,
-          comentariosLimit: comentariosRun,
-        })
-
-        const { postsUpserted, comentariosUpserted } = await persistIgScrape(client, result)
-        fastify.log.info(
-          { schema: tenant.schemaName, handle, postsUpserted, comentariosUpserted },
-          'igCron: scrape completado',
-        )
+        cfg = cfgRows[0] ?? null
       } catch (err) {
-        fastify.log.error({ err, schema: tenant.schemaName }, 'igCron: error en tenant')
+        fastify.log.error({ err, schema: tenant.schemaName }, 'igCron: error leyendo config')
       } finally {
-        await client.query('RESET search_path')
+        await client.query('RESET search_path').catch(() => undefined)
         client.release()
+      }
+
+      if (!cfg) continue
+
+      fastify.log.info({ schema: tenant.schemaName, handle: cfg.handle }, 'igCron: scraping')
+      const outcome = await executeIgScrapeRun({
+        prisma: fastify.prisma,
+        pgConnect: () => fastify.pg.connect(),
+        tenantId: tenant.tenantId,
+        schemaName: tenant.schemaName,
+        handle: cfg.handle,
+        apifyToken: APIFY_TOKEN,
+        apifyActor: APIFY_DEFAULT_ACTOR,
+        trigger: 'cron',
+        opts: {
+          postsLimit: cfg.postsRun,
+          comentariosLimit: cfg.comentariosRun,
+        },
+      })
+
+      if (outcome.status === 'failed') {
+        fastify.log.error(
+          { schema: tenant.schemaName, runId: outcome.runId, error: outcome.error },
+          'igCron: tenant fallido',
+        )
+      } else {
+        fastify.log.info(
+          { schema: tenant.schemaName, runId: outcome.runId, posts: outcome.postsUpserted },
+          'igCron: tenant ok',
+        )
       }
     }
 

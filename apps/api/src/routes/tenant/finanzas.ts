@@ -322,6 +322,78 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     return reply.send({ facturas })
   })
 
+  // GET /finanzas/facturas/vencidas — CxC y CxP con fecha_vencimiento pasada y saldo > 0.
+  // Endpoint dedicado para el dashboard y alertas. Calcula el saldo on-the-fly
+  // y los días vencidos para que el frontend no tenga que cruzarlo después.
+  fastify.get<{ Querystring: { tipo?: string } }>(
+    '/finanzas/facturas/vencidas',
+    conSesion,
+    async (request, reply) => {
+      if (!exigirTenant(request, reply)) return
+      const tipoQ = request.query.tipo ?? 'todas'
+      if (!['cxc', 'cxp', 'todas'].includes(tipoQ)) {
+        return reply.badRequest('El parámetro "tipo" debe ser "cxc", "cxp" o "todas".')
+      }
+
+      const promesas: Array<Promise<{ rows: unknown[] }>> = []
+      if (tipoQ === 'cxc' || tipoQ === 'todas') {
+        promesas.push(request.tenantDb.query(`
+          SELECT
+            'cxc'                                                AS "tipo",
+            fv.id, fv.numero,
+            c.nombre                                             AS contraparte,
+            fv.total::numeric                                    AS total,
+            (fv.total - COALESCE((
+              SELECT SUM(monto) FROM abonos
+              WHERE tipo_documento = 'factura_venta'
+                AND documento_id = fv.id AND deleted_at IS NULL
+            ), 0))::numeric                                       AS saldo,
+            fv.fecha_vencimiento                                 AS "fechaVencimiento",
+            (CURRENT_DATE - fv.fecha_vencimiento)::int           AS "diasVencido"
+          FROM facturas_venta fv
+          LEFT JOIN clientes c ON c.id = fv.cliente_id
+          WHERE fv.deleted_at IS NULL
+            AND fv.fecha_vencimiento < CURRENT_DATE
+            AND fv.total > COALESCE((
+              SELECT SUM(monto) FROM abonos
+              WHERE tipo_documento = 'factura_venta'
+                AND documento_id = fv.id AND deleted_at IS NULL
+            ), 0)
+          ORDER BY fv.fecha_vencimiento ASC
+        `))
+      }
+      if (tipoQ === 'cxp' || tipoQ === 'todas') {
+        promesas.push(request.tenantDb.query(`
+          SELECT
+            'cxp'                                                AS "tipo",
+            fc.id, fc.numero,
+            p.nombre                                             AS contraparte,
+            fc.total::numeric                                    AS total,
+            (fc.total - COALESCE((
+              SELECT SUM(monto) FROM abonos
+              WHERE tipo_documento = 'factura_compra'
+                AND documento_id = fc.id AND deleted_at IS NULL
+            ), 0))::numeric                                       AS saldo,
+            fc.fecha_vencimiento                                 AS "fechaVencimiento",
+            (CURRENT_DATE - fc.fecha_vencimiento)::int           AS "diasVencido"
+          FROM facturas_compra fc
+          LEFT JOIN proveedores p ON p.id = fc.proveedor_id
+          WHERE fc.deleted_at IS NULL
+            AND fc.fecha_vencimiento < CURRENT_DATE
+            AND fc.total > COALESCE((
+              SELECT SUM(monto) FROM abonos
+              WHERE tipo_documento = 'factura_compra'
+                AND documento_id = fc.id AND deleted_at IS NULL
+            ), 0)
+          ORDER BY fc.fecha_vencimiento ASC
+        `))
+      }
+
+      const resultados = await Promise.all(promesas)
+      return reply.send({ facturas: resultados.flatMap((r) => r.rows) })
+    },
+  )
+
   // POST /finanzas/facturas — registro manual (compras a proveedores, ventas de mostrador, etc.)
   fastify.post('/finanzas/facturas', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return

@@ -106,6 +106,7 @@ export async function provisionarSchemaDeTenant(pool: Pool, schemaName: string):
           `Falló la migración "${migracion.nombre}" para el schema "${schemaName}": ${
             error instanceof Error ? error.message : String(error)
           }`,
+          { cause: error },
         )
       }
     }

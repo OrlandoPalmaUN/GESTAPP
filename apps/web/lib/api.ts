@@ -537,6 +537,19 @@ export const api = {
       { method: 'POST' },
     ),
 
+  igRefreshStatus: () =>
+    request<{
+      run: {
+        id: string
+        trigger: 'cron' | 'manual' | 'backfill'
+        status: 'running' | 'succeeded' | 'failed'
+        startedAt: string
+        finishedAt: string | null
+        itemsCount: number | null
+        errorMessage: string | null
+      } | null
+    }>('/redes/ig/refresh-status'),
+
   igRuns: (limit = 10) =>
     request<{ runs: IgRun[] }>(`/redes/ig/runs?limit=${limit}`),
 

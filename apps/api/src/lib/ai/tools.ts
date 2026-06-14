@@ -4,18 +4,50 @@ import type Groq from 'groq-sdk'
  * Herramientas que el agente puede llamar.
  * Usar getToolsForContext() en vez de AGENT_TOOLS directamente —
  * enviar solo las tools del módulo activo reduce ~1.5k–2k tokens por request.
+ *
+ * REGLAS de seguridad para las write-tools:
+ *  - El executor SIEMPRE valida lo que viene del LLM antes de tocar la DB.
+ *  - Las transiciones de estado pasan por TRANSICIONES_VALIDAS (compartido con el handler HTTP).
+ *  - Los efectos secundarios (stock, saldos, CxC/CxP) se replican aquí — el LLM
+ *    no puede saltarse la atomicidad que protege a los endpoints normales.
+ *  - El executor NUNCA borra. Eliminar es del usuario.
  */
 
-// Agrupación por módulo — cada tool puede aparecer en varios contextos
 const TOOLS_BY_CONTEXT: Record<string, string[]> = {
-  general:    ['buscar_cliente','crear_cliente','buscar_producto','crear_pedido','buscar_proveedor','crear_proveedor','consultar_resumen_negocio','crear_nota'],
-  pedidos:    ['buscar_cliente','crear_cliente','buscar_producto','crear_pedido','actualizar_estado_pedido','registrar_abono','ver_historial_cliente'],
-  inventario: ['buscar_producto','crear_producto','ajustar_stock','consultar_resumen_negocio'],
-  clientes:   ['buscar_cliente','crear_cliente','ver_historial_cliente','registrar_abono'],
-  finanzas:   ['buscar_cliente','registrar_abono','ver_historial_cliente','consultar_resumen_negocio'],
-  redes:      ['consultar_posts_ig','consultar_metricas_ig'],
-  notas:      ['crear_nota'],
-  proveedores:['buscar_proveedor','crear_proveedor'],
+  general: [
+    'buscar_cliente', 'crear_cliente', 'buscar_producto', 'crear_pedido',
+    'buscar_proveedor', 'crear_proveedor', 'consultar_resumen_negocio',
+    'consultar_kpis_dashboard', 'consultar_stock_bajo', 'consultar_facturas_vencidas',
+    'buscar_pedido', 'crear_nota',
+  ],
+  pedidos: [
+    'buscar_cliente', 'crear_cliente', 'buscar_producto', 'crear_pedido',
+    'actualizar_estado_pedido', 'buscar_pedido', 'consultar_pedidos_pendientes',
+    'ver_historial_cliente', 'registrar_abono',
+  ],
+  inventario: [
+    'buscar_producto', 'crear_producto', 'ajustar_stock',
+    'consultar_stock_bajo', 'consultar_resumen_negocio',
+  ],
+  clientes: [
+    'buscar_cliente', 'crear_cliente', 'ver_historial_cliente',
+    'registrar_abono', 'consultar_facturas_vencidas',
+  ],
+  finanzas: [
+    'buscar_cliente', 'registrar_abono', 'registrar_gasto', 'registrar_ingreso_manual',
+    'ver_historial_cliente', 'consultar_resumen_negocio', 'consultar_facturas_vencidas',
+    'consultar_cuentas_bancarias',
+  ],
+  redes: ['consultar_posts_ig', 'consultar_metricas_ig'],
+  notas: ['crear_nota', 'crear_evento_calendario'],
+  proveedores: [
+    'buscar_proveedor', 'crear_proveedor', 'crear_compra',
+    'consultar_compras_pendientes',
+  ],
+  compras: [
+    'buscar_proveedor', 'crear_proveedor', 'buscar_producto',
+    'crear_compra', 'consultar_compras_pendientes',
+  ],
 }
 
 export function getToolsForContext(context: string): Groq.Chat.ChatCompletionTool[] {
@@ -24,31 +56,16 @@ export function getToolsForContext(context: string): Groq.Chat.ChatCompletionToo
 }
 
 export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
+  // ─── CLIENTES ─────────────────────────────────────────────────────────────
   {
     type: 'function',
     function: {
-      name: 'buscar_producto',
-      description: 'Busca productos en el inventario del negocio por nombre o descripción.',
+      name: 'buscar_cliente',
+      description: 'Busca clientes existentes en el CRM por nombre. Úsalo SIEMPRE antes de crear un pedido o registrar un abono — necesitas el ID real.',
       parameters: {
         type: 'object',
         properties: {
-          query: { type: 'string', description: 'Nombre o descripción del producto a buscar' },
-        },
-        required: ['query'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'crear_cliente',
-      description: 'Crea un nuevo cliente en el CRM del negocio.',
-      parameters: {
-        type: 'object',
-        properties: {
-          nombre: { type: 'string', description: 'Nombre completo o razón social del cliente' },
-          email: { type: 'string', description: 'Email del cliente (opcional)' },
-          telefono: { type: 'string', description: 'Teléfono del cliente (opcional)' },
+          nombre: { type: 'string', description: 'Nombre del cliente a buscar (búsqueda parcial)' },
         },
         required: ['nombre'],
       },
@@ -57,43 +74,42 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'crear_pedido',
-      description: 'Crea un pedido de venta para un cliente existente.',
+      name: 'crear_cliente',
+      description: 'Crea un nuevo cliente. Solo si buscar_cliente devolvió vacío.',
       parameters: {
         type: 'object',
         properties: {
-          cliente_id: { type: 'string', description: 'ID del cliente (obtenido de crear_cliente o buscar_cliente)' },
-          cliente_nombre: { type: 'string', description: 'Nombre del cliente para confirmar' },
-          items: {
-            type: 'array',
-            description: 'Productos del pedido',
-            items: {
-              type: 'object',
-              properties: {
-                producto_id: { type: 'string', description: 'ID del producto' },
-                producto_nombre: { type: 'string', description: 'Nombre del producto' },
-                cantidad: { type: 'number', description: 'Cantidad a pedir' },
-                precio_unitario: { type: 'number', description: 'Precio por unidad (si se conoce)' },
-              },
-              required: ['producto_id', 'producto_nombre', 'cantidad'],
-            },
-          },
-          notas: { type: 'string', description: 'Notas adicionales del pedido (opcional)' },
+          nombre: { type: 'string', description: 'Nombre completo o razón social' },
+          email: { type: 'string', description: 'Email (opcional)' },
+          telefono: { type: 'string', description: 'Teléfono (opcional)' },
+          nit: { type: 'string', description: 'NIT/cédula (opcional)' },
         },
-        required: ['cliente_id', 'cliente_nombre', 'items'],
+        required: ['nombre'],
       },
     },
   },
   {
     type: 'function',
     function: {
-      name: 'buscar_cliente',
-      description: 'Busca clientes existentes en el CRM por nombre.',
+      name: 'ver_historial_cliente',
+      description: 'Historial completo de un cliente: últimos pedidos, saldo pendiente, facturas abiertas.',
       parameters: {
         type: 'object',
-        properties: {
-          nombre: { type: 'string', description: 'Nombre del cliente a buscar' },
-        },
+        properties: { cliente_id: { type: 'string', description: 'ID del cliente' } },
+        required: ['cliente_id'],
+      },
+    },
+  },
+
+  // ─── PROVEEDORES ──────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'buscar_proveedor',
+      description: 'Busca proveedores existentes por nombre.',
+      parameters: {
+        type: 'object',
+        properties: { nombre: { type: 'string', description: 'Nombre del proveedor' } },
         required: ['nombre'],
       },
     },
@@ -102,64 +118,30 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'crear_proveedor',
-      description: 'Crea un nuevo proveedor en el sistema.',
+      description: 'Crea un nuevo proveedor.',
       parameters: {
         type: 'object',
         properties: {
-          nombre: { type: 'string', description: 'Nombre o razón social del proveedor' },
-          email: { type: 'string', description: 'Email del proveedor (opcional)' },
-          telefono: { type: 'string', description: 'Teléfono (opcional)' },
-          nit: { type: 'string', description: 'NIT o documento del proveedor (opcional)' },
+          nombre: { type: 'string' },
+          email: { type: 'string' },
+          telefono: { type: 'string' },
+          nit: { type: 'string' },
         },
         required: ['nombre'],
       },
     },
   },
+
+  // ─── PRODUCTOS / INVENTARIO ───────────────────────────────────────────────
   {
     type: 'function',
     function: {
-      name: 'buscar_proveedor',
-      description: 'Busca proveedores existentes por nombre.',
+      name: 'buscar_producto',
+      description: 'Busca productos del inventario por nombre o descripción. Devuelve id, nombre, precio_venta, stock disponible y stock_minimo.',
       parameters: {
         type: 'object',
-        properties: {
-          nombre: { type: 'string', description: 'Nombre del proveedor a buscar' },
-        },
-        required: ['nombre'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'consultar_resumen_negocio',
-      description: 'Obtiene un resumen del estado actual del negocio: ventas recientes, stock bajo, pedidos pendientes.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'consultar_posts_ig',
-      description: 'Obtiene los últimos posts de Instagram del negocio: tipo de contenido, caption, likes, comentarios, vistas y fecha. Úsalo cuando el usuario pida ideas de contenido, análisis de posts, o cualquier pregunta sobre sus publicaciones.',
-      parameters: {
-        type: 'object',
-        properties: {
-          limite: {
-            type: 'number',
-            description: 'Cuántos posts traer (máx 20, default 10)',
-          },
-          tipo: {
-            type: 'string',
-            enum: ['VIDEO', 'CAROUSEL', 'IMAGE'],
-            description: 'Filtrar por tipo de contenido (opcional)',
-          },
-        },
-        required: [],
+        properties: { query: { type: 'string', description: 'Texto a buscar en nombre/descripción' } },
+        required: ['query'],
       },
     },
   },
@@ -167,18 +149,18 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'crear_producto',
-      description: 'Crea un nuevo producto en el inventario.',
+      description: 'Crea un producto. Si das stock_inicial, registra el movimiento de inventario inicial.',
       parameters: {
         type: 'object',
         properties: {
-          nombre: { type: 'string', description: 'Nombre del producto' },
-          precio_venta: { type: 'number', description: 'Precio de venta' },
-          precio_costo: { type: 'number', description: 'Precio de costo (opcional)' },
-          stock_inicial: { type: 'number', description: 'Unidades en stock al crearlo (default 0)' },
-          stock_minimo: { type: 'number', description: 'Stock mínimo para alertas (opcional)' },
-          unidad: { type: 'string', description: 'Unidad de medida (ej: unidad, kg, caja). Default: unidad' },
-          sku: { type: 'string', description: 'Código SKU (opcional)' },
-          descripcion: { type: 'string', description: 'Descripción del producto (opcional)' },
+          nombre: { type: 'string' },
+          precio_venta: { type: 'number' },
+          precio_costo: { type: 'number' },
+          stock_inicial: { type: 'number', description: 'Unidades al crear (default 0)' },
+          stock_minimo: { type: 'number', description: 'Umbral para alerta de stock bajo' },
+          unidad: { type: 'string', description: 'Default: unidad' },
+          sku: { type: 'string' },
+          descripcion: { type: 'string' },
         },
         required: ['nombre', 'precio_venta'],
       },
@@ -188,15 +170,15 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'ajustar_stock',
-      description: 'Ajusta el stock de un producto existente. Usa ajuste_positivo para agregar unidades, ajuste_negativo para reducir.',
+      description: 'Ajusta el stock de un producto (positivo = agregar, negativo = restar). Bloqueado si dejaría el stock negativo.',
       parameters: {
         type: 'object',
         properties: {
-          producto_id: { type: 'string', description: 'ID del producto (obtenido de buscar_producto)' },
-          producto_nombre: { type: 'string', description: 'Nombre del producto para confirmar' },
-          cantidad: { type: 'number', description: 'Cantidad a ajustar (siempre positiva)' },
-          tipo: { type: 'string', enum: ['ajuste_positivo', 'ajuste_negativo'], description: 'Dirección del ajuste' },
-          notas: { type: 'string', description: 'Motivo del ajuste (opcional)' },
+          producto_id: { type: 'string' },
+          producto_nombre: { type: 'string', description: 'Para confirmar en la respuesta' },
+          cantidad: { type: 'number', description: 'Siempre positiva' },
+          tipo: { type: 'string', enum: ['ajuste_positivo', 'ajuste_negativo'] },
+          notas: { type: 'string' },
         },
         required: ['producto_id', 'producto_nombre', 'cantidad', 'tipo'],
       },
@@ -205,33 +187,40 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'registrar_abono',
-      description: 'Registra un pago o abono de un cliente sobre su saldo pendiente. Busca la factura abierta y aplica el pago.',
-      parameters: {
-        type: 'object',
-        properties: {
-          cliente_id: { type: 'string', description: 'ID del cliente' },
-          cliente_nombre: { type: 'string', description: 'Nombre del cliente para confirmar' },
-          monto: { type: 'number', description: 'Monto del abono en COP' },
-          medio_pago: { type: 'string', enum: ['efectivo', 'transferencia', 'tarjeta', 'cheque'], description: 'Medio de pago (default: efectivo)' },
-          referencia: { type: 'string', description: 'Número de comprobante o referencia (opcional)' },
-        },
-        required: ['cliente_id', 'cliente_nombre', 'monto'],
-      },
+      name: 'consultar_stock_bajo',
+      description: 'Lista productos cuyo stock disponible está por debajo del stock_minimo definido.',
+      parameters: { type: 'object', properties: {}, required: [] },
     },
   },
+
+  // ─── PEDIDOS DE VENTA ─────────────────────────────────────────────────────
   {
     type: 'function',
     function: {
-      name: 'crear_nota',
-      description: 'Crea una nota interna en el sistema.',
+      name: 'crear_pedido',
+      description: 'Crea un pedido de venta en estado borrador. NO confirma — el usuario debe confirmar para que descuente stock y genere CxC.',
       parameters: {
         type: 'object',
         properties: {
-          titulo: { type: 'string', description: 'Título de la nota' },
-          contenido: { type: 'string', description: 'Contenido de la nota (opcional)' },
+          cliente_id: { type: 'string' },
+          cliente_nombre: { type: 'string' },
+          items: {
+            type: 'array',
+            description: 'Productos con id real obtenido de buscar_producto',
+            items: {
+              type: 'object',
+              properties: {
+                producto_id: { type: 'string' },
+                producto_nombre: { type: 'string' },
+                cantidad: { type: 'number' },
+                precio_unitario: { type: 'number', description: 'Opcional — si se omite, usa precio_venta del producto' },
+              },
+              required: ['producto_id', 'producto_nombre', 'cantidad'],
+            },
+          },
+          notas: { type: 'string' },
         },
-        required: ['titulo'],
+        required: ['cliente_id', 'cliente_nombre', 'items'],
       },
     },
   },
@@ -239,17 +228,16 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'actualizar_estado_pedido',
-      description: 'Modifica o cancela el estado de un pedido existente.',
+      description: 'Cambia el estado de un pedido. Side effects: borrador→confirmado descuenta como reserva y crea CxC si hay cliente; en_preparacion→despachado libera reserva y registra salida real; *→cancelado libera reserva. La API valida transiciones; cualquier estado puede pasar a cualquier otro distinto.',
       parameters: {
         type: 'object',
         properties: {
-          pedido_id: { type: 'string', description: 'ID del pedido' },
+          pedido_id: { type: 'string' },
           nuevo_estado: {
             type: 'string',
-            enum: ['pendiente', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'],
-            description: 'Nuevo estado del pedido',
+            enum: ['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'],
           },
-          notas: { type: 'string', description: 'Nota sobre el cambio de estado (opcional)' },
+          notas: { type: 'string' },
         },
         required: ['pedido_id', 'nuevo_estado'],
       },
@@ -258,14 +246,217 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
   {
     type: 'function',
     function: {
-      name: 'ver_historial_cliente',
-      description: 'Muestra el historial completo de un cliente: pedidos, saldo pendiente y últimas interacciones.',
+      name: 'buscar_pedido',
+      description: 'Busca un pedido por número (ej "PED-2026-0001") o por nombre de cliente.',
       parameters: {
         type: 'object',
         properties: {
-          cliente_id: { type: 'string', description: 'ID del cliente' },
+          query: { type: 'string', description: 'Número o nombre de cliente' },
         },
-        required: ['cliente_id'],
+        required: ['query'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_pedidos_pendientes',
+      description: 'Lista pedidos en estados activos (borrador, confirmado, en_preparacion) que aún no se han despachado.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  // ─── COMPRAS (OC al proveedor) ───────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'crear_compra',
+      description: 'Crea una orden de compra (OC) a un proveedor. Estado inicial: borrador. La OC suma stock solo cuando se transicione a recibido/recibido_parcial.',
+      parameters: {
+        type: 'object',
+        properties: {
+          proveedor_id: { type: 'string' },
+          proveedor_nombre: { type: 'string' },
+          items: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                producto_id: { type: 'string', description: 'ID real (de buscar_producto) — omite si es un concepto libre' },
+                concepto: { type: 'string', description: 'Texto libre cuando no hay producto_id (ej. "Transporte")' },
+                cantidad: { type: 'number' },
+                precio_unitario: { type: 'number', description: 'Opcional — si se omite, usa precio_costo del producto' },
+              },
+              required: ['cantidad'],
+            },
+          },
+          fecha_esperada: { type: 'string', description: 'YYYY-MM-DD (opcional)' },
+          notas: { type: 'string' },
+        },
+        required: ['proveedor_id', 'proveedor_nombre', 'items'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_compras_pendientes',
+      description: 'Lista las OCs no recibidas (estados borrador, enviado, recibido_parcial).',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  // ─── FINANZAS ─────────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'registrar_abono',
+      description: 'Registra un abono del cliente sobre su factura abierta más antigua. Side effect: si se especifica cuenta_bancaria_id, suma al saldo de esa cuenta. Bloqueado si monto > saldo_pendiente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          cliente_id: { type: 'string' },
+          cliente_nombre: { type: 'string' },
+          monto: { type: 'number', description: 'En COP' },
+          medio_pago: { type: 'string', enum: ['efectivo', 'transferencia', 'tarjeta', 'cheque'] },
+          cuenta_bancaria_id: { type: 'string', description: 'Opcional — si va a una cuenta bancaria específica' },
+          referencia: { type: 'string' },
+        },
+        required: ['cliente_id', 'cliente_nombre', 'monto'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'registrar_gasto',
+      description: 'Registra un gasto operativo. Side effect: si se especifica cuenta_bancaria_id, resta del saldo de esa cuenta.',
+      parameters: {
+        type: 'object',
+        properties: {
+          descripcion: { type: 'string' },
+          monto: { type: 'number', description: 'En COP' },
+          categoria: { type: 'string', description: 'Ej: nomina, servicios, transporte, materia_prima' },
+          cuenta_bancaria_id: { type: 'string', description: 'Opcional — descuenta del saldo' },
+          fecha: { type: 'string', description: 'YYYY-MM-DD (default hoy)' },
+        },
+        required: ['descripcion', 'monto'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'registrar_ingreso_manual',
+      description: 'Registra un ingreso bancario manual (no asociado a una factura). Suma al saldo de la cuenta bancaria indicada.',
+      parameters: {
+        type: 'object',
+        properties: {
+          descripcion: { type: 'string' },
+          monto: { type: 'number' },
+          cuenta_bancaria_id: { type: 'string', description: 'A qué cuenta entra' },
+          fecha: { type: 'string', description: 'YYYY-MM-DD (default hoy)' },
+        },
+        required: ['descripcion', 'monto', 'cuenta_bancaria_id'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_cuentas_bancarias',
+      description: 'Lista las cuentas bancarias activas con sus saldos actuales.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_facturas_vencidas',
+      description: 'Lista facturas de venta (CxC) y compra (CxP) cuya fecha_vencimiento ya pasó y aún tienen saldo pendiente.',
+      parameters: {
+        type: 'object',
+        properties: {
+          tipo: {
+            type: 'string',
+            enum: ['cxc', 'cxp', 'todas'],
+            description: 'cxc = por cobrar, cxp = por pagar, todas = ambas (default)',
+          },
+        },
+        required: [],
+      },
+    },
+  },
+
+  // ─── DASHBOARD / KPIs ─────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_resumen_negocio',
+      description: 'Resumen general: ventas 30d, pedidos pendientes, stock crítico.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_kpis_dashboard',
+      description: 'KPIs avanzados cross-módulo: top productos vendidos, top clientes por monto, OCs pendientes, pedidos sin despacho, saldo total de cuentas, CxC y CxP pendientes.',
+      parameters: { type: 'object', properties: {}, required: [] },
+    },
+  },
+
+  // ─── NOTAS / CALENDARIO ───────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'crear_nota',
+      description: 'Crea una nota interna.',
+      parameters: {
+        type: 'object',
+        properties: {
+          titulo: { type: 'string' },
+          contenido: { type: 'string' },
+        },
+        required: ['titulo'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'crear_evento_calendario',
+      description: 'Crea un evento en el calendario (reunión, recordatorio, deadline).',
+      parameters: {
+        type: 'object',
+        properties: {
+          titulo: { type: 'string' },
+          tipo: { type: 'string', enum: ['reunion', 'recordatorio', 'deadline', 'otro'] },
+          fecha: { type: 'string', description: 'YYYY-MM-DD' },
+          descripcion: { type: 'string' },
+        },
+        required: ['titulo', 'fecha'],
+      },
+    },
+  },
+
+  // ─── INSTAGRAM ────────────────────────────────────────────────────────────
+  {
+    type: 'function',
+    function: {
+      name: 'consultar_posts_ig',
+      description: 'Últimos posts de IG: tipo, caption, likes, comentarios, vistas, fecha. Úsalo antes de dar ideas de contenido.',
+      parameters: {
+        type: 'object',
+        properties: {
+          limite: { type: 'number', description: 'Cuántos posts (máx 20, default 10)' },
+          tipo: {
+            type: 'string',
+            enum: ['VIDEO', 'CAROUSEL', 'IMAGE'],
+            description: 'Filtro por tipo (opcional)',
+          },
+        },
+        required: [],
       },
     },
   },
@@ -273,12 +464,8 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
     type: 'function',
     function: {
       name: 'consultar_metricas_ig',
-      description: 'Obtiene métricas agregadas de Instagram: seguidores, engagement rate, mejores hashtags, mejor hora para publicar y resumen de los últimos 30 días.',
-      parameters: {
-        type: 'object',
-        properties: {},
-        required: [],
-      },
+      description: 'Métricas agregadas de IG: seguidores, engagement rate, mejores hashtags, mejores horas de publicación.',
+      parameters: { type: 'object', properties: {}, required: [] },
     },
   },
 ]

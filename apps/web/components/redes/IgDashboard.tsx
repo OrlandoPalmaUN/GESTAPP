@@ -458,12 +458,44 @@ export function IgDashboard() {
     setRefreshMsg(null)
     try {
       const r = await api.igRefresh()
-      if (r.async) {
-        setRefreshMsg(`⏳ ${r.mensaje ?? 'Actualización en proceso — recarga en 1-2 minutos.'}`)
-      } else {
+      if (!r.async) {
         setRefreshMsg(`✅ ${r.postsActualizados ?? 0} posts y ${r.comentariosActualizados ?? 0} comentarios actualizados.`)
         await cargarTodo()
+        setRefreshing(false)
+        return
       }
+
+      // Modo asíncrono: la API persiste el run en apify_scrape_runs y
+      // expone GET /redes/ig/refresh-status. Hacemos polling cada 5s
+      // hasta que el run termine (succeeded o failed), con un techo de
+      // 3 minutos para no quedar girando si algo se atascó.
+      setRefreshMsg(`⏳ ${r.mensaje ?? 'Actualización en proceso…'}`)
+
+      const inicioPolling = Date.now()
+      const TECHO_MS = 3 * 60 * 1000
+
+      while (Date.now() - inicioPolling < TECHO_MS) {
+        await new Promise((res) => setTimeout(res, 5000))
+        try {
+          const { run } = await api.igRefreshStatus()
+          if (!run) break
+          if (run.status === 'succeeded') {
+            setRefreshMsg(`✅ Datos actualizados (${run.itemsCount ?? 0} posts).`)
+            await cargarTodo()
+            return
+          }
+          if (run.status === 'failed') {
+            setRefreshMsg(`❌ Falló el scrape: ${run.errorMessage ?? 'error desconocido'}.`)
+            return
+          }
+          // running → seguir polling
+        } catch (err) {
+          // Si falla el status no rompemos el ciclo — puede ser un blip
+          if (err instanceof ApiError && err.status >= 500) continue
+          throw err
+        }
+      }
+      setRefreshMsg('⏱ El scrape está tardando más de lo esperado — recarga la página en unos minutos.')
     } catch (err) {
       if (err instanceof ApiError && err.status === 429) {
         setRefreshMsg(`⏳ ${err.message}`)

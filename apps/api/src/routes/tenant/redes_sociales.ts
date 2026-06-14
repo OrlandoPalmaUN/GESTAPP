@@ -8,8 +8,8 @@ import {
   vincularIgCuentaSchema,
 } from '@antigravity/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { scrapeIgProfile, scrapeIgProfileOnly } from '../../lib/apify/scraper.js'
-import { persistIgScrape } from '../../lib/apify/persistor.js'
+import { scrapeIgProfileOnly } from '../../lib/apify/scraper.js'
+import { executeIgScrapeRun } from '../../lib/apify/runs.js'
 
 /** Igual que en el resto de rutas de tenant. */
 function exigirTenant(
@@ -127,27 +127,28 @@ export async function redesSocialesRoutes(fastify: FastifyInstance): Promise<voi
     `, [cuentaId])
 
     // Backfill inicial: últimos 30 posts (async — no bloquea la respuesta).
-    // IMPORTANTE: usamos una conexión PROPIA del pool (no request.tenantDb)
-    // porque la conexión del request se libera en onResponse, antes de que
-    // el scrape async termine — si reutilizáramos esa conexión el search_path
-    // ya habría sido reseteado y las queries irían al schema público.
+    // Cada run queda registrado en public.apify_scrape_runs para que el frontend
+    // pueda mostrar progreso/errores sin tener que adivinar.
+    const tenantId = request.tenant!.id
     const schemaName = request.tenant!.schemaName
     const handle = profile.handle
-    scrapeIgProfile(handle, APIFY_TOKEN, APIFY_DEFAULT_ACTOR, {
-      postsLimit: 30,
-      comentariosLimit: 50,
+    void executeIgScrapeRun({
+      prisma: fastify.prisma,
+      pgConnect: () => fastify.pg.connect(),
+      tenantId,
+      schemaName,
+      handle,
+      apifyToken: APIFY_TOKEN,
+      apifyActor: APIFY_DEFAULT_ACTOR,
+      trigger: 'backfill',
+      opts: { postsLimit: 30, comentariosLimit: 20 },
+    }).then((outcome) => {
+      if (outcome.status === 'failed') {
+        fastify.log.error({ runId: outcome.runId, handle, error: outcome.error }, 'ig backfill failed')
+      } else {
+        fastify.log.info({ runId: outcome.runId, handle, posts: outcome.postsUpserted }, 'ig backfill ok')
+      }
     })
-      .then(async (result) => {
-        const client = await fastify.pg.connect()
-        try {
-          await client.query(`SET search_path TO "${schemaName}", public`)
-          await persistIgScrape(client, result)
-        } finally {
-          await client.query('RESET search_path')
-          client.release()
-        }
-      })
-      .catch((err) => fastify.log.error({ err, handle }, 'ig backfill error'))
 
     return reply.code(201).send({
       cuenta: { id: cuentaId, handle: profile.handle, displayName: profile.displayName },
@@ -507,45 +508,87 @@ export async function redesSocialesRoutes(fastify: FastifyInstance): Promise<voi
       WHERE cuenta_id = (SELECT id FROM ig_cuentas LIMIT 1)
     `)
 
-    // Lanzar el scrape en segundo plano — igual que el backfill de onboarding.
-    // El refresh puede tardar 1-2 min (2 runs Apify en paralelo); bloquearlo
-    // en el HTTP response haría que el usuario vea un spinner colgado.
+    // Lanzar el scrape en segundo plano. Cada intento queda registrado en
+    // apify_scrape_runs — el frontend puede consultar /redes/ig/refresh-status
+    // para ver progreso/error sin tener que recargar a ciegas.
+    const tenantId = request.tenant!.id
     const schemaName = request.tenant!.schemaName
     const handle = cfg.handle
-    scrapeIgProfile(handle, APIFY_TOKEN, APIFY_DEFAULT_ACTOR, {
-      postsLimit: cfg.posts_por_run,
-      comentariosLimit: cfg.comentarios_por_post,
+
+    void executeIgScrapeRun({
+      prisma: fastify.prisma,
+      pgConnect: () => fastify.pg.connect(),
+      tenantId,
+      schemaName,
+      handle,
+      apifyToken: APIFY_TOKEN,
+      apifyActor: APIFY_DEFAULT_ACTOR,
+      trigger: 'manual',
+      opts: {
+        postsLimit: cfg.posts_por_run,
+        comentariosLimit: cfg.comentarios_por_post,
+      },
+    }).then(async (outcome) => {
+      if (outcome.status === 'succeeded') {
+        fastify.log.info(
+          { runId: outcome.runId, handle, posts: outcome.postsUpserted },
+          'ig refresh ok',
+        )
+        return
+      }
+      fastify.log.error(
+        { runId: outcome.runId, handle, error: outcome.error },
+        'ig refresh failed — revirtiendo cooldown',
+      )
+      // Revertir cooldown si el scrape falló para no bloquear el próximo intento
+      const client = await fastify.pg.connect()
+      try {
+        await client.query(`SET search_path TO "${schemaName}", public`)
+        await client.query(`
+          UPDATE ig_config SET ultimo_refresh_manual = NULL
+          WHERE cuenta_id = (SELECT id FROM ig_cuentas LIMIT 1)
+        `)
+      } finally {
+        await client.query('RESET search_path').catch(() => undefined)
+        client.release()
+      }
     })
-      .then(async (result) => {
-        const client = await fastify.pg.connect()
-        try {
-          await client.query(`SET search_path TO "${schemaName}", public`)
-          await persistIgScrape(client, result)
-        } finally {
-          await client.query('RESET search_path')
-          client.release()
-        }
-      })
-      .catch(async (err) => {
-        fastify.log.error({ err, handle }, 'ig refresh error — revirtiendo cooldown')
-        // Revertir cooldown si el scrape falló para no bloquear el próximo intento
-        const client = await fastify.pg.connect()
-        try {
-          await client.query(`SET search_path TO "${schemaName}", public`)
-          await client.query(`
-            UPDATE ig_config SET ultimo_refresh_manual = NULL
-            WHERE cuenta_id = (SELECT id FROM ig_cuentas LIMIT 1)
-          `)
-        } finally {
-          await client.query('RESET search_path')
-          client.release()
-        }
-      })
 
     return reply.send({
       ok: true,
       async: true,
-      mensaje: 'Actualización en proceso. Los datos estarán listos en 1-2 minutos — recarga la página para verlos.',
+      mensaje: 'Actualización en proceso. Espera unos segundos — el panel se recarga automáticamente cuando termine.',
+    })
+  })
+
+  /**
+   * GET /redes/ig/refresh-status
+   * Devuelve el último run de scrape de este tenant: estado, duración y error.
+   * El frontend puede usarlo para hacer polling después del POST /refresh
+   * y recargar el dashboard cuando el estado pase a 'succeeded' o 'failed'.
+   */
+  fastify.get('/redes/ig/refresh-status', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const run = await fastify.prisma.apifyScrapeRun.findFirst({
+      where: { tenantId: request.tenant!.id },
+      orderBy: { startedAt: 'desc' },
+    })
+
+    if (!run) {
+      return reply.send({ run: null })
+    }
+
+    return reply.send({
+      run: {
+        id: run.id,
+        trigger: run.trigger,
+        status: run.status,
+        startedAt: run.startedAt.toISOString(),
+        finishedAt: run.finishedAt?.toISOString() ?? null,
+        itemsCount: run.itemsCount,
+        errorMessage: run.errorMessage,
+      },
     })
   })
 

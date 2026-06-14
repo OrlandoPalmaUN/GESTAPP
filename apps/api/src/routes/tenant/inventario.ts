@@ -335,14 +335,108 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
   // del catálogo pero su historial de movimientos NO se toca (el principio
   // "el stock nunca se escribe directo" exige que ese rastro quede intacto
   // incluso si el producto ya no se vende). Recuperable desde /papelera.
-  fastify.delete<{ Params: { id: string } }>('/inventario/productos/:id', conSesion, async (request, reply) => {
+  // Bloqueamos cuando el producto está en pedidos vivos o OCs no recibidas —
+  // ?force=true permite saltarse la verificación si el usuario insiste.
+  fastify.delete<{ Params: { id: string }; Querystring: { force?: string } }>(
+    '/inventario/productos/:id',
+    conSesion,
+    async (request, reply) => {
+      if (!exigirTenant(request, reply)) return
+
+      const force = request.query.force === 'true'
+
+      if (!force) {
+        const { rows } = await request.tenantDb.query<{
+          pedidos_activos: number
+          oc_activas: number
+          stock_actual: string
+        }>(
+          `SELECT
+             (SELECT COUNT(*) FROM pedido_items pi
+              JOIN pedidos p ON p.id = pi.pedido_id
+              WHERE pi.producto_id = $1 AND p.deleted_at IS NULL
+                AND p.estado IN ('borrador','confirmado','en_preparacion'))::int AS pedidos_activos,
+             (SELECT COUNT(*) FROM pedidos_proveedor_items ppi
+              JOIN pedidos_proveedor pp ON pp.id = ppi.pedido_proveedor_id
+              WHERE ppi.producto_id = $1 AND pp.deleted_at IS NULL
+                AND pp.estado IN ('borrador','enviado','recibido_parcial'))::int AS oc_activas,
+             COALESCE((
+               SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva')
+                               THEN cantidad ELSE -cantidad END)
+               FROM movimientos_inventario WHERE producto_id = $1
+             ), 0)::text AS stock_actual`,
+          [request.params.id],
+        )
+        const dep = rows[0]!
+        if (dep.pedidos_activos > 0 || dep.oc_activas > 0) {
+          return reply.code(409).send({
+            error: 'No se puede eliminar el producto: tiene dependencias activas.',
+            dependencias: {
+              pedidosActivos: dep.pedidos_activos,
+              ocActivas: dep.oc_activas,
+              stockActual: Number(dep.stock_actual),
+            },
+            sugerencia: 'Despacha o cancela los pedidos y recibe las OCs primero. O agrega ?force=true para borrar de todas formas.',
+          })
+        }
+      }
+
+      const { rowCount } = await request.tenantDb.query(
+        'UPDATE productos SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
+        [request.params.id],
+      )
+      if (rowCount === 0) return reply.notFound('Producto no encontrado.')
+      return reply.status(204).send()
+    },
+  )
+
+  // GET /inventario/stock-bajo — productos con stock disponible <= stock_minimo.
+  // Endpoint dedicado para alertas y el dashboard cross-módulo.
+  fastify.get('/inventario/stock-bajo', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
-    const { rowCount } = await request.tenantDb.query(
-      'UPDATE productos SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
-      [request.params.id],
-    )
-    if (rowCount === 0) return reply.notFound('Producto no encontrado.')
-    return reply.status(204).send()
+    const { rows } = await request.tenantDb.query<{
+      id: string
+      sku: string | null
+      nombre: string
+      stock_actual: string
+      stock_minimo: string
+      unidad: string
+    }>(`
+      SELECT
+        p.id, p.sku, p.nombre, p.unidad,
+        COALESCE((
+          SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva')
+                          THEN cantidad ELSE -cantidad END)
+          FROM movimientos_inventario WHERE producto_id = p.id
+        ), 0)::text AS stock_actual,
+        p.stock_minimo::text AS stock_minimo
+      FROM productos p
+      WHERE p.deleted_at IS NULL
+        AND p.activo = TRUE
+        AND p.stock_minimo > 0
+        AND COALESCE((
+          SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva')
+                          THEN cantidad ELSE -cantidad END)
+          FROM movimientos_inventario WHERE producto_id = p.id
+        ), 0) <= p.stock_minimo
+      ORDER BY (
+        COALESCE((
+          SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva')
+                          THEN cantidad ELSE -cantidad END)
+          FROM movimientos_inventario WHERE producto_id = p.id
+        ), 0)::float / NULLIF(p.stock_minimo, 0)
+      ) ASC
+    `)
+    return reply.send({
+      productos: rows.map((r) => ({
+        id: r.id,
+        sku: r.sku,
+        nombre: r.nombre,
+        unidad: r.unidad,
+        stockActual: Number(r.stock_actual),
+        stockMinimo: Number(r.stock_minimo),
+      })),
+    })
   })
 
   // GET /inventario/movimientos — historial transaccional, más recientes primero.

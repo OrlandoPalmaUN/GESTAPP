@@ -424,37 +424,36 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
             ],
           )
           facturaCompraId = fc!.id
-        } else if (estadoNuevo === 'recibido') {
-          // Recepción final: actualizar total de la CxP si no tiene abonos
-          const conAbonos = await db.query(
-            `SELECT id FROM abonos WHERE tipo_documento = 'factura_compra' AND documento_id = $1 AND deleted_at IS NULL LIMIT 1`,
+        } else {
+          // Recepciones sucesivas: actualizar el total de la CxP existente para
+          // que SIEMPRE refleje lo recibido hasta ahora. Antes el código creaba
+          // una "CxP complementaria" cuando ya había abonos — fragmentaba la
+          // deuda en múltiples facturas sin relación clara, dificultando
+          // reconciliación y abriendo riesgo de pago doble.
+          //
+          // Ahora: siempre actualizamos el total. La invariante "total >=
+          // sum(abonos)" se preserva validando antes del UPDATE; si el nuevo
+          // total resultara menor que lo ya abonado (caso raro: el usuario
+          // reduce manualmente cantidades recibidas), bloqueamos para que el
+          // usuario revierta los abonos primero.
+          const abonosRes = await db.query<{ pagado: string }>(
+            `SELECT COALESCE(SUM(monto), 0)::numeric AS pagado FROM abonos
+             WHERE tipo_documento = 'factura_compra' AND documento_id = $1 AND deleted_at IS NULL`,
             [facturaCompraId],
           )
-          if ((conAbonos.rowCount ?? 0) === 0) {
-            await db.query('UPDATE facturas_compra SET total = $1 WHERE id = $2', [totalRecibido, facturaCompraId])
-          } else {
-            // Ya tiene abonos — crear CxP adicional por la diferencia entre total anterior y recibido final
-            const cxpActual = await db.query<{ total: string }>(
-              'SELECT total FROM facturas_compra WHERE id = $1',
-              [facturaCompraId],
+          const pagado = Number(abonosRes.rows[0]?.pagado ?? 0)
+          if (totalRecibido < pagado) {
+            await db.query('ROLLBACK')
+            return reply.badRequest(
+              `No se puede ajustar la CxP: el total recibido actualizado ($${totalRecibido.toLocaleString('es-CO')}) ` +
+              `sería menor que lo ya abonado ($${pagado.toLocaleString('es-CO')}). ` +
+              `Reversa los abonos correspondientes primero.`,
             )
-            const diferencia = totalRecibido - Number(cxpActual.rows[0]!.total)
-            if (diferencia > 0) {
-              const numeroFC2 = await generarNumeroFacturaCompra(db)
-              await db.query(
-                `INSERT INTO facturas_compra (numero, proveedor_id, fecha_vencimiento, total, notas, pedido_proveedor_id)
-                 VALUES ($1, $2, $3, $4, $5, $6)`,
-                [
-                  numeroFC2,
-                  oc.proveedor_id,
-                  fechaVenc,
-                  diferencia,
-                  `Complemento final OC ${oc.numero}`,
-                  idParsed.data,
-                ],
-              )
-            }
           }
+          await db.query(
+            'UPDATE facturas_compra SET total = $1 WHERE id = $2',
+            [totalRecibido, facturaCompraId],
+          )
         }
       }
 

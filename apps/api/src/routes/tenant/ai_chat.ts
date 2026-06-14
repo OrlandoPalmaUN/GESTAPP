@@ -64,7 +64,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       const db = request.tenantDb
 
-      const [productos, stockCrit, ventas, pendientes, clientes] = await Promise.all([
+      const [productos, stockCrit, ventas, pendientes, clientes, vencidas, saldos] = await Promise.all([
         db.query<{ nombre: string; precio: number; stock: number }>(
           `SELECT p.nombre, p.precio_venta::numeric AS precio,
                   COALESCE((SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva') THEN cantidad ELSE -cantidad END) FROM movimientos_inventario WHERE producto_id = p.id),0) AS stock
@@ -75,21 +75,46 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
                   COALESCE((SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva') THEN cantidad ELSE -cantidad END) FROM movimientos_inventario WHERE producto_id = p.id),0) AS stock,
                   p.stock_minimo AS minimo
            FROM productos p
-           WHERE p.stock_minimo IS NOT NULL AND p.deleted_at IS NULL
+           WHERE p.stock_minimo > 0 AND p.deleted_at IS NULL
              AND COALESCE((SELECT SUM(CASE WHEN tipo IN ('entrada_compra','entrada_devolucion','ajuste_positivo','liberacion_reserva') THEN cantidad ELSE -cantidad END) FROM movimientos_inventario WHERE producto_id = p.id),0) <= p.stock_minimo
            LIMIT 5`,
         ),
         db.query<{ total: number; pedidos: number }>(
           `SELECT COALESCE(SUM(total),0)::int AS total, COUNT(*)::int AS pedidos
            FROM pedidos
-           WHERE created_at >= date_trunc('month', NOW()) AND estado != 'cancelado'`,
+           WHERE created_at >= date_trunc('month', NOW())
+             AND estado != 'cancelado'
+             AND deleted_at IS NULL`,
         ),
         db.query<{ total: number }>(
-          `SELECT COUNT(*)::int AS total FROM pedidos WHERE estado = 'pendiente'`,
+          `SELECT COUNT(*)::int AS total FROM pedidos
+           WHERE estado IN ('borrador','confirmado','en_preparacion') AND deleted_at IS NULL`,
         ),
         db.query<{ nombre: string }>(
-          `SELECT nombre FROM clientes ORDER BY created_at DESC LIMIT 5`,
+          `SELECT nombre FROM clientes WHERE deleted_at IS NULL ORDER BY created_at DESC LIMIT 5`,
         ),
+        // Facturas vencidas (CxC y CxP con saldo > 0 y fecha_vencimiento pasada)
+        db.query<{ total: number }>(`
+          SELECT (
+            (SELECT COUNT(*) FROM facturas_venta fv
+             WHERE fv.deleted_at IS NULL
+               AND fv.fecha_vencimiento < CURRENT_DATE
+               AND fv.total > COALESCE((SELECT SUM(monto) FROM abonos
+                                        WHERE tipo_documento = 'factura_venta'
+                                          AND documento_id = fv.id AND deleted_at IS NULL), 0))
+            +
+            (SELECT COUNT(*) FROM facturas_compra fc
+             WHERE fc.deleted_at IS NULL
+               AND fc.fecha_vencimiento < CURRENT_DATE
+               AND fc.total > COALESCE((SELECT SUM(monto) FROM abonos
+                                        WHERE tipo_documento = 'factura_compra'
+                                          AND documento_id = fc.id AND deleted_at IS NULL), 0))
+          )::int AS total
+        `),
+        db.query<{ saldo: number }>(`
+          SELECT COALESCE(SUM(saldo), 0)::numeric AS saldo
+          FROM cuentas_bancarias WHERE deleted_at IS NULL AND activa = TRUE
+        `),
       ])
 
       biz.topProductos    = productos.rows
@@ -97,6 +122,8 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
       biz.ventasMes       = ventas.rows[0]
       biz.pedidosPendientes = pendientes.rows[0]?.total ?? 0
       biz.topClientes     = clientes.rows
+      biz.facturasVencidas = vencidas.rows[0]?.total ?? 0
+      biz.saldoCuentas    = Number(saldos.rows[0]?.saldo ?? 0)
 
       // Datos de IG solo en contexto redes
       if (context === 'redes') {
