@@ -19,7 +19,7 @@ import {
   FileSpreadsheet,
   TrendingUp,
   Building,
-
+  BarChart3,
   MessageCircle,
   Instagram,
   Facebook,
@@ -32,6 +32,8 @@ import {
   CalendarDays,
   StickyNote,
   GripVertical,
+  Sparkles,
+  RefreshCw,
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero } from '@antigravity/shared';
@@ -202,7 +204,31 @@ function movimientoAMockMovement(m: MovimientoInventario): InventoryMovement {
 
 export default function AppHome() {
   // --- ESTADOS GENERALES DE LA APP ---
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'inventario' | 'pedidos' | 'finanzas' | 'crm' | 'comunicaciones' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'config'>('dashboard');
+  // --- REPORTES ---
+  const [reportesTipo, setReportesTipo] = useState<'mes' | 'semana'>('mes');
+  const [reportesAño, setReportesAño] = useState(() => new Date().getFullYear());
+  const [reportesMes, setReportesMes] = useState(() => new Date().getMonth() + 1);
+  const [reportesSemana, setReportesSemana] = useState<number>(() => {
+    const d = new Date(); const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+    return Math.ceil(((tmp.getTime() - yearStart.getTime()) / 86_400_000 + 1) / 7);
+  });
+  const [reportesData, setReportesData] = useState<null | {
+    periodo: { label: string; desde: string; hasta: string };
+    ventas: { total: number; pedidos: number; ticketPromedio: number; delta: number | null; deltaPedidos: number | null };
+    compras: { total: number; oc: number; delta: number | null };
+    gastos: { total: number; delta: number | null };
+    ingresosManuales: number; cxcCobrada: number;
+    margenBruto: { total: number; porcentaje: number; delta: number | null };
+    utilidadNeta: number;
+    topProductos: { nombre: string; categoria: string | null; unidades: number; ventasTotal: number }[];
+  }>(null);
+  const [reportesCargando, setReportesCargando] = useState(false);
+  const [reportesError, setReportesError] = useState<string | null>(null);
+  const [reportesIA, setReportesIA] = useState<string | null>(null);
+  const [reportesIACargando, setReportesIACargando] = useState(false);
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
   
   // --- ESTADOS DEL DATASET MUTABLE (Base de datos en memoria) ---
@@ -926,6 +952,69 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
 
   useEffect(() => { void fetchResumen(); }, [fetchResumen]);
+
+  // --- Reportes ---
+  const fetchReportes = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    setReportesCargando(true);
+    setReportesError(null);
+    try {
+      const params = new URLSearchParams({ tipo: reportesTipo, año: String(reportesAño) });
+      if (reportesTipo === 'mes') params.set('mes', String(reportesMes));
+      else params.set('semana', String(reportesSemana));
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/reportes/periodo?${params}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('gestapp_token') ?? ''}` },
+      });
+      if (!res.ok) throw new Error('Error al cargar reportes');
+      setReportesData(await res.json());
+    } catch (e) {
+      setReportesError(e instanceof Error ? e.message : 'Error');
+    } finally {
+      setReportesCargando(false);
+    }
+  }, [usuario?.tenantId, reportesTipo, reportesAño, reportesMes, reportesSemana]);
+
+  const fetchReportesIA = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    setReportesIACargando(true);
+    setReportesIA(null);
+    try {
+      const params = new URLSearchParams({ tipo: reportesTipo, año: String(reportesAño) });
+      if (reportesTipo === 'mes') params.set('mes', String(reportesMes));
+      else params.set('semana', String(reportesSemana));
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'}/reportes/ia?${params}`, {
+        headers: { Authorization: `Bearer ${localStorage.getItem('gestapp_token') ?? ''}` },
+      });
+      if (!res.ok) throw new Error('Error en análisis IA');
+      const d = await res.json() as { analisis: string };
+      setReportesIA(d.analisis);
+    } catch (e) {
+      setReportesIA(`❌ ${e instanceof Error ? e.message : 'Error'}`);
+    } finally {
+      setReportesIACargando(false);
+    }
+  }, [usuario?.tenantId, reportesTipo, reportesAño, reportesMes, reportesSemana]);
+
+  useEffect(() => {
+    if (activeTab === 'reportes') void fetchReportes();
+  }, [activeTab, fetchReportes]);
+
+  // Helpers navegación de período
+  const moverPeriodo = (dir: 1 | -1) => {
+    if (reportesTipo === 'mes') {
+      let m = reportesMes + dir;
+      let y = reportesAño;
+      if (m > 12) { m = 1; y += 1; }
+      if (m < 1) { m = 12; y -= 1; }
+      setReportesMes(m); setReportesAño(y);
+    } else {
+      let s = reportesSemana + dir;
+      let y = reportesAño;
+      if (s > 52) { s = 1; y += 1; }
+      if (s < 1) { s = 52; y -= 1; }
+      setReportesSemana(s); setReportesAño(y);
+    }
+  };
 
   // --- Recepción parcial de OC ---
   const openRecepcionModal = (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
@@ -2264,6 +2353,19 @@ export default function AppHome() {
               </button>
 
               <button
+                onClick={() => { setActiveTab('pedidos'); setSuperAdminMode(false); }}
+                className={`w-full text-left font-mono font-bold text-sm px-3 py-2.5 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                  activeTab === 'pedidos' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                }`}
+              >
+                <ClipboardList size={18} />
+                <span>Pedidos</span>
+                <span className="bg-brand-blue text-white text-[10px] px-1.5 py-0.5 rounded font-sans ml-auto">
+                  {orders.filter(o => ['confirmado', 'en_preparacion', 'despachado'].includes(o.estado)).length}
+                </span>
+              </button>
+
+              <button
                 onClick={() => { setActiveTab('inventario'); setSuperAdminMode(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-3 py-2.5 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
                   activeTab === 'inventario' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
@@ -2276,19 +2378,6 @@ export default function AppHome() {
                     {criticalProducts.length}
                   </span>
                 )}
-              </button>
-
-              <button
-                onClick={() => { setActiveTab('pedidos'); setSuperAdminMode(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-3 py-2.5 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'pedidos' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <ClipboardList size={18} />
-                <span>Pedidos y Envíos</span>
-                <span className="bg-brand-blue text-white text-[10px] px-1.5 py-0.5 rounded font-sans ml-auto">
-                  {orders.filter(o => ['confirmado', 'en_preparacion', 'despachado'].includes(o.estado)).length}
-                </span>
               </button>
 
               <button
@@ -2317,8 +2406,18 @@ export default function AppHome() {
                   activeTab === 'comunicaciones' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
                 }`}
               >
-                <MessageCircle size={18} />
-                <span>Comunicaciones</span>
+                <Instagram size={18} />
+                <span>Redes Sociales</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('reportes'); setSuperAdminMode(false); }}
+                className={`w-full text-left font-mono font-bold text-sm px-3 py-2.5 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                  activeTab === 'reportes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                }`}
+              >
+                <BarChart3 size={18} />
+                <span>Reportes</span>
               </button>
 
               <button
@@ -4951,6 +5050,190 @@ export default function AppHome() {
                   </div>
                 )}
 
+                {/* --- REPORTES TAB --- */}
+                {activeTab === 'reportes' && (
+                  <div className="flex flex-col gap-4">
+
+                    {/* Selector tipo + navegación período */}
+                    <div className="flex flex-wrap items-center gap-3 bg-white border-2 border-black p-3">
+                      <div className="flex border-2 border-black overflow-hidden">
+                        {(['mes', 'semana'] as const).map((t) => (
+                          <button
+                            key={t}
+                            type="button"
+                            onClick={() => { setReportesTipo(t); setReportesData(null); setReportesIA(null); }}
+                            className={`font-mono text-xs font-bold px-4 py-2 ${reportesTipo === t ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-100'}`}
+                          >
+                            {t === 'mes' ? 'Por Mes' : 'Por Semana'}
+                          </button>
+                        ))}
+                      </div>
+
+                      <div className="flex items-center gap-2 ml-auto">
+                        <button type="button" onClick={() => moverPeriodo(-1)} className="neo-btn p-1.5 hover:bg-neutral-100">
+                          <ChevronLeft size={16} />
+                        </button>
+                        <span className="font-mono text-sm font-bold min-w-[180px] text-center">
+                          {reportesData?.periodo.label ?? (reportesTipo === 'mes'
+                            ? new Date(reportesAño, reportesMes - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })
+                            : `Semana ${reportesSemana} · ${reportesAño}`)}
+                        </span>
+                        <button type="button" onClick={() => moverPeriodo(1)} className="neo-btn p-1.5 hover:bg-neutral-100">
+                          <ChevronRight size={16} />
+                        </button>
+                        <button type="button" onClick={() => void fetchReportes()} className="neo-btn p-1.5 hover:bg-neutral-100" title="Recargar">
+                          <RefreshCw size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    {reportesCargando && <p className="text-xs font-mono text-neutral-500 p-2">Calculando reporte…</p>}
+                    {reportesError && <p className="text-xs font-mono text-brand-red p-2">{reportesError}</p>}
+
+                    {reportesData && (
+                      <>
+                        {/* KPIs principales */}
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                          {[
+                            {
+                              label: 'VENTAS TOTALES',
+                              value: `$${reportesData.ventas.total.toLocaleString('es-CO')}`,
+                              sub: `${reportesData.ventas.pedidos} pedido${reportesData.ventas.pedidos !== 1 ? 's' : ''}`,
+                              delta: reportesData.ventas.delta,
+                              color: 'text-green-700',
+                            },
+                            {
+                              label: 'MARGEN BRUTO',
+                              value: `$${reportesData.margenBruto.total.toLocaleString('es-CO')}`,
+                              sub: `${reportesData.margenBruto.porcentaje}% sobre ventas`,
+                              delta: reportesData.margenBruto.delta,
+                              color: reportesData.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red',
+                            },
+                            {
+                              label: 'COMPRAS / OC',
+                              value: `$${reportesData.compras.total.toLocaleString('es-CO')}`,
+                              sub: `${reportesData.compras.oc} orden${reportesData.compras.oc !== 1 ? 'es' : ''}`,
+                              delta: reportesData.compras.delta !== null ? -reportesData.compras.delta : null,
+                              color: 'text-black',
+                            },
+                            {
+                              label: 'UTILIDAD NETA',
+                              value: `$${reportesData.utilidadNeta.toLocaleString('es-CO')}`,
+                              sub: `Gastos: $${reportesData.gastos.total.toLocaleString('es-CO')}`,
+                              delta: null,
+                              color: reportesData.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red',
+                            },
+                          ].map((kpi) => (
+                            <div key={kpi.label} className="neo-card bg-white flex flex-col gap-1">
+                              <span className="font-mono text-[10px] text-neutral-500 font-bold">{kpi.label}</span>
+                              <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
+                              <span className="text-[10px] font-mono text-neutral-500">{kpi.sub}</span>
+                              {kpi.delta !== null && (
+                                <span className={`text-[10px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
+                                  {kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs período anterior
+                                </span>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Métricas secundarias */}
+                        <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                          <div className="neo-card bg-white">
+                            <span className="font-mono text-[10px] text-neutral-500 font-bold">CxC COBRADA</span>
+                            <span className="text-lg font-black text-green-700 block mt-1">${reportesData.cxcCobrada.toLocaleString('es-CO')}</span>
+                            <span className="text-[10px] font-mono text-neutral-400">Abonos de clientes en el período</span>
+                          </div>
+                          <div className="neo-card bg-white">
+                            <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
+                            <span className="text-lg font-black text-black block mt-1">${reportesData.ingresosManuales.toLocaleString('es-CO')}</span>
+                            <span className="text-[10px] font-mono text-neutral-400">Capital, préstamos, etc.</span>
+                          </div>
+                          <div className="neo-card bg-white">
+                            <span className="font-mono text-[10px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
+                            <span className="text-lg font-black text-black block mt-1">${reportesData.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
+                            <span className="text-[10px] font-mono text-neutral-400">Por pedido</span>
+                          </div>
+                        </div>
+
+                        {/* Top productos */}
+                        {reportesData.topProductos.length > 0 && (
+                          <div className="neo-card bg-white">
+                            <h3 className="font-mono text-xs font-bold border-b border-black pb-2 mb-3">🏆 TOP PRODUCTOS DEL PERÍODO</h3>
+                            <div className="space-y-2">
+                              {reportesData.topProductos.map((p, i) => (
+                                <div key={p.nombre} className="flex items-center gap-3 text-xs">
+                                  <span className="font-mono font-black text-neutral-400 w-4">{i + 1}</span>
+                                  <div className="flex-1 min-w-0">
+                                    <span className="font-bold text-black truncate block">{p.nombre}</span>
+                                    {p.categoria && <span className="text-[10px] text-neutral-400 font-mono">{p.categoria}</span>}
+                                  </div>
+                                  <span className="font-mono text-neutral-500 shrink-0">{p.unidades} uds</span>
+                                  <span className="font-mono font-bold text-black shrink-0">${p.ventasTotal.toLocaleString('es-CO')}</span>
+                                  {/* Barra visual */}
+                                  <div className="w-16 bg-neutral-100 h-1.5 border border-black shrink-0">
+                                    <div
+                                      className="bg-black h-full"
+                                      style={{ width: `${Math.round((p.ventasTotal / (reportesData.topProductos[0]?.ventasTotal || 1)) * 100)}%` }}
+                                    />
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Análisis IA */}
+                        <div className="neo-card bg-white">
+                          <div className="flex items-center justify-between border-b border-black pb-2 mb-3">
+                            <h3 className="font-mono text-xs font-bold flex items-center gap-2">
+                              <Sparkles size={14} /> ANÁLISIS IA DEL PERÍODO
+                            </h3>
+                            <button
+                              type="button"
+                              onClick={() => void fetchReportesIA()}
+                              disabled={reportesIACargando}
+                              className="neo-button text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+                            >
+                              {reportesIACargando
+                                ? <><RefreshCw size={11} className="animate-spin" /> Analizando…</>
+                                : <><Sparkles size={11} /> {reportesIA ? 'Re-analizar' : 'Generar análisis'}</>
+                              }
+                            </button>
+                          </div>
+                          {!reportesIA && !reportesIACargando && (
+                            <p className="text-xs font-mono text-neutral-400 italic text-center py-4">
+                              Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales del período.
+                            </p>
+                          )}
+                          {reportesIACargando && (
+                            <div className="flex items-center gap-2 py-4 text-xs font-mono text-neutral-500">
+                              <RefreshCw size={14} className="animate-spin" />
+                              Analizando datos del período con IA… (puede tomar unos segundos)
+                            </div>
+                          )}
+                          {reportesIA && !reportesIACargando && (
+                            <div className="prose prose-sm max-w-none font-mono text-xs leading-relaxed space-y-2">
+                              {reportesIA.split('\n').map((line, i) => {
+                                if (line.startsWith('## ')) return <h4 key={i} className="font-bold text-black mt-3 mb-1 border-b border-neutral-200 pb-1">{line.replace('## ', '')}</h4>;
+                                if (line.startsWith('- ')) return <p key={i} className="text-neutral-700 pl-2">• {line.slice(2)}</p>;
+                                if (line.trim() === '') return null;
+                                return <p key={i} className="text-neutral-700">{line}</p>;
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    {!reportesData && !reportesCargando && !reportesError && (
+                      <div className="neo-card bg-white text-center py-10 text-xs font-mono text-neutral-400 italic">
+                        Selecciona un período y haz clic en ↺ para cargar el reporte.
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* --- CONFIGURACIÓN TAB --- */}
                 {activeTab === 'config' && (
                   <div className="flex flex-col gap-6">
@@ -7492,6 +7775,7 @@ export default function AppHome() {
             activeTab === 'inventario' ? 'inventario' :
             activeTab === 'crm' ? 'clientes' :
             activeTab === 'finanzas' ? 'finanzas' :
+            activeTab === 'reportes' ? 'general' :
             activeTab === 'comunicaciones' && comunicacionesSubTab === 'redes' ? 'redes' :
             activeTab === 'comunicaciones' && comunicacionesSubTab === 'notas' ? 'notas' :
             'general'

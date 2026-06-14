@@ -25,6 +25,7 @@ import { papeleraRoutes } from './routes/tenant/papelera.js'
 import { pedidosRoutes } from './routes/tenant/pedidos.js'
 import { pedidosProveedorRoutes } from './routes/tenant/pedidos_proveedor.js'
 import { proveedoresRoutes } from './routes/tenant/proveedores.js'
+import { reportesRoutes } from './routes/tenant/reportes.js'
 
 /**
  * Construye (sin levantar) la instancia de Fastify. Separado de `server.ts`
@@ -94,6 +95,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(igCronPlugin)
   await app.register(papeleraRoutes)
   await app.register(dashboardRoutes)
+  await app.register(reportesRoutes)
 
   return app
 }
