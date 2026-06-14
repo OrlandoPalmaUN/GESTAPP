@@ -53,6 +53,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     credentials: 'include',
+    // `no-store` evita que el navegador/Service Worker sirvan respuestas
+    // viejas en GETs idempotentes — crítico para el dashboard de IG, donde
+    // tras un refresh queremos releer datos frescos y no la copia cacheada.
+    cache: 'no-store',
     headers: {
       ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
       // Enviar como Bearer header además de cookie — resuelve iOS Safari ITP

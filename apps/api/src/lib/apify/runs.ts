@@ -16,6 +16,18 @@ import type { PrismaClient } from '@antigravity/db'
 import { scrapeIgProfile, type IgScrapeResult } from './scraper.js'
 import { persistIgScrape } from './persistor.js'
 
+/**
+ * `scrapeIgProfile` usa `Promise.allSettled`, así que si AMBAS llamadas a
+ * Apify fallan (token vencido, rate limit, IP bloqueada, etc.) la función
+ * devuelve sin lanzar con `profile: null, posts: []`. Sin esta detección
+ * extra, el wrapper marcaba la run como "succeeded con 0 items" y NO
+ * revertía el cooldown — el usuario quedaba 6 horas creyendo que el refresh
+ * iba a llegar.
+ */
+function escrapeoVacio(result: IgScrapeResult): boolean {
+  return result.profile === null && result.posts.length === 0
+}
+
 export type IgRunTrigger = 'cron' | 'manual' | 'backfill'
 
 export interface IgRunOptions {
@@ -70,6 +82,30 @@ export async function executeIgScrapeRun(deps: {
         status: 'failed',
         finishedAt: new Date(),
         errorMessage: message.slice(0, 500),
+      },
+    })
+    return {
+      runId: run.id,
+      status: 'failed',
+      postsUpserted: 0,
+      comentariosUpserted: 0,
+      error: message,
+    }
+  }
+
+  // Apify devolvió sin perfil ni posts → trátalo como fallo, no como éxito
+  // vacío. La causa más común es token vencido, sin créditos, o el actor
+  // devolviendo dataset vacío por bloqueo de IP / cuenta privada / handle
+  // tipeado mal. Sin este check, el cooldown queda set y el siguiente
+  // intento manual se bloquea 6 h sin razón visible.
+  if (escrapeoVacio(result)) {
+    const message = 'Apify devolvió sin datos (perfil null, posts vacío). Verifica APIFY_TOKEN, créditos del actor y el handle.'
+    await prisma.apifyScrapeRun.update({
+      where: { id: run.id },
+      data: {
+        status: 'failed',
+        finishedAt: new Date(),
+        errorMessage: message,
       },
     })
     return {

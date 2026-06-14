@@ -592,6 +592,106 @@ export async function redesSocialesRoutes(fastify: FastifyInstance): Promise<voi
     })
   })
 
+  /**
+   * GET /redes/ig/debug
+   * Diagnóstico completo del estado de IG para este tenant.
+   * Muestra: token configurado (sin exponerlo), cooldown, último snapshot,
+   * conteo de posts en DB, últimos 5 runs de Apify con su error.
+   *
+   * Útil cuando "no se actualiza" sin causa obvia — un GET te dice todo.
+   */
+  fastify.get('/redes/ig/debug', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const [cuentaRes, configRes, ultimoSnapshotRes, postsCountRes, runs] = await Promise.all([
+      request.tenantDb.query<{ id: string; handle: string; last_scraped_at: Date | null }>(`
+        SELECT id, handle, last_scraped_at FROM ig_cuentas ORDER BY created_at LIMIT 1
+      `),
+      request.tenantDb.query<{
+        posts_por_run: number
+        comentarios_por_post: number
+        cron_activado: boolean
+        ultimo_refresh_manual: Date | null
+      }>(`
+        SELECT cfg.posts_por_run, cfg.comentarios_por_post,
+               cfg.cron_activado, cfg.ultimo_refresh_manual
+        FROM ig_config cfg LIMIT 1
+      `),
+      request.tenantDb.query<{
+        fecha: Date
+        seguidores: number
+        seguidos: number
+        posts_total: number
+      }>(`
+        SELECT fecha, seguidores, seguidos, posts_total
+        FROM ig_cuenta_snapshots
+        ORDER BY fecha DESC LIMIT 1
+      `),
+      request.tenantDb.query<{ total: number; ultimo: Date | null }>(`
+        SELECT COUNT(*)::int AS total,
+               MAX(publicado_en) AS ultimo
+        FROM ig_posts
+      `),
+      fastify.prisma.apifyScrapeRun.findMany({
+        where: { tenantId: request.tenant!.id },
+        orderBy: { startedAt: 'desc' },
+        take: 5,
+      }),
+    ])
+
+    const cooldownHoras = IG_REFRESH_COOLDOWN_HOURS
+    const ultimoManual = configRes.rows[0]?.ultimo_refresh_manual ?? null
+    const horasDesdeUltimo = ultimoManual
+      ? (Date.now() - ultimoManual.getTime()) / 3_600_000
+      : null
+    const enCooldown = horasDesdeUltimo !== null && horasDesdeUltimo < cooldownHoras
+    const horasRestantes = enCooldown ? cooldownHoras - horasDesdeUltimo! : 0
+
+    return reply.send({
+      apify: {
+        tokenConfigured: APIFY_TOKEN.length > 0,
+        tokenPrefijo: APIFY_TOKEN ? `${APIFY_TOKEN.slice(0, 12)}...` : null,
+        actor: APIFY_DEFAULT_ACTOR,
+      },
+      cuenta: cuentaRes.rows[0] ?? null,
+      config: configRes.rows[0] ?? null,
+      cooldown: {
+        horasConfiguradas: cooldownHoras,
+        enCooldown,
+        horasRestantes: Math.round(horasRestantes * 10) / 10,
+      },
+      ultimoSnapshot: ultimoSnapshotRes.rows[0] ?? null,
+      posts: {
+        totalEnDb: postsCountRes.rows[0]?.total ?? 0,
+        ultimoPublicadoEn: postsCountRes.rows[0]?.ultimo ?? null,
+      },
+      ultimos5Runs: runs.map((r) => ({
+        id: r.id,
+        trigger: r.trigger,
+        status: r.status,
+        startedAt: r.startedAt.toISOString(),
+        finishedAt: r.finishedAt?.toISOString() ?? null,
+        itemsCount: r.itemsCount,
+        errorMessage: r.errorMessage,
+      })),
+    })
+  })
+
+  /**
+   * POST /redes/ig/reset-cooldown
+   * Resetea el cooldown manualmente para poder forzar un nuevo intento sin
+   * esperar las 6 horas. Útil cuando el cooldown quedó pegado por un fallo
+   * silencioso anterior.
+   */
+  fastify.post('/redes/ig/reset-cooldown', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    await request.tenantDb.query(`
+      UPDATE ig_config SET ultimo_refresh_manual = NULL
+      WHERE cuenta_id = (SELECT id FROM ig_cuentas LIMIT 1)
+    `)
+    return reply.send({ ok: true, mensaje: 'Cooldown reseteado. Ya puedes intentar el refresh de nuevo.' })
+  })
+
   // ─────────────────────────────────────────────────────────────────────────
   // LOG DE RUNS (debug / superadmin)
   // ─────────────────────────────────────────────────────────────────────────
