@@ -570,6 +570,7 @@ export default function AppHome() {
   const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
   const [abonoMonto, setAbonoMonto] = useState('');
   const [abonoReferencia, setAbonoReferencia] = useState('');
+  const [abonoCuentaBancariaId, setAbonoCuentaBancariaId] = useState('');
 
   // 5. CRM - Ver detalle cliente y agregar interacción
   const [selectedCrmEntityId, setSelectedCrmEntityId] = useState<string>('');
@@ -2245,10 +2246,12 @@ export default function AppHome() {
         tipo: invoice.tipo,
         monto: amount,
         referencia: abonoReferencia || undefined,
+        cuentaBancariaId: abonoCuentaBancariaId || undefined,
       });
       setShowCreateAbono(false);
       setAbonoMonto('');
       setAbonoReferencia('');
+      setAbonoCuentaBancariaId('');
       await Promise.all([fetchFinanzas(), fetchResumen()]);
     } catch (error) {
       setFinanzasError(error instanceof ApiError ? error.message : 'No se pudo registrar el abono.');
@@ -6103,8 +6106,22 @@ export default function AppHome() {
                 />
               </div>
 
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">CUENTA DESTINO</label>
+                <select
+                  value={abonoCuentaBancariaId}
+                  onChange={(e) => setAbonoCuentaBancariaId(e.target.value)}
+                  className="neo-input font-mono"
+                >
+                  <option value="">— Sin vincular a cuenta —</option>
+                  {bankAccounts.map(b => (
+                    <option key={b.id} value={b.id}>{b.banco} · {b.numero} (${b.saldo.toLocaleString('es-CO')})</option>
+                  ))}
+                </select>
+              </div>
+
               <button type="submit" className="neo-btn bg-brand-blue text-white hover:opacity-90 py-2.5 mt-2">
-                APLICAR ABONO E INGRESAR A BANCO
+                APLICAR ABONO{abonoCuentaBancariaId ? ' E INGRESAR A BANCO' : ''}
               </button>
             </form>
           </div>
@@ -6747,54 +6764,57 @@ export default function AppHome() {
                         </div>
                       )}
 
-                      {/* Pagar completo */}
-                      {cxc.saldo_pendiente > 0 && (
-                        <button
-                          type="button"
-                          disabled={guardandoAbono}
-                          onClick={() => void handleCrearAbono(cxc.id, cxc.saldo_pendiente, true)}
-                          className="neo-btn w-full bg-green-700 text-white hover:opacity-90 py-2 font-mono font-bold text-xs disabled:opacity-50"
-                        >
-                          {guardandoAbono ? 'Procesando...' : `✓ PAGAR COMPLETO — $${cxc.saldo_pendiente.toLocaleString('es-CO')}`}
-                        </button>
-                      )}
-
-                      {/* Agregar abono parcial */}
+                      {/* Sección de pagos */}
                       {cxc.saldo_pendiente > 0 && (
                         <div className="flex flex-col gap-2 border border-black/15 p-3 bg-white">
-                          <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Agregar abono parcial</span>
-                          <div className="grid grid-cols-2 gap-2">
-                            <div className="flex flex-col gap-1">
-                              <label className="font-mono text-[10px] font-bold">MONTO</label>
-                              <input
-                                type="number" min="1" step="any"
-                                placeholder={`Máx $${cxc.saldo_pendiente.toLocaleString('es-CO')}`}
-                                value={abonoForm.monto}
-                                onChange={e => setAbonoForm({...abonoForm, monto: e.target.value})}
-                                className="neo-input text-xs font-mono py-1.5"
-                              />
-                            </div>
-                            <div className="flex flex-col gap-1">
-                              <label className="font-mono text-[10px] font-bold">MEDIO DE PAGO</label>
-                              <select value={abonoForm.medioPago} onChange={e => setAbonoForm({...abonoForm, medioPago: e.target.value})} className="neo-input text-xs font-mono py-1.5">
-                                <option value="efectivo">Efectivo</option>
-                                <option value="transferencia">Transferencia</option>
-                                <option value="tarjeta">Tarjeta</option>
-                                <option value="cheque">Cheque</option>
-                                <option value="nequi">Nequi</option>
-                                <option value="daviplata">Daviplata</option>
-                              </select>
-                            </div>
-                          </div>
+                          <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Registrar pago</span>
+
+                          {/* Cuenta destino — compartida por "Pagar completo" y abono parcial */}
                           <div className="flex flex-col gap-1">
-                            <label className="font-mono text-[10px] font-bold">CUENTA DESTINO (opcional)</label>
+                            <label className="font-mono text-[10px] font-bold">CUENTA DESTINO</label>
                             <select value={abonoForm.cuentaBancariaId} onChange={e => setAbonoForm({...abonoForm, cuentaBancariaId: e.target.value})} className="neo-input text-xs font-mono py-1.5">
-                              <option value="">— Sin vincular a cuenta —</option>
+                              <option value="">— Sin vincular a cuenta bancaria —</option>
                               {bankAccounts.map(b => (
                                 <option key={b.id} value={b.id}>{b.banco} · {b.numero} (${b.saldo.toLocaleString('es-CO')})</option>
                               ))}
                             </select>
                           </div>
+
+                          {/* Pagar completo */}
+                          <button
+                            type="button"
+                            disabled={guardandoAbono}
+                            onClick={() => void handleCrearAbono(cxc.id, cxc.saldo_pendiente, true)}
+                            className="neo-btn w-full bg-green-700 text-white hover:opacity-90 py-2 font-mono font-bold text-xs disabled:opacity-50"
+                          >
+                            {guardandoAbono ? 'Procesando...' : `✓ PAGAR COMPLETO — $${cxc.saldo_pendiente.toLocaleString('es-CO')}`}
+                          </button>
+
+                          <div className="border-t border-black/10 pt-2 flex flex-col gap-2">
+                            <span className="font-mono text-[10px] text-neutral-400 uppercase">O abono parcial</span>
+                            <div className="grid grid-cols-2 gap-2">
+                              <div className="flex flex-col gap-1">
+                                <label className="font-mono text-[10px] font-bold">MONTO</label>
+                                <input
+                                  type="number" min="1" step="any"
+                                  placeholder={`Máx $${cxc.saldo_pendiente.toLocaleString('es-CO')}`}
+                                  value={abonoForm.monto}
+                                  onChange={e => setAbonoForm({...abonoForm, monto: e.target.value})}
+                                  className="neo-input text-xs font-mono py-1.5"
+                                />
+                              </div>
+                              <div className="flex flex-col gap-1">
+                                <label className="font-mono text-[10px] font-bold">MEDIO DE PAGO</label>
+                                <select value={abonoForm.medioPago} onChange={e => setAbonoForm({...abonoForm, medioPago: e.target.value})} className="neo-input text-xs font-mono py-1.5">
+                                  <option value="efectivo">Efectivo</option>
+                                  <option value="transferencia">Transferencia</option>
+                                  <option value="tarjeta">Tarjeta</option>
+                                  <option value="cheque">Cheque</option>
+                                  <option value="nequi">Nequi</option>
+                                  <option value="daviplata">Daviplata</option>
+                                </select>
+                              </div>
+                            </div>
                           <div className="flex flex-col gap-1">
                             <label className="font-mono text-[10px] font-bold">REFERENCIA (opcional)</label>
                             <input
@@ -6813,6 +6833,7 @@ export default function AppHome() {
                           >
                             {guardandoAbono ? 'Registrando...' : 'REGISTRAR ABONO'}
                           </button>
+                          </div>
                         </div>
                       )}
                     </div>
