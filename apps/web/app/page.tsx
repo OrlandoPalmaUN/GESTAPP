@@ -205,16 +205,16 @@ export default function AppHome() {
   // --- ESTADOS GENERALES DE LA APP ---
   const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'config'>('dashboard');
   // --- REPORTES ---
-  const [reportesTipo, setReportesTipo] = useState<'meses' | 'semanas'>('meses');
   const [reportesAño, setReportesAño] = useState(() => new Date().getFullYear());
   const [reportesOverview, setReportesOverview] = useState<Array<{
-    label: string; desde: string; hasta: string; mes?: number; semana?: number; año: number;
+    label: string; desde: string; hasta: string; mes: number; año: number;
     pedidos: number; ventas: number; gastos: number; gananciaAprox: number; tieneDatos: boolean;
   }> | null>(null);
   const [reportesOverviewCargando, setReportesOverviewCargando] = useState(false);
   const [reportesOverviewError, setReportesOverviewError] = useState<string | null>(null);
-  const [reportesSeleccionado, setReportesSeleccionado] = useState<number | null>(null);
-  const [reportesDetalle, setReportesDetalle] = useState<null | {
+  // Mes seleccionado (número 1-12)
+  const [reportesMesSel, setReportesMesSel] = useState<number | null>(null);
+  type ReporteDetalle = {
     periodo: { label: string; desde: string; hasta: string };
     ventas: { total: number; pedidos: number; ticketPromedio: number; delta: number | null; deltaPedidos: number | null };
     compras: { total: number; oc: number; delta: number | null };
@@ -223,8 +223,14 @@ export default function AppHome() {
     margenBruto: { total: number; porcentaje: number; delta: number | null };
     utilidadNeta: number;
     topProductos: { nombre: string; categoria: string | null; unidades: number; ventasTotal: number }[];
-  }>(null);
-  const [reportesDetalleCargando, setReportesDetalleCargando] = useState(false);
+  };
+  const [reportesDetalleMes, setReportesDetalleMes] = useState<ReporteDetalle | null>(null);
+  const [reportesDetalleMesCargando, setReportesDetalleMesCargando] = useState(false);
+  const [reportesDetalleMesError, setReportesDetalleMesError] = useState<string | null>(null);
+  // Semana seleccionada dentro del mes
+  const [reportesSemanaSel, setReportesSemanaSel] = useState<{ num: number; label: string; desde: string; hasta: string } | null>(null);
+  const [reportesDetalleSemana, setReportesDetalleSemana] = useState<ReporteDetalle | null>(null);
+  const [reportesDetalleSemanaCargando, setReportesDetalleSemanaCargando] = useState(false);
   const [reportesIA, setReportesIA] = useState<string | null>(null);
   const [reportesIACargando, setReportesIACargando] = useState(false);
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
@@ -953,17 +959,45 @@ export default function AppHome() {
   useEffect(() => { void fetchResumen(); }, [fetchResumen]);
 
   // --- Reportes ---
-  const fetchReportesOverview = useCallback(async (tipo: 'meses' | 'semanas', año: number) => {
+
+  /** Calcula las semanas naturales de un mes (sem 1 empieza el día 1, termina el domingo). */
+  const semanasDelMes = (año: number, mes: number) => {
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const totalDias = new Date(año, mes, 0).getDate();
+    const semanas: { num: number; label: string; desde: string; hasta: string }[] = [];
+    let dia = 1; let num = 1;
+    while (dia <= totalDias) {
+      const dow = new Date(año, mes - 1, dia).getDay(); // 0=Dom
+      const daysToSun = dow === 0 ? 0 : 7 - dow;
+      const endDia = Math.min(dia + daysToSun, totalDias);
+      // hasta es exclusivo (día siguiente)
+      const nextDia = endDia + 1;
+      const hastaExcl = nextDia > totalDias
+        ? `${año}-${pad(mes === 12 ? 1 : mes + 1)}-01`.replace(/(\d{4})-(\d{2})-01/, mes === 12 ? `${año + 1}-01-01` : `${año}-${pad(mes + 1)}-01`)
+        : `${año}-${pad(mes)}-${pad(nextDia)}`;
+      semanas.push({
+        num, label: `Sem ${num}  ${dia}/${mes}–${endDia}/${mes}`,
+        desde: `${año}-${pad(mes)}-${pad(dia)}`,
+        hasta: hastaExcl,
+      });
+      dia = nextDia; num++;
+    }
+    return semanas;
+  };
+
+  const fetchReportesOverview = useCallback(async (año: number) => {
     if (!usuario?.tenantId) return;
     setReportesOverviewCargando(true);
     setReportesOverviewError(null);
     setReportesOverview(null);
-    setReportesSeleccionado(null);
-    setReportesDetalle(null);
+    setReportesMesSel(null);
+    setReportesDetalleMes(null);
+    setReportesSemanaSel(null);
+    setReportesDetalleSemana(null);
     setReportesIA(null);
     try {
-      const res = await api.reportesOverview(tipo, año);
-      setReportesOverview(res.periodos);
+      const res = await api.reportesOverview('meses', año);
+      setReportesOverview(res.periodos as typeof reportesOverview extends Array<infer T> ? T[] : never);
     } catch (e) {
       setReportesOverviewError(e instanceof Error ? e.message : 'Error al cargar resumen');
     } finally {
@@ -971,27 +1005,50 @@ export default function AppHome() {
     }
   }, [usuario?.tenantId]);
 
-  const fetchReportesDetalle = useCallback(async (tipo: 'meses' | 'semanas', año: number, mes?: number, semana?: number) => {
+  const fetchReportesDetalleMes = useCallback(async (año: number, mes: number) => {
     if (!usuario?.tenantId) return;
-    setReportesDetalleCargando(true);
-    setReportesDetalle(null);
+    setReportesDetalleMesCargando(true);
+    setReportesDetalleMesError(null);
+    setReportesDetalleMes(null);
+    setReportesSemanaSel(null);
+    setReportesDetalleSemana(null);
     setReportesIA(null);
     try {
-      const res = await api.reportesPeriodo(tipo, año, mes, semana);
-      setReportesDetalle(res as typeof reportesDetalle);
+      const res = await api.reportesPeriodo(año, mes);
+      setReportesDetalleMes(res as ReporteDetalle);
     } catch (e) {
-      console.error('Error detalle reportes', e);
+      setReportesDetalleMesError(e instanceof Error ? e.message : 'Error al cargar detalle del mes');
     } finally {
-      setReportesDetalleCargando(false);
+      setReportesDetalleMesCargando(false);
     }
   }, [usuario?.tenantId]);
 
-  const fetchReportesIA = useCallback(async (tipo: 'meses' | 'semanas', año: number, mes?: number, semana?: number) => {
+  const fetchReportesDetalleSemana = useCallback(async (sem: { num: number; label: string; desde: string; hasta: string }) => {
+    if (!usuario?.tenantId) return;
+    setReportesDetalleSemanaCargando(true);
+    setReportesDetalleSemana(null);
+    setReportesIA(null);
+    try {
+      const res = await api.reportesPeriodoRango(sem.desde, sem.hasta, sem.label);
+      setReportesDetalleSemana(res as ReporteDetalle);
+    } catch (e) {
+      console.error('Error semana', e);
+    } finally {
+      setReportesDetalleSemanaCargando(false);
+    }
+  }, [usuario?.tenantId]);
+
+  const fetchReportesIA = useCallback(async (año: number, mes: number, semana?: { desde: string; hasta: string; label: string }) => {
     if (!usuario?.tenantId) return;
     setReportesIACargando(true);
     setReportesIA(null);
     try {
-      const res = await api.reportesIA(tipo, año, mes, semana);
+      let res: { analisis: string };
+      if (semana) {
+        res = await api.reportesIA('meses', año, mes); // IA siempre a nivel mes por ahora
+      } else {
+        res = await api.reportesIA('meses', año, mes);
+      }
       setReportesIA(res.analisis);
     } catch (e) {
       setReportesIA(`❌ ${e instanceof Error ? e.message : 'Error en análisis IA'}`);
@@ -1001,7 +1058,7 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
 
   useEffect(() => {
-    if (activeTab === 'reportes') void fetchReportesOverview(reportesTipo, reportesAño);
+    if (activeTab === 'reportes') void fetchReportesOverview(reportesAño);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
@@ -5045,101 +5102,47 @@ export default function AppHome() {
                 {activeTab === 'reportes' && (
                   <div className="flex flex-col gap-4">
 
-                    {/* Barra de controles: tipo + navegación de año */}
-                    <div className="flex flex-wrap items-center gap-3 bg-white border-2 border-black p-3">
-                      {/* Toggle meses / semanas */}
-                      <div className="flex border-2 border-black overflow-hidden">
-                        {(['meses', 'semanas'] as const).map((t) => (
-                          <button
-                            key={t}
-                            type="button"
-                            onClick={() => {
-                              setReportesTipo(t);
-                              void fetchReportesOverview(t, reportesAño);
-                            }}
-                            className={`font-mono text-xs font-bold px-4 py-2 ${reportesTipo === t ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-100'}`}
-                          >
-                            {t === 'meses' ? 'Por Mes' : 'Por Semana'}
-                          </button>
-                        ))}
-                      </div>
-
-                      {/* Navegación de año */}
+                    {/* Navegación de año */}
+                    <div className="flex items-center gap-3 bg-white border-2 border-black p-3">
+                      <span className="font-mono text-xs font-bold text-neutral-500 uppercase">Año</span>
                       <div className="flex items-center gap-2 ml-auto">
-                        <button
-                          type="button"
-                          onClick={() => { const y = reportesAño - 1; setReportesAño(y); void fetchReportesOverview(reportesTipo, y); }}
-                          className="neo-btn p-1.5 hover:bg-neutral-100"
-                        >
-                          <ChevronLeft size={16} />
-                        </button>
+                        <button type="button" onClick={() => { const y = reportesAño - 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-1.5 hover:bg-neutral-100"><ChevronLeft size={16} /></button>
                         <span className="font-mono text-sm font-bold w-16 text-center">{reportesAño}</span>
-                        <button
-                          type="button"
-                          onClick={() => { const y = reportesAño + 1; setReportesAño(y); void fetchReportesOverview(reportesTipo, y); }}
-                          className="neo-btn p-1.5 hover:bg-neutral-100"
-                        >
-                          <ChevronRight size={16} />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => void fetchReportesOverview(reportesTipo, reportesAño)}
-                          className="neo-btn p-1.5 hover:bg-neutral-100"
-                          title="Recargar"
-                        >
-                          <RefreshCw size={14} />
-                        </button>
+                        <button type="button" onClick={() => { const y = reportesAño + 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-1.5 hover:bg-neutral-100"><ChevronRight size={16} /></button>
+                        <button type="button" onClick={() => void fetchReportesOverview(reportesAño)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
                       </div>
                     </div>
 
-                    {/* Estado de carga / error */}
-                    {reportesOverviewCargando && (
-                      <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 p-2">
-                        <RefreshCw size={13} className="animate-spin" /> Cargando períodos…
-                      </div>
-                    )}
-                    {reportesOverviewError && (
-                      <p className="text-xs font-mono text-brand-red p-2">{reportesOverviewError}</p>
-                    )}
+                    {/* Carga / error overview */}
+                    {reportesOverviewCargando && <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 p-2"><RefreshCw size={13} className="animate-spin" /> Cargando meses…</div>}
+                    {reportesOverviewError && <p className="text-xs font-mono text-brand-red p-2">{reportesOverviewError}</p>}
 
-                    {/* Grid de tarjetas */}
+                    {/* Grid de tarjetas de mes */}
                     {reportesOverview && (
-                      <div className={`grid gap-3 ${reportesTipo === 'meses' ? 'grid-cols-2 md:grid-cols-3 lg:grid-cols-4' : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-6'}`}>
+                      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                         {reportesOverview.map((periodo) => {
-                          const id = reportesTipo === 'meses' ? (periodo.mes ?? 0) : (periodo.semana ?? 0);
-                          const isSelected = reportesSeleccionado === id;
-                          const hayDatos = periodo.tieneDatos;
+                          const isSelected = reportesMesSel === periodo.mes;
                           return (
                             <button
-                              key={id}
+                              key={periodo.mes}
                               type="button"
                               onClick={() => {
-                                if (isSelected) { setReportesSeleccionado(null); setReportesDetalle(null); setReportesIA(null); return; }
-                                setReportesSeleccionado(id);
-                                if (reportesTipo === 'meses') {
-                                  void fetchReportesDetalle('meses', reportesAño, periodo.mes);
-                                } else {
-                                  void fetchReportesDetalle('semanas', reportesAño, undefined, periodo.semana);
-                                }
+                                if (isSelected) { setReportesMesSel(null); setReportesDetalleMes(null); setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); return; }
+                                setReportesMesSel(periodo.mes);
+                                void fetchReportesDetalleMes(reportesAño, periodo.mes);
                               }}
                               className={`text-left p-3 border-2 transition-all flex flex-col gap-1.5 ${
-                                isSelected
-                                  ? 'bg-black text-white border-black'
-                                  : hayDatos
-                                    ? 'bg-white border-black hover:bg-neutral-50 hover:shadow-[2px_2px_0px_rgba(0,0,0,0.15)]'
-                                    : 'bg-neutral-50 border-neutral-200 hover:bg-neutral-100'
+                                isSelected ? 'bg-black text-white border-black'
+                                  : periodo.tieneDatos ? 'bg-white border-black hover:bg-neutral-50 hover:shadow-[2px_2px_0px_rgba(0,0,0,0.12)]'
+                                  : 'bg-neutral-50 border-neutral-200 hover:bg-neutral-100'
                               }`}
                             >
-                              <span className={`font-mono text-[11px] font-black uppercase tracking-wide ${isSelected ? 'text-white' : 'text-black'}`}>
-                                {periodo.label}
-                              </span>
-                              {hayDatos ? (
+                              <span className={`font-mono text-[11px] font-black uppercase tracking-wide ${isSelected ? 'text-white' : 'text-black'}`}>{periodo.label}</span>
+                              {periodo.tieneDatos ? (
                                 <>
-                                  <div className="mt-1">
+                                  <div className="mt-0.5">
                                     <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Ventas</span>
-                                    <span className={`font-black text-sm block leading-tight ${isSelected ? 'text-white' : 'text-green-700'}`}>
-                                      ${periodo.ventas.toLocaleString('es-CO')}
-                                    </span>
+                                    <span className={`font-black text-sm block leading-tight ${isSelected ? 'text-white' : 'text-green-700'}`}>${periodo.ventas.toLocaleString('es-CO')}</span>
                                   </div>
                                   <div>
                                     <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Pedidos</span>
@@ -5147,20 +5150,12 @@ export default function AppHome() {
                                   </div>
                                   <div>
                                     <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Ganancia aprox.</span>
-                                    <span className={`font-bold text-xs block ${
-                                      isSelected ? 'text-white' : periodo.gananciaAprox >= 0 ? 'text-green-700' : 'text-red-600'
-                                    }`}>
-                                      ${periodo.gananciaAprox.toLocaleString('es-CO')}
-                                    </span>
+                                    <span className={`font-bold text-xs block ${isSelected ? 'text-white' : periodo.gananciaAprox >= 0 ? 'text-green-700' : 'text-red-600'}`}>${periodo.gananciaAprox.toLocaleString('es-CO')}</span>
                                   </div>
-                                  <span className={`font-mono text-[9px] mt-1 ${isSelected ? 'text-neutral-400' : 'text-neutral-400'}`}>
-                                    {isSelected ? '▲ ver menos' : '▼ ver detalle'}
-                                  </span>
+                                  <span className={`font-mono text-[9px] mt-0.5 ${isSelected ? 'text-neutral-400' : 'text-neutral-400'}`}>{isSelected ? '▲ cerrar' : '▼ ver detalle'}</span>
                                 </>
                               ) : (
-                                <span className={`font-mono text-[10px] italic mt-1 ${isSelected ? 'text-neutral-400' : 'text-neutral-300'}`}>
-                                  Sin datos
-                                </span>
+                                <span className={`font-mono text-[10px] italic mt-1 ${isSelected ? 'text-neutral-400' : 'text-neutral-300'}`}>Sin datos</span>
                               )}
                             </button>
                           );
@@ -5168,162 +5163,140 @@ export default function AppHome() {
                       </div>
                     )}
 
-                    {/* Panel de detalle del período seleccionado */}
-                    {reportesSeleccionado !== null && (
-                      <div className="border-2 border-black bg-white p-4 flex flex-col gap-4">
+                    {/* Panel de detalle del mes seleccionado */}
+                    {reportesMesSel !== null && (
+                      <div className="border-2 border-black bg-white flex flex-col">
 
-                        {/* Header del panel */}
-                        <div className="flex items-center justify-between border-b border-black pb-2">
+                        {/* Header mes */}
+                        <div className="flex items-center justify-between border-b border-black px-4 py-3">
                           <h3 className="font-mono text-sm font-black">
-                            {reportesOverview?.find((p) => (reportesTipo === 'meses' ? p.mes : p.semana) === reportesSeleccionado)?.label ?? ''}
+                            {reportesOverview?.find(p => p.mes === reportesMesSel)?.label ?? ''}
                           </h3>
-                          <button type="button" onClick={() => { setReportesSeleccionado(null); setReportesDetalle(null); setReportesIA(null); }} className="neo-btn p-1 text-neutral-500 hover:bg-neutral-100 text-xs font-mono">✕</button>
+                          <button type="button" onClick={() => { setReportesMesSel(null); setReportesDetalleMes(null); setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); }} className="neo-btn p-1 hover:bg-neutral-100 text-xs font-mono text-neutral-500">✕</button>
                         </div>
 
-                        {reportesDetalleCargando && (
-                          <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 py-4">
-                            <RefreshCw size={13} className="animate-spin" /> Calculando detalle…
-                          </div>
-                        )}
+                        {/* Filtro por semana */}
+                        <div className="flex flex-wrap gap-1.5 px-4 py-2 border-b border-black/10 bg-neutral-50">
+                          <button
+                            type="button"
+                            onClick={() => { setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); }}
+                            className={`font-mono text-[10px] font-bold px-3 py-1 border ${!reportesSemanaSel ? 'bg-black text-white border-black' : 'bg-white border-black hover:bg-neutral-100'}`}
+                          >
+                            Todo el mes
+                          </button>
+                          {semanasDelMes(reportesAño, reportesMesSel).map((sem) => (
+                            <button
+                              key={sem.num}
+                              type="button"
+                              onClick={() => { setReportesSemanaSel(sem); void fetchReportesDetalleSemana(sem); setReportesIA(null); }}
+                              className={`font-mono text-[10px] font-bold px-3 py-1 border ${reportesSemanaSel?.num === sem.num ? 'bg-black text-white border-black' : 'bg-white border-black hover:bg-neutral-100'}`}
+                            >
+                              {sem.label}
+                            </button>
+                          ))}
+                        </div>
 
-                        {reportesDetalle && !reportesDetalleCargando && (
-                          <>
-                            {/* KPIs principales */}
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                              {[
-                                {
-                                  label: 'VENTAS TOTALES',
-                                  value: `$${reportesDetalle.ventas.total.toLocaleString('es-CO')}`,
-                                  sub: `${reportesDetalle.ventas.pedidos} pedido${reportesDetalle.ventas.pedidos !== 1 ? 's' : ''}`,
-                                  delta: reportesDetalle.ventas.delta,
-                                  color: 'text-green-700',
-                                },
-                                {
-                                  label: 'MARGEN BRUTO',
-                                  value: `$${reportesDetalle.margenBruto.total.toLocaleString('es-CO')}`,
-                                  sub: `${reportesDetalle.margenBruto.porcentaje}% sobre ventas`,
-                                  delta: reportesDetalle.margenBruto.delta,
-                                  color: reportesDetalle.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red',
-                                },
-                                {
-                                  label: 'COMPRAS / OC',
-                                  value: `$${reportesDetalle.compras.total.toLocaleString('es-CO')}`,
-                                  sub: `${reportesDetalle.compras.oc} orden${reportesDetalle.compras.oc !== 1 ? 'es' : ''}`,
-                                  delta: reportesDetalle.compras.delta !== null ? -reportesDetalle.compras.delta : null,
-                                  color: 'text-black',
-                                },
-                                {
-                                  label: 'UTILIDAD NETA',
-                                  value: `$${reportesDetalle.utilidadNeta.toLocaleString('es-CO')}`,
-                                  sub: `Gastos: $${reportesDetalle.gastos.total.toLocaleString('es-CO')}`,
-                                  delta: null,
-                                  color: reportesDetalle.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red',
-                                },
-                              ].map((kpi) => (
-                                <div key={kpi.label} className="border border-black p-3 flex flex-col gap-1 bg-neutral-50">
-                                  <span className="font-mono text-[10px] text-neutral-500 font-bold">{kpi.label}</span>
-                                  <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
-                                  <span className="text-[10px] font-mono text-neutral-500">{kpi.sub}</span>
-                                  {kpi.delta !== null && (
-                                    <span className={`text-[10px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
-                                      {kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs período anterior
-                                    </span>
-                                  )}
-                                </div>
-                              ))}
+                        <div className="p-4 flex flex-col gap-4">
+                          {/* Carga */}
+                          {(reportesDetalleMesCargando || reportesDetalleSemanaCargando) && (
+                            <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 py-4">
+                              <RefreshCw size={13} className="animate-spin" /> Calculando…
                             </div>
+                          )}
+                          {reportesDetalleMesError && <p className="text-xs font-mono text-brand-red">{reportesDetalleMesError}</p>}
 
-                            {/* Métricas secundarias */}
-                            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                              <div className="border border-black p-3 bg-neutral-50">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">CxC COBRADA</span>
-                                <span className="text-lg font-black text-green-700 block mt-1">${reportesDetalle.cxcCobrada.toLocaleString('es-CO')}</span>
-                                <span className="text-[10px] font-mono text-neutral-400">Abonos de clientes</span>
-                              </div>
-                              <div className="border border-black p-3 bg-neutral-50">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
-                                <span className="text-lg font-black text-black block mt-1">${reportesDetalle.ingresosManuales.toLocaleString('es-CO')}</span>
-                                <span className="text-[10px] font-mono text-neutral-400">Capital, préstamos, etc.</span>
-                              </div>
-                              <div className="border border-black p-3 bg-neutral-50">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
-                                <span className="text-lg font-black text-black block mt-1">${reportesDetalle.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
-                                <span className="text-[10px] font-mono text-neutral-400">Por pedido</span>
-                              </div>
-                            </div>
-
-                            {/* Top productos */}
-                            {reportesDetalle.topProductos.length > 0 && (
-                              <div>
-                                <h4 className="font-mono text-xs font-bold border-b border-black pb-2 mb-3">🏆 TOP PRODUCTOS</h4>
-                                <div className="space-y-2">
-                                  {reportesDetalle.topProductos.map((p, i) => (
-                                    <div key={p.nombre} className="flex items-center gap-3 text-xs">
-                                      <span className="font-mono font-black text-neutral-400 w-4">{i + 1}</span>
-                                      <div className="flex-1 min-w-0">
-                                        <span className="font-bold text-black truncate block">{p.nombre}</span>
-                                        {p.categoria && <span className="text-[10px] text-neutral-400 font-mono">{p.categoria}</span>}
-                                      </div>
-                                      <span className="font-mono text-neutral-500 shrink-0">{p.unidades} uds</span>
-                                      <span className="font-mono font-bold text-black shrink-0">${p.ventasTotal.toLocaleString('es-CO')}</span>
-                                      <div className="w-16 bg-neutral-100 h-1.5 border border-black shrink-0">
-                                        <div
-                                          className="bg-black h-full"
-                                          style={{ width: `${Math.round((p.ventasTotal / (reportesDetalle.topProductos[0]?.ventasTotal || 1)) * 100)}%` }}
-                                        />
-                                      </div>
+                          {/* KPIs — muestra semana si está seleccionada, sino mes */}
+                          {(() => {
+                            const d = reportesSemanaSel ? reportesDetalleSemana : reportesDetalleMes;
+                            if (!d || reportesDetalleMesCargando || reportesDetalleSemanaCargando) return null;
+                            return (
+                              <>
+                                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                                  {[
+                                    { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''}`, delta: d.ventas.delta, color: 'text-green-700' },
+                                    { label: 'MARGEN BRUTO', value: `$${d.margenBruto.total.toLocaleString('es-CO')}`, sub: `${d.margenBruto.porcentaje}% sobre ventas`, delta: d.margenBruto.delta, color: d.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red' },
+                                    { label: 'COMPRAS / OC', value: `$${d.compras.total.toLocaleString('es-CO')}`, sub: `${d.compras.oc} orden${d.compras.oc !== 1 ? 'es' : ''}`, delta: d.compras.delta !== null ? -d.compras.delta : null, color: 'text-black' },
+                                    { label: 'UTILIDAD NETA', value: `$${d.utilidadNeta.toLocaleString('es-CO')}`, sub: `Gastos: $${d.gastos.total.toLocaleString('es-CO')}`, delta: null, color: d.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red' },
+                                  ].map((kpi) => (
+                                    <div key={kpi.label} className="border border-black p-3 flex flex-col gap-1 bg-neutral-50">
+                                      <span className="font-mono text-[10px] text-neutral-500 font-bold">{kpi.label}</span>
+                                      <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
+                                      <span className="text-[10px] font-mono text-neutral-500">{kpi.sub}</span>
+                                      {kpi.delta !== null && <span className={`text-[10px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs anterior</span>}
                                     </div>
                                   ))}
                                 </div>
-                              </div>
-                            )}
 
-                            {/* Análisis IA */}
-                            <div className="border-t border-black pt-4">
-                              <div className="flex items-center justify-between mb-3">
-                                <h4 className="font-mono text-xs font-bold flex items-center gap-2">
-                                  <Sparkles size={13} /> ANÁLISIS IA
-                                </h4>
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    const sel = reportesOverview?.find((p) => (reportesTipo === 'meses' ? p.mes : p.semana) === reportesSeleccionado);
-                                    if (!sel) return;
-                                    void fetchReportesIA(reportesTipo, reportesAño, sel.mes, sel.semana);
-                                  }}
-                                  disabled={reportesIACargando}
-                                  className="neo-button text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
-                                >
-                                  {reportesIACargando
-                                    ? <><RefreshCw size={11} className="animate-spin" /> Analizando…</>
-                                    : <><Sparkles size={11} /> {reportesIA ? 'Re-analizar' : 'Generar análisis'}</>
-                                  }
-                                </button>
-                              </div>
-                              {!reportesIA && !reportesIACargando && (
-                                <p className="text-xs font-mono text-neutral-400 italic text-center py-3">
-                                  Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales.
-                                </p>
-                              )}
-                              {reportesIACargando && (
-                                <div className="flex items-center gap-2 py-4 text-xs font-mono text-neutral-500">
-                                  <RefreshCw size={14} className="animate-spin" />
-                                  Analizando con IA… (puede tomar unos segundos)
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+                                  <div className="border border-black p-3 bg-neutral-50">
+                                    <span className="font-mono text-[10px] text-neutral-500 font-bold">CxC COBRADA</span>
+                                    <span className="text-lg font-black text-green-700 block mt-1">${d.cxcCobrada.toLocaleString('es-CO')}</span>
+                                    <span className="text-[10px] font-mono text-neutral-400">Abonos de clientes</span>
+                                  </div>
+                                  <div className="border border-black p-3 bg-neutral-50">
+                                    <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
+                                    <span className="text-lg font-black text-black block mt-1">${d.ingresosManuales.toLocaleString('es-CO')}</span>
+                                    <span className="text-[10px] font-mono text-neutral-400">Capital, préstamos, etc.</span>
+                                  </div>
+                                  <div className="border border-black p-3 bg-neutral-50">
+                                    <span className="font-mono text-[10px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
+                                    <span className="text-lg font-black text-black block mt-1">${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
+                                    <span className="text-[10px] font-mono text-neutral-400">Por pedido</span>
+                                  </div>
                                 </div>
-                              )}
-                              {reportesIA && !reportesIACargando && (
-                                <div className="font-mono text-xs leading-relaxed space-y-2">
-                                  {reportesIA.split('\n').map((line, i) => {
-                                    if (line.startsWith('## ')) return <h5 key={i} className="font-bold text-black mt-3 mb-1 border-b border-neutral-200 pb-1">{line.replace('## ', '')}</h5>;
-                                    if (line.startsWith('- ')) return <p key={i} className="text-neutral-700 pl-2">• {line.slice(2)}</p>;
-                                    if (line.trim() === '') return null;
-                                    return <p key={i} className="text-neutral-700">{line}</p>;
-                                  })}
+
+                                {d.topProductos.length > 0 && (
+                                  <div>
+                                    <h4 className="font-mono text-xs font-bold border-b border-black pb-2 mb-3">🏆 TOP PRODUCTOS</h4>
+                                    <div className="space-y-2">
+                                      {d.topProductos.map((p, i) => (
+                                        <div key={p.nombre} className="flex items-center gap-3 text-xs">
+                                          <span className="font-mono font-black text-neutral-400 w-4">{i + 1}</span>
+                                          <div className="flex-1 min-w-0">
+                                            <span className="font-bold text-black truncate block">{p.nombre}</span>
+                                            {p.categoria && <span className="text-[10px] text-neutral-400 font-mono">{p.categoria}</span>}
+                                          </div>
+                                          <span className="font-mono text-neutral-500 shrink-0">{p.unidades} uds</span>
+                                          <span className="font-mono font-bold text-black shrink-0">${p.ventasTotal.toLocaleString('es-CO')}</span>
+                                          <div className="w-16 bg-neutral-100 h-1.5 border border-black shrink-0">
+                                            <div className="bg-black h-full" style={{ width: `${Math.round((p.ventasTotal / (d.topProductos[0]?.ventasTotal || 1)) * 100)}%` }} />
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* Análisis IA */}
+                                <div className="border-t border-black pt-4">
+                                  <div className="flex items-center justify-between mb-3">
+                                    <h4 className="font-mono text-xs font-bold flex items-center gap-2"><Sparkles size={13} /> ANÁLISIS IA</h4>
+                                    <button
+                                      type="button"
+                                      onClick={() => void fetchReportesIA(reportesAño, reportesMesSel!, reportesSemanaSel ?? undefined)}
+                                      disabled={reportesIACargando}
+                                      className="neo-button text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
+                                    >
+                                      {reportesIACargando ? <><RefreshCw size={11} className="animate-spin" /> Analizando…</> : <><Sparkles size={11} /> {reportesIA ? 'Re-analizar' : 'Generar análisis'}</>}
+                                    </button>
+                                  </div>
+                                  {!reportesIA && !reportesIACargando && <p className="text-xs font-mono text-neutral-400 italic text-center py-3">Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales.</p>}
+                                  {reportesIACargando && <div className="flex items-center gap-2 py-4 text-xs font-mono text-neutral-500"><RefreshCw size={14} className="animate-spin" /> Analizando con IA…</div>}
+                                  {reportesIA && !reportesIACargando && (
+                                    <div className="font-mono text-xs leading-relaxed space-y-2">
+                                      {reportesIA.split('\n').map((line, i) => {
+                                        if (line.startsWith('## ')) return <h5 key={i} className="font-bold text-black mt-3 mb-1 border-b border-neutral-200 pb-1">{line.replace('## ', '')}</h5>;
+                                        if (line.startsWith('- ')) return <p key={i} className="text-neutral-700 pl-2">• {line.slice(2)}</p>;
+                                        if (line.trim() === '') return null;
+                                        return <p key={i} className="text-neutral-700">{line}</p>;
+                                      })}
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                          </>
-                        )}
+                              </>
+                            );
+                          })()}
+                        </div>
                       </div>
                     )}
                   </div>
