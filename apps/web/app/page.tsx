@@ -26,6 +26,7 @@ import {
   Pencil,
   Tag,
   PackagePlus,
+  PackageMinus,
   ChevronLeft,
   ChevronRight,
   CalendarDays,
@@ -464,6 +465,12 @@ export default function AppHome() {
   const [stockEntryForm, setStockEntryForm] = useState({ cantidad: '', precio_costo: '', notas: '' });
   const [registrandoEntrada, setRegistrandoEntrada] = useState(false);
   const [stockEntryError, setStockEntryError] = useState<string | null>(null);
+
+  // --- Ajuste negativo de stock (baja manual sin pedido) ---
+  const [stockAdjustProduct, setStockAdjustProduct] = useState<Product | null>(null);
+  const [stockAdjustForm, setStockAdjustForm] = useState({ cantidad: '', motivo: 'merma', notas: '' });
+  const [registrandoAjuste, setRegistrandoAjuste] = useState(false);
+  const [stockAdjustError, setStockAdjustError] = useState<string | null>(null);
 
   // Edición de Categoría (rename in-place)
   const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
@@ -1673,6 +1680,47 @@ export default function AppHome() {
       setStockEntryError(error instanceof ApiError ? error.message : 'No se pudo registrar la entrada de stock.');
     } finally {
       setRegistrandoEntrada(false);
+    }
+  };
+
+  const handleRegistrarAjusteNegativo = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!stockAdjustProduct) return;
+    const cantidad = parseFloat(stockAdjustForm.cantidad);
+    if (!Number.isFinite(cantidad) || cantidad <= 0) {
+      setStockAdjustError('La cantidad debe ser mayor que cero.');
+      return;
+    }
+    const stock = productStocks[stockAdjustProduct.id] ?? 0;
+    if (cantidad > stock) {
+      setStockAdjustError(`Stock insuficiente. Disponible: ${stock}.`);
+      return;
+    }
+    setRegistrandoAjuste(true);
+    setStockAdjustError(null);
+    try {
+      const motivoLabel: Record<string, string> = {
+        merma: 'Merma / Vencimiento',
+        danio: 'Daño / Deterioro',
+        robo: 'Robo / Pérdida',
+        muestra: 'Muestra / Uso interno',
+        conteo: 'Corrección de conteo',
+        otro: 'Otro',
+      };
+      const notas = stockAdjustForm.notas.trim()
+        || `${motivoLabel[stockAdjustForm.motivo] ?? stockAdjustForm.motivo} — ${stockAdjustProduct.nombre}`;
+      await api.crearMovimientoInventario({
+        productoId: stockAdjustProduct.id,
+        tipo: 'ajuste_negativo',
+        cantidad,
+        notas,
+      });
+      setStockAdjustProduct(null);
+      await fetchInventario();
+    } catch (error) {
+      setStockAdjustError(error instanceof ApiError ? error.message : 'No se pudo registrar el ajuste.');
+    } finally {
+      setRegistrandoAjuste(false);
     }
   };
 
@@ -3140,6 +3188,9 @@ export default function AppHome() {
                                       <div className="flex items-center justify-center gap-1.5">
                                         <button type="button" onClick={() => openStockEntry(p)} className="neo-btn p-1.5 hover:bg-emerald-50 hover:text-emerald-700" title="Registrar entrada de stock">
                                           <PackagePlus size={12} />
+                                        </button>
+                                        <button type="button" onClick={() => { setStockAdjustProduct(p); setStockAdjustForm({ cantidad: '', motivo: 'merma', notas: '' }); setStockAdjustError(null); }} className="neo-btn p-1.5 hover:bg-orange-50 hover:text-orange-700" title="Registrar baja de stock">
+                                          <PackageMinus size={12} />
                                         </button>
                                         <button type="button" onClick={() => openEditProduct(p)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar producto">
                                           <Pencil size={12} />
@@ -7030,6 +7081,65 @@ export default function AppHome() {
               {stockEntryError && <p className="text-brand-red font-mono text-[10px]">{stockEntryError}</p>}
               <button type="submit" disabled={registrandoEntrada} className="neo-btn bg-emerald-600 text-white hover:opacity-90 mt-2 py-2.5 disabled:opacity-50">
                 {registrandoEntrada ? 'REGISTRANDO...' : 'REGISTRAR ENTRADA'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: Baja de stock (ajuste negativo manual) */}
+      {stockAdjustProduct && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative">
+            <div className="flex justify-between items-center border-b border-black pb-2">
+              <h3 className="font-mono text-sm font-bold text-black flex items-center gap-2">
+                <PackageMinus size={16} />
+                BAJA DE STOCK
+              </h3>
+              <button onClick={() => setStockAdjustProduct(null)} className="font-mono font-bold text-lg hover:text-brand-red">×</button>
+            </div>
+            <p className="text-xs font-mono text-neutral-600">
+              Producto: <span className="font-bold text-black">{stockAdjustProduct.nombre}</span>
+              {' · '}Disponible: <span className="font-bold text-black">{productStocks[stockAdjustProduct.id] ?? 0}</span>
+            </p>
+            <form onSubmit={(e) => void handleRegistrarAjusteNegativo(e)} className="flex flex-col gap-3.5 text-xs">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">MOTIVO</label>
+                <select
+                  value={stockAdjustForm.motivo}
+                  onChange={(e) => setStockAdjustForm({ ...stockAdjustForm, motivo: e.target.value })}
+                  className="neo-input font-mono"
+                >
+                  <option value="merma">Merma / Vencimiento</option>
+                  <option value="danio">Daño / Deterioro</option>
+                  <option value="robo">Robo / Pérdida</option>
+                  <option value="muestra">Muestra / Uso interno</option>
+                  <option value="conteo">Corrección de conteo</option>
+                  <option value="otro">Otro</option>
+                </select>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">CANTIDAD A DAR DE BAJA</label>
+                <input
+                  type="number" min="0.01" step="any" required autoFocus
+                  value={stockAdjustForm.cantidad}
+                  onChange={(e) => setStockAdjustForm({ ...stockAdjustForm, cantidad: e.target.value })}
+                  className="neo-input font-mono"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">NOTAS (opcional)</label>
+                <input
+                  type="text"
+                  placeholder="Ej. Encontrados dañados en bodega"
+                  value={stockAdjustForm.notas}
+                  onChange={(e) => setStockAdjustForm({ ...stockAdjustForm, notas: e.target.value })}
+                  className="neo-input"
+                />
+              </div>
+              {stockAdjustError && <p className="text-brand-red font-mono text-[10px]">{stockAdjustError}</p>}
+              <button type="submit" disabled={registrandoAjuste} className="neo-btn bg-orange-600 text-white hover:opacity-90 mt-2 py-2.5 disabled:opacity-50">
+                {registrandoAjuste ? 'REGISTRANDO...' : 'REGISTRAR BAJA'}
               </button>
             </form>
           </div>
