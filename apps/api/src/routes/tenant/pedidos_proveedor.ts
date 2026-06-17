@@ -216,11 +216,13 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
         insertedItems.push(aItem(itemRow!))
       }
 
-      // Actualizar el total del pedido
+      // Si el usuario indicó un total manual (precio real negociado), usarlo.
+      const totalFinal = body.data.totalManual ?? total
+
       const { rows: [pedidoFinal] } = await request.tenantDb.query<FilaPedidoProveedor>(
         `UPDATE pedidos_proveedor SET total = $1, updated_at = NOW() WHERE id = $2
          RETURNING id, numero, proveedor_id, estado, fecha_esperada, notas, total, factura_compra_id, usuario_id, created_at, updated_at`,
-        [total, pedido!.id],
+        [totalFinal, pedido!.id],
       )
 
       await request.tenantDb.query('COMMIT')

@@ -25,6 +25,8 @@ export const crearPedidoProveedorSchema = z.object({
   proveedorId: z.uuid().nullable().optional(),
   fechaEsperada: z.string().optional(),
   notas: z.string().optional(),
+  /** Total real de la OC — si se proporciona, sobreescribe el calculado (precio puede variar al recibir). */
+  totalManual: z.number().nonnegative().optional(),
   items: z.array(crearPedidoProveedorItemSchema).min(1, 'La orden debe tener al menos un ítem.'),
 })
 

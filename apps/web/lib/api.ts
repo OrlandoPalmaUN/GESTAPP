@@ -381,6 +381,7 @@ export const api = {
     proveedorId?: string | null
     fechaEsperada?: string
     notas?: string
+    totalManual?: number
     items: (
       | { productoId: string; cantidad: number; precioUnitario?: number }
       | { concepto: string; cantidad: number; precioUnitario?: number }
@@ -610,10 +611,13 @@ export const api = {
       }>
     }>(`/reportes/overview?tipo=${tipo}&año=${año}`),
 
-  reportesPeriodo: (tipo: 'meses' | 'semanas', año: number, mes?: number, semana?: number) => {
-    const p = new URLSearchParams({ tipo, año: String(año) })
-    if (mes !== undefined) p.set('mes', String(mes))
-    if (semana !== undefined) p.set('semana', String(semana))
+  reportesPeriodo: (año: number, mes: number) => {
+    const p = new URLSearchParams({ tipo: 'mes', año: String(año), mes: String(mes) })
+    return request<Record<string, unknown>>(`/reportes/periodo?${p}`)
+  },
+
+  reportesPeriodoRango: (desde: string, hasta: string, label: string) => {
+    const p = new URLSearchParams({ desde, hasta, label })
     return request<Record<string, unknown>>(`/reportes/periodo?${p}`)
   },
 

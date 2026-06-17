@@ -1,6 +1,7 @@
 {
   "extends": "@antigravity/config/typescript/nextjs.json",
   "compilerOptions": {
+    "incremental": false,
     "paths": {
       "@/*": ["./*"],
       "@antigravity/shared": ["../../packages/shared/src/index.ts"],

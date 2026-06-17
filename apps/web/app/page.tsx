@@ -384,8 +384,9 @@ export default function AppHome() {
     proveedorId: string;
     fechaEsperada: string;
     notas: string;
+    totalManual: string;
     items: { productoId: string; concepto: string; esLibre: boolean; cantidad: string; precioUnitario: string }[];
-  }>({ proveedorId: '', fechaEsperada: '', notas: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
+  }>({ proveedorId: '', fechaEsperada: '', notas: '', totalManual: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
   const [guardandoCompra, setGuardandoCompra] = useState(false);
   const [compraFormError, setCompraFormError] = useState<string | null>(null);
   const [selectedCompra, setSelectedCompra] = useState<PedidoProveedor | null>(null);
@@ -1353,14 +1354,16 @@ export default function AppHome() {
         }
         return { productoId: item.productoId, cantidad: parseFloat(item.cantidad) || 1, precioUnitario: parseFloat(item.precioUnitario) || 0 };
       });
+      const totalManual = compraForm.totalManual ? parseFloat(compraForm.totalManual) : undefined;
       await api.crearCompra({
         proveedorId: compraForm.proveedorId || null,
         fechaEsperada: compraForm.fechaEsperada || undefined,
         notas: compraForm.notas || undefined,
+        totalManual,
         items,
       });
       setShowCreateCompra(false);
-      setCompraForm({ proveedorId: '', fechaEsperada: '', notas: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
+      setCompraForm({ proveedorId: '', fechaEsperada: '', notas: '', totalManual: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
       await fetchCompras();
     } catch (error) {
       setCompraFormError(error instanceof ApiError ? error.message : 'No se pudo crear la orden de compra.');
@@ -6289,6 +6292,21 @@ export default function AppHome() {
                   className="neo-input resize-y"
                   placeholder="Instrucciones, referencias, condiciones..."
                 />
+              </div>
+
+              {/* Total real */}
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">TOTAL REAL (opcional)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={compraForm.totalManual}
+                  onChange={(e) => setCompraForm({ ...compraForm, totalManual: e.target.value })}
+                  className="neo-input font-mono"
+                  placeholder="Deja vacío para calcular automáticamente desde los ítems"
+                />
+                <span className="font-mono text-[10px] text-neutral-400">Si el costo real difiere del precio de catálogo, ponlo aquí. Sobreescribe el total calculado.</span>
               </div>
 
               {/* Ítems */}
