@@ -161,8 +161,18 @@ export interface Pedido {
  * exactamente lo que physically salió del inventario.
  */
 export const MOVIMIENTOS_POR_TRANSICION: Partial<Record<`${EstadoPedido}->${EstadoPedido}`, ReadonlyArray<'reserva' | 'liberacion_reserva' | 'salida_venta'>>> = {
+  // Reserva de stock al confirmar (o al saltar directo a preparación)
   'borrador->confirmado': ['reserva'],
+  'borrador->en_preparacion': ['reserva'],
+  // Salida directa cuando se salta la fase de confirmación/reserva
+  'borrador->despachado': ['salida_venta'],
+  'borrador->entregado': ['salida_venta'],
+  // Cierre de reserva + registro de salida real
+  'confirmado->despachado': ['liberacion_reserva', 'salida_venta'],
+  'confirmado->entregado': ['liberacion_reserva', 'salida_venta'],
   'confirmado->cancelado': ['liberacion_reserva'],
-  'en_preparacion->cancelado': ['liberacion_reserva'],
   'en_preparacion->despachado': ['liberacion_reserva', 'salida_venta'],
+  'en_preparacion->entregado': ['liberacion_reserva', 'salida_venta'],
+  'en_preparacion->cancelado': ['liberacion_reserva'],
+  // despachado->entregado: la salida ya fue registrada, sin movimiento adicional
 }

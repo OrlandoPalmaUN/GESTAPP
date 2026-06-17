@@ -572,6 +572,7 @@ export default function AppHome() {
 
   // 4. Registrar abono
   const [showAllCxC, setShowAllCxC] = useState(false);
+  const [expandedAbonosInvoiceId, setExpandedAbonosInvoiceId] = useState<string | null>(null);
   const [showCreateAbono, setShowCreateAbono] = useState(false);
   const [selectedInvoiceId, setSelectedInvoiceId] = useState('');
   const [abonoMonto, setAbonoMonto] = useState('');
@@ -3814,31 +3815,57 @@ export default function AppHome() {
                                 .filter(i => i.tipo === 'cxc' && (showAllCxC || i.saldo_pendiente > 0))
                                 .map((inv) => {
                                   const client = customers.find(c => c.id === inv.cliente_id);
+                                  const abonosInv = abonos.filter(a => a.factura_id === inv.id);
+                                  const expanded = expandedAbonosInvoiceId === inv.id;
                                   return (
-                                    <tr key={inv.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                      <td className="p-3 font-mono font-bold text-black">{inv.numero}</td>
-                                      <td className="p-3 font-semibold text-black">{client?.nombre}</td>
-                                      <td className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
-                                      <td className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
-                                        ${inv.saldo_pendiente.toLocaleString('es-CO')}
-                                      </td>
-                                      <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
-                                      <td className="p-3 text-center">
-                                        <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
-                                          inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
-                                          inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
-                                          'bg-brand-yellow/20 text-neutral-700 border-neutral-400'
-                                        }`}>
-                                          {inv.estado.toUpperCase()}
-                                        </span>
-                                      </td>
-                                      <td className="p-3 text-center">
-                                        <div className="flex items-center justify-center gap-1.5">
-                                          <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
-                                          <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
-                                        </div>
-                                      </td>
-                                    </tr>
+                                    <>
+                                      <tr key={inv.id} className="border-b border-neutral-200 hover:bg-neutral-50">
+                                        <td className="p-3 font-mono font-bold text-black">{inv.numero}</td>
+                                        <td className="p-3 font-semibold text-black">{client?.nombre}</td>
+                                        <td className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
+                                        <td className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
+                                          ${inv.saldo_pendiente.toLocaleString('es-CO')}
+                                        </td>
+                                        <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
+                                        <td className="p-3 text-center">
+                                          <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
+                                            inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
+                                            inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
+                                            'bg-brand-yellow/20 text-neutral-700 border-neutral-400'
+                                          }`}>
+                                            {inv.estado.toUpperCase()}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-center">
+                                          <div className="flex items-center justify-center gap-1.5">
+                                            {abonosInv.length > 0 && (
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[10px]" title="Ver abonos">
+                                                {expanded ? '▲' : `▼ ${abonosInv.length}`}
+                                              </button>
+                                            )}
+                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
+                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                      {expanded && (
+                                        <tr key={`${inv.id}-abonos`} className="bg-neutral-50 border-b border-neutral-200">
+                                          <td colSpan={7} className="px-6 py-2">
+                                            <div className="flex flex-col gap-1">
+                                              <span className="font-mono text-[9px] font-bold text-neutral-400 uppercase mb-1">Abonos / Pagos registrados</span>
+                                              {abonosInv.map(ab => (
+                                                <div key={ab.id} className="flex items-center gap-3 text-[10px] font-mono">
+                                                  <span className="text-neutral-500 w-24">{ab.fecha}</span>
+                                                  <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
+                                                  <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
+                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-0.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={10} /></button>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </>
                                   );
                                 })}
                               {invoices.filter(i => i.tipo === 'cxc' && (showAllCxC || i.saldo_pendiente > 0)).length === 0 && (
@@ -3906,41 +3933,67 @@ export default function AppHome() {
                                 .filter(i => i.tipo === 'cxp')
                                 .map((inv) => {
                                   const supp = suppliers.find(s => s.id === inv.proveedor_id);
+                                  const abonosInv = abonos.filter(a => a.factura_id === inv.id);
+                                  const expanded = expandedAbonosInvoiceId === inv.id;
                                   return (
-                                    <tr key={inv.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                      <td className="p-3 font-mono font-bold text-black">{inv.numero}</td>
-                                      <td className="p-3 font-semibold text-black">{supp?.nombre ?? '—'}</td>
-                                      <td className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
-                                      <td className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
-                                        ${inv.saldo_pendiente.toLocaleString('es-CO')}
-                                      </td>
-                                      <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
-                                      <td className="p-3 text-center">
-                                        <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
-                                          inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
-                                          inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
-                                          'bg-brand-yellow/20 text-neutral-700 border-neutral-400'
-                                        }`}>
-                                          {inv.estado.toUpperCase()}
-                                        </span>
-                                      </td>
-                                      <td className="p-3 text-center">
-                                        <div className="flex items-center justify-center gap-1.5">
-                                          {inv.saldo_pendiente > 0 && (
-                                            <button
-                                              type="button"
-                                              onClick={() => openCxpAbono({ id: inv.id, numero: inv.numero, total: inv.total, saldo: inv.saldo_pendiente })}
-                                              className="border-2 border-black bg-brand-blue text-white font-mono text-[10px] font-bold px-2 py-1 hover:opacity-90"
-                                              title="Registrar pago"
-                                            >
-                                              $ Pagar
-                                            </button>
-                                          )}
-                                          <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
-                                          <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
-                                        </div>
-                                      </td>
-                                    </tr>
+                                    <>
+                                      <tr key={inv.id} className="border-b border-neutral-200 hover:bg-neutral-50">
+                                        <td className="p-3 font-mono font-bold text-black">{inv.numero}</td>
+                                        <td className="p-3 font-semibold text-black">{supp?.nombre ?? '—'}</td>
+                                        <td className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
+                                        <td className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
+                                          ${inv.saldo_pendiente.toLocaleString('es-CO')}
+                                        </td>
+                                        <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
+                                        <td className="p-3 text-center">
+                                          <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
+                                            inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
+                                            inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
+                                            'bg-brand-yellow/20 text-neutral-700 border-neutral-400'
+                                          }`}>
+                                            {inv.estado.toUpperCase()}
+                                          </span>
+                                        </td>
+                                        <td className="p-3 text-center">
+                                          <div className="flex items-center justify-center gap-1.5">
+                                            {abonosInv.length > 0 && (
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[10px]" title="Ver pagos">
+                                                {expanded ? '▲' : `▼ ${abonosInv.length}`}
+                                              </button>
+                                            )}
+                                            {inv.saldo_pendiente > 0 && (
+                                              <button
+                                                type="button"
+                                                onClick={() => openCxpAbono({ id: inv.id, numero: inv.numero, total: inv.total, saldo: inv.saldo_pendiente })}
+                                                className="border-2 border-black bg-brand-blue text-white font-mono text-[10px] font-bold px-2 py-1 hover:opacity-90"
+                                                title="Registrar pago"
+                                              >
+                                                $ Pagar
+                                              </button>
+                                            )}
+                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
+                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
+                                          </div>
+                                        </td>
+                                      </tr>
+                                      {expanded && (
+                                        <tr key={`${inv.id}-abonos`} className="bg-neutral-50 border-b border-neutral-200">
+                                          <td colSpan={7} className="px-6 py-2">
+                                            <div className="flex flex-col gap-1">
+                                              <span className="font-mono text-[9px] font-bold text-neutral-400 uppercase mb-1">Pagos registrados</span>
+                                              {abonosInv.map(ab => (
+                                                <div key={ab.id} className="flex items-center gap-3 text-[10px] font-mono">
+                                                  <span className="text-neutral-500 w-24">{ab.fecha}</span>
+                                                  <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
+                                                  <span className="font-bold text-brand-red">-${ab.monto.toLocaleString('es-CO')}</span>
+                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-0.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar pago"><Trash2 size={10} /></button>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          </td>
+                                        </tr>
+                                      )}
+                                    </>
                                   );
                                 })}
                               {invoices.filter(i => i.tipo === 'cxp').length === 0 && (
@@ -6729,9 +6782,11 @@ export default function AppHome() {
                         <div className="flex flex-col gap-1 border border-black/10 p-2 bg-white">
                           <span className="font-mono text-[9px] font-bold text-neutral-400 uppercase">Abonos registrados</span>
                           {abonosCxc.map(ab => (
-                            <div key={ab.id} className="flex justify-between text-[10px] font-mono">
+                            <div key={ab.id} className="flex items-center justify-between text-[10px] font-mono gap-2">
                               <span className="text-neutral-600">{new Date(ab.fecha).toLocaleDateString('es-CO')}</span>
+                              <span className="flex-1 text-neutral-500 truncate">{ab.referencia || '—'}</span>
                               <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
+                              <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-0.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={10} /></button>
                             </div>
                           ))}
                         </div>
