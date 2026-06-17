@@ -403,9 +403,10 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
       // --- CxP: crear o actualizar según lo recibido ---
       let facturaCompraId = oc.factura_compra_id
       if (esRecepcion && oc.proveedor_id) {
-        const totalRecibido = itemsActuales.reduce(
-          (acc, i) => acc + Number(i.cantidad_recibida) * Number(i.precio_unitario), 0,
-        )
+        // oc.total ya incorpora totalManual si el usuario lo ingresó al crear la OC,
+        // o el Σ(precio × cantidad) de los ítems si no lo hizo. Usar oc.total
+        // garantiza que la CxP refleje el total real negociado, no los precios de catálogo.
+        const totalRecibido = Number(oc.total)
         const fechaVenc = body.data.fechaVencimientoCxP ?? (() => {
           const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10)
         })()
