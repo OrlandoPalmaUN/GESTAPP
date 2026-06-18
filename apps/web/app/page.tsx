@@ -5059,31 +5059,43 @@ export default function AppHome() {
                           </div>
                         )}
 
-                        {/* Navegación del mes + nuevo evento */}
+                        {/* Navegación + nuevo evento */}
+                        {(() => {
+                          // Vista de 4 días: ancla = calendarMonthCursor (reusamos el estado como "día ancla")
+                          const ancla = new Date(calendarMonthCursor);
+                          ancla.setHours(0, 0, 0, 0);
+                          const dias4 = [-1, 0, 1, 2].map(offset => {
+                            const d = new Date(ancla);
+                            d.setDate(ancla.getDate() + offset);
+                            return d;
+                          });
+                          const hoyStr = new Date().toISOString().slice(0, 10);
+                          const diasSemana = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+
+                          const labelVentana = `${dias4[0]!.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })} – ${dias4[3]!.toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}`;
+
+                          // claves de los 4 días para filtrar el listado
+                          const claves4 = new Set(dias4.map(d => d.toISOString().slice(0, 10)));
+
+                          return (<>
                         <div className="flex flex-wrap items-center justify-between gap-3 bg-white border-2 border-black p-3">
                           <div className="flex items-center gap-3">
                             <button
                               type="button"
-                              onClick={() => setCalendarMonthCursor(new Date(calendarMonthCursor.getFullYear(), calendarMonthCursor.getMonth() - 1, 1))}
+                              onClick={() => { const d = new Date(calendarMonthCursor); d.setDate(d.getDate() - 1); setCalendarMonthCursor(d); }}
                               className="neo-btn text-xs px-2 py-1"
-                            >
-                              ←
-                            </button>
-                            <span className="font-mono font-bold text-sm capitalize">{calendarGrid.label}</span>
+                            >←</button>
+                            <span className="font-mono font-bold text-sm">{labelVentana}</span>
                             <button
                               type="button"
-                              onClick={() => setCalendarMonthCursor(new Date(calendarMonthCursor.getFullYear(), calendarMonthCursor.getMonth() + 1, 1))}
+                              onClick={() => { const d = new Date(calendarMonthCursor); d.setDate(d.getDate() + 1); setCalendarMonthCursor(d); }}
                               className="neo-btn text-xs px-2 py-1"
-                            >
-                              →
-                            </button>
+                            >→</button>
                             <button
                               type="button"
                               onClick={() => setCalendarMonthCursor(new Date())}
                               className="neo-btn text-xs px-2 py-1"
-                            >
-                              Hoy
-                            </button>
+                            >Hoy</button>
                           </div>
                           <button
                             onClick={() => { resetEventForm(); setShowCreateEvent(true); }}
@@ -5094,31 +5106,29 @@ export default function AppHome() {
                           </button>
                         </div>
 
-                        {/* Cuadrícula del mes */}
+                        {/* Vista de 4 días */}
                         <div className="bg-white border-2 border-black">
-                          <div className="grid grid-cols-7 border-b-2 border-black">
-                            {['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'].map((d) => (
-                              <div key={d} className="font-mono text-[10px] font-bold text-center py-2 border-r border-black last:border-r-0 text-neutral-500">
-                                {d}
-                              </div>
-                            ))}
+                          <div className="grid grid-cols-4 border-b-2 border-black">
+                            {dias4.map((d) => {
+                              const key = d.toISOString().slice(0, 10);
+                              const esHoy = key === hoyStr;
+                              return (
+                                <div key={key} className={`font-mono text-[10px] font-bold text-center py-2 border-r border-black last:border-r-0 ${esHoy ? 'bg-brand-blue text-white' : 'text-neutral-500'}`}>
+                                  {diasSemana[d.getDay()]} {d.getDate()}/{d.getMonth() + 1}
+                                </div>
+                              );
+                            })}
                           </div>
-                          <div className="grid grid-cols-7">
-                            {calendarGrid.days.map(({ date, key, enMes }) => {
+                          <div className="grid grid-cols-4">
+                            {dias4.map((d) => {
+                              const key = d.toISOString().slice(0, 10);
+                              const esHoy = key === hoyStr;
                               const eventos = calendarGrid.eventosPorDia.get(key) ?? [];
-                              const esHoy = key === new Date().toISOString().slice(0, 10);
                               return (
                                 <div
                                   key={key}
-                                  className={`min-h-[110px] border-r border-b border-black last:border-r-0 p-1.5 flex flex-col gap-1 ${
-                                    enMes ? 'bg-white' : 'bg-neutral-50'
-                                  }`}
+                                  className={`min-h-[100px] border-r border-black last:border-r-0 p-1.5 flex flex-col gap-1 ${esHoy ? 'bg-blue-50' : 'bg-white'}`}
                                 >
-                                  <span className={`font-mono text-[10px] font-bold ${
-                                    esHoy ? 'bg-brand-blue text-white px-1.5 py-0.5 inline-block w-fit' : enMes ? 'text-black' : 'text-neutral-400'
-                                  }`}>
-                                    {date.getDate()}
-                                  </span>
                                   <div className="flex flex-col gap-1">
                                     {eventos.map((evento) => (
                                       <button
@@ -5138,6 +5148,9 @@ export default function AppHome() {
                                         <span className="truncate">{evento.titulo}</span>
                                       </button>
                                     ))}
+                                    {eventos.length === 0 && (
+                                      <span className="text-[9px] font-mono text-neutral-300 italic">—</span>
+                                    )}
                                   </div>
                                 </div>
                               );
@@ -5145,14 +5158,11 @@ export default function AppHome() {
                           </div>
                         </div>
 
-                        {/* Listado detallado del mes (con acción de eliminar) */}
+                        {/* Listado de los 4 días visibles */}
                         <div className="bg-white border-2 border-black p-3 flex flex-col gap-2">
-                          <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Eventos de este mes</h3>
+                          <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Eventos en la ventana</h3>
                           {calendarEvents
-                            .filter(ev => {
-                              const d = new Date(ev.fecha);
-                              return d.getFullYear() === calendarMonthCursor.getFullYear() && d.getMonth() === calendarMonthCursor.getMonth();
-                            })
+                            .filter(ev => claves4.has(new Date(ev.fecha).toISOString().slice(0, 10)))
                             .map((evento) => (
                               <div key={evento.id} className="flex items-center justify-between gap-3 border-b border-neutral-200 last:border-b-0 py-2 text-xs">
                                 <div className="flex items-center gap-2 min-w-0">
@@ -5206,13 +5216,12 @@ export default function AppHome() {
                                 </div>
                               </div>
                             ))}
-                          {calendarEvents.filter(ev => {
-                            const d = new Date(ev.fecha);
-                            return d.getFullYear() === calendarMonthCursor.getFullYear() && d.getMonth() === calendarMonthCursor.getMonth();
-                          }).length === 0 && (
-                            <p className="text-xs text-neutral-500 font-mono py-2">No hay notas, recordatorios ni posts planeados este mes.</p>
+                          {calendarEvents.filter(ev => claves4.has(new Date(ev.fecha).toISOString().slice(0, 10))).length === 0 && (
+                            <p className="text-xs text-neutral-500 font-mono py-2">Sin eventos en estos 4 días.</p>
                           )}
                         </div>
+                          </>);
+                        })()}
                       </>
                     )}
 
