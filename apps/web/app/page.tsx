@@ -3388,38 +3388,19 @@ export default function AppHome() {
                         return mesNombres[v] ?? `Mes ${v}`;
                       };
 
-                      const estadoTabs: { val: string; label: string; activeCls: string }[] = [
-                        { val: 'all',            label: 'Todos',      activeCls: 'bg-black text-white border-black' },
-                        { val: 'borrador',       label: 'Borrador',   activeCls: 'bg-neutral-200 text-neutral-700 border-neutral-400' },
-                        { val: 'confirmado',     label: 'Confirmado', activeCls: 'bg-blue-200 text-blue-800 border-blue-400' },
-                        { val: 'en_preparacion', label: 'En Prep.',   activeCls: 'bg-yellow-200 text-yellow-800 border-yellow-400' },
-                        { val: 'despachado',     label: 'Despachado', activeCls: 'bg-blue-500 text-white border-blue-600' },
-                        { val: 'entregado',      label: 'Entregado',  activeCls: 'bg-green-200 text-green-800 border-green-400' },
-                        { val: 'cancelado',      label: 'Cancelado',  activeCls: 'bg-red-200 text-red-800 border-red-400' },
+                      // inactiveCls = color siempre visible (más claro), activeCls = color pleno + borde negro
+                      const estadoTabs: { val: string; label: string; inactiveCls: string; activeCls: string }[] = [
+                        { val: 'all',            label: 'Todos',      inactiveCls: 'bg-neutral-100 text-neutral-500 border-neutral-300',         activeCls: 'bg-black text-white border-black' },
+                        { val: 'borrador',       label: 'Borrador',   inactiveCls: 'bg-neutral-100 text-neutral-500 border-neutral-300',         activeCls: 'bg-neutral-300 text-neutral-800 border-black' },
+                        { val: 'confirmado',     label: 'Confirmado', inactiveCls: 'bg-blue-50 text-blue-400 border-blue-200',                  activeCls: 'bg-blue-200 text-blue-900 border-black' },
+                        { val: 'en_preparacion', label: 'En Prep.',   inactiveCls: 'bg-yellow-50 text-yellow-500 border-yellow-200',            activeCls: 'bg-yellow-200 text-yellow-900 border-black' },
+                        { val: 'despachado',     label: 'Despachado', inactiveCls: 'bg-blue-100 text-blue-400 border-blue-200',                 activeCls: 'bg-blue-500 text-white border-black' },
+                        { val: 'entregado',      label: 'Entregado',  inactiveCls: 'bg-green-50 text-green-500 border-green-200',               activeCls: 'bg-green-200 text-green-900 border-black' },
+                        { val: 'cancelado',      label: 'Cancelado',  inactiveCls: 'bg-red-50 text-red-400 border-red-200',                    activeCls: 'bg-red-200 text-red-900 border-black' },
                       ];
 
                       return (
                         <div className="flex flex-col gap-2">
-
-                          {/* Tabs de estado — recuadro propio */}
-                          <div className="bg-white border-2 border-black p-2.5 flex flex-wrap gap-1.5 items-center">
-                            {estadoTabs.map(({ val, label, activeCls }) => {
-                              const count = val === 'all' ? orders.length : orders.filter(o => o.estado === val).length;
-                              const isActive = orderStatusFilter === val;
-                              return (
-                                <button
-                                  key={val}
-                                  type="button"
-                                  onClick={() => setOrderStatusFilter(val)}
-                                  className={`font-mono text-[9px] font-bold px-2.5 py-1 border-2 transition-colors ${
-                                    isActive ? activeCls : 'bg-white border-neutral-300 text-neutral-400 hover:border-black hover:text-neutral-700'
-                                  }`}
-                                >
-                                  {label} <span className="opacity-60">({count})</span>
-                                </button>
-                              );
-                            })}
-                          </div>
 
                           {/* Agrupación + slider + orden + vista + crear */}
                           <div className="bg-white border-2 border-black p-3">
@@ -3540,6 +3521,27 @@ export default function AppHome() {
                             </button>
                           </div>
                           </div>{/* cierre recuadro controles */}
+
+                          {/* Tabs de estado — recuadro propio, debajo */}
+                          <div className="bg-white border-2 border-black p-2.5 flex flex-wrap gap-1.5 items-center">
+                            {estadoTabs.map(({ val, label, inactiveCls, activeCls }) => {
+                              const count = val === 'all' ? orders.length : orders.filter(o => o.estado === val).length;
+                              const isActive = orderStatusFilter === val;
+                              return (
+                                <button
+                                  key={val}
+                                  type="button"
+                                  onClick={() => setOrderStatusFilter(val)}
+                                  className={`font-mono text-[9px] font-bold px-2.5 py-1 border-2 transition-colors ${
+                                    isActive ? activeCls : inactiveCls
+                                  }`}
+                                >
+                                  {label} <span className="opacity-70">({count})</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
                         </div>
                       );
                     })()}
