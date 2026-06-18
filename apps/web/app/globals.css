@@ -189,6 +189,39 @@
   to   { width: 100%; }
 }
 
+/* Dual-range slider para filtro de pedidos */
+.range-dual {
+  position: absolute;
+  width: 100%;
+  height: 4px;
+  background: transparent;
+  pointer-events: none;
+  -webkit-appearance: none;
+  appearance: none;
+  top: 50%;
+  transform: translateY(-50%);
+  outline: none;
+}
+.range-dual::-webkit-slider-thumb {
+  pointer-events: all;
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  background: #000;
+  border: 2px solid #000;
+  cursor: pointer;
+}
+.range-dual::-moz-range-thumb {
+  pointer-events: all;
+  width: 14px;
+  height: 14px;
+  background: #000;
+  border: 2px solid #000;
+  cursor: pointer;
+  border-radius: 0;
+}
+
 /* Custom grid mesh pattern similar to blueprint design */
 .blueprint-grid {
   background-size: 20px 20px;

@@ -377,6 +377,11 @@ export default function AppHome() {
   const [pedidosVista, setPedidosVista] = useState<'lista' | 'kanban'>('lista');
   const [pedidoExpandido, setPedidoExpandido] = useState<string | null>(null);
   const [pedidosOrden, setPedidosOrden] = useState<'fecha_desc' | 'fecha_asc' | 'total_desc' | 'total_asc' | 'estado' | 'cliente'>('fecha_desc');
+  const [pedidosAgrupacion, setPedidosAgrupacion] = useState<'dia' | 'semana' | 'mes'>('dia');
+  // Para dia: rangoA = días atrás inicio (más viejo), rangoB = días atrás fin (0 = hoy)
+  // Para semana: número ISO de semana. Para mes: número de mes 1-12.
+  const [pedidosRangoA, setPedidosRangoA] = useState<number>(30);
+  const [pedidosRangoB, setPedidosRangoB] = useState<number>(0);
 
   // --- Pedidos a Proveedores (órdenes de compra) ---
   const [compras, setCompras] = useState<PedidoProveedor[]>([]);
@@ -3338,61 +3343,189 @@ export default function AppHome() {
                     })()}
 
                     {/* Filtros e inserción */}
-                    <div className="flex flex-col sm:flex-row gap-3 items-center justify-between bg-white border-2 border-black p-3">
+                    {(() => {
+                      // Helpers para el slider de rango
+                      const now = new Date();
+                      const isoWeekNum = (d: Date) => {
+                        const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                        tmp.setUTCDate(tmp.getUTCDate() + 4 - (tmp.getUTCDay() || 7));
+                        const ys = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+                        return Math.ceil(((tmp.getTime() - ys.getTime()) / 86400000 + 1) / 7);
+                      };
+                      const currentWeek = isoWeekNum(now);
+                      const currentMonth = now.getMonth() + 1;
 
-                      <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
-                        <select
-                          value={orderStatusFilter}
-                          onChange={(e) => setOrderStatusFilter(e.target.value)}
-                          className="neo-input text-xs font-mono py-2 w-full sm:w-52"
-                        >
-                          <option value="all">Ver Todos los Estados</option>
-                          <option value="borrador">Borrador</option>
-                          <option value="confirmado">Confirmado (Stock Reservado)</option>
-                          <option value="en_preparacion">En Preparación</option>
-                          <option value="despachado">Despachado</option>
-                          <option value="entregado">Entregado (Terminal)</option>
-                          <option value="cancelado">Cancelado (Reserva Liberada)</option>
-                        </select>
+                      // Límites del slider según agrupación
+                      const sliderMin = pedidosAgrupacion === 'dia' ? 0
+                        : pedidosAgrupacion === 'semana' ? 1
+                        : 1;
+                      const sliderMax = pedidosAgrupacion === 'dia' ? 90
+                        : pedidosAgrupacion === 'semana' ? 52
+                        : 12;
 
-                        {/* Ordenar */}
-                        <select
-                          value={pedidosOrden}
-                          onChange={(e) => setPedidosOrden(e.target.value as typeof pedidosOrden)}
-                          className="neo-input text-xs font-mono py-2 w-full sm:w-44"
-                        >
-                          <option value="fecha_desc">↓ Más reciente</option>
-                          <option value="fecha_asc">↑ Más antiguo</option>
-                          <option value="total_desc">↓ Mayor total</option>
-                          <option value="total_asc">↑ Menor total</option>
-                          <option value="estado">Por estado</option>
-                          <option value="cliente">Cliente A→Z</option>
-                        </select>
+                      // Labels de los handles
+                      const labelRango = (v: number) => {
+                        if (pedidosAgrupacion === 'dia') {
+                          return v === 0 ? 'Hoy' : v === 1 ? 'Ayer' : `Hace ${v} días`;
+                        }
+                        if (pedidosAgrupacion === 'semana') return `Sem ${v}`;
+                        const mesNombres = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+                        return mesNombres[v] ?? `Mes ${v}`;
+                      };
 
-                        {/* Toggle Vista Lista / Kanban */}
-                        <div className="flex border-2 border-black overflow-hidden shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => setPedidosVista('lista')}
-                            className={`font-mono text-[10px] font-bold px-3 py-1.5 ${pedidosVista === 'lista' ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-50'}`}
-                          >Lista</button>
-                          <button
-                            type="button"
-                            onClick={() => setPedidosVista('kanban')}
-                            className={`font-mono text-[10px] font-bold px-3 py-1.5 border-l-2 border-black ${pedidosVista === 'kanban' ? 'bg-black text-white' : 'bg-white text-black hover:bg-neutral-50'}`}
-                          >Kanban</button>
+                      const estadoTabs: { val: string; label: string; color: string }[] = [
+                        { val: 'all', label: 'Todos', color: 'bg-black text-white' },
+                        { val: 'borrador', label: 'Borrador', color: 'bg-neutral-200 text-neutral-700' },
+                        { val: 'confirmado', label: 'Confirmado', color: 'bg-blue-200 text-blue-800' },
+                        { val: 'en_preparacion', label: 'En Prep.', color: 'bg-yellow-200 text-yellow-800' },
+                        { val: 'despachado', label: 'Despachado', color: 'bg-blue-500 text-white' },
+                        { val: 'entregado', label: 'Entregado', color: 'bg-green-200 text-green-800' },
+                        { val: 'cancelado', label: 'Cancelado', color: 'bg-red-200 text-red-800' },
+                      ];
+
+                      return (
+                        <div className="flex flex-col gap-2 bg-white border-2 border-black p-3">
+
+                          {/* Fila 1: Tabs de estado */}
+                          <div className="flex flex-wrap gap-1.5 items-center">
+                            {estadoTabs.map(({ val, label, color }) => {
+                              const count = val === 'all' ? orders.length : orders.filter(o => o.estado === val).length;
+                              const isActive = orderStatusFilter === val;
+                              return (
+                                <button
+                                  key={val}
+                                  type="button"
+                                  onClick={() => setOrderStatusFilter(val)}
+                                  className={`font-mono text-[9px] font-bold px-2 py-0.5 border border-black transition-colors ${
+                                    isActive ? color : 'bg-white text-neutral-500 hover:bg-neutral-100'
+                                  }`}
+                                >
+                                  {label} <span className="opacity-70">({count})</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+
+                          {/* Fila 2: Agrupación + slider + orden + vista + crear */}
+                          <div className="flex flex-wrap gap-3 items-end justify-between">
+                            <div className="flex flex-wrap gap-3 items-end">
+
+                              {/* Agrupación */}
+                              <div className="flex flex-col gap-1">
+                                <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Agrupar por</span>
+                                <div className="flex border border-black overflow-hidden">
+                                  {(['dia', 'semana', 'mes'] as const).map((u) => (
+                                    <button
+                                      key={u}
+                                      type="button"
+                                      onClick={() => {
+                                        setPedidosAgrupacion(u);
+                                        if (u === 'dia') { setPedidosRangoA(30); setPedidosRangoB(0); }
+                                        else if (u === 'semana') { setPedidosRangoA(Math.max(1, currentWeek - 4)); setPedidosRangoB(currentWeek); }
+                                        else { setPedidosRangoA(1); setPedidosRangoB(currentMonth); }
+                                      }}
+                                      className={`font-mono text-[9px] font-bold px-2.5 py-1 border-r border-black last:border-r-0 ${pedidosAgrupacion === u ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                                    >
+                                      {u === 'dia' ? 'DÍA' : u === 'semana' ? 'SEMANA' : 'MES'}
+                                    </button>
+                                  ))}
+                                </div>
+                              </div>
+
+                              {/* Dual-range slider */}
+                              <div className="flex flex-col gap-1 min-w-[180px]">
+                                <div className="flex justify-between">
+                                  <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Rango</span>
+                                  <span className="font-mono text-[9px] font-bold text-black">
+                                    {labelRango(pedidosRangoA)} → {labelRango(pedidosRangoB)}
+                                  </span>
+                                </div>
+                                <div className="relative h-5 w-44">
+                                  {/* Track base */}
+                                  <div className="absolute top-1/2 -translate-y-1/2 w-full h-[3px] bg-neutral-200 border border-black" />
+                                  {/* Track activo */}
+                                  <div
+                                    className="absolute top-1/2 -translate-y-1/2 h-[3px] bg-black"
+                                    style={{
+                                      left: `${((pedidosAgrupacion === 'dia' ? (sliderMax - pedidosRangoA) : (pedidosRangoA - sliderMin)) / (sliderMax - sliderMin)) * 100}%`,
+                                      right: `${((pedidosAgrupacion === 'dia' ? pedidosRangoB : (sliderMax - pedidosRangoB)) / (sliderMax - sliderMin)) * 100}%`,
+                                    }}
+                                  />
+                                  <input
+                                    type="range" min={sliderMin} max={sliderMax}
+                                    value={pedidosAgrupacion === 'dia' ? sliderMax - pedidosRangoA : pedidosRangoA}
+                                    onChange={e => {
+                                      const v = Number(e.target.value);
+                                      if (pedidosAgrupacion === 'dia') {
+                                        const newA = sliderMax - v;
+                                        if (newA >= pedidosRangoB) setPedidosRangoA(newA);
+                                      } else {
+                                        if (v <= pedidosRangoB) setPedidosRangoA(v);
+                                      }
+                                    }}
+                                    className="range-dual"
+                                    style={{ zIndex: 3 }}
+                                  />
+                                  <input
+                                    type="range" min={sliderMin} max={sliderMax}
+                                    value={pedidosAgrupacion === 'dia' ? sliderMax - pedidosRangoB : pedidosRangoB}
+                                    onChange={e => {
+                                      const v = Number(e.target.value);
+                                      if (pedidosAgrupacion === 'dia') {
+                                        const newB = sliderMax - v;
+                                        if (newB <= pedidosRangoA) setPedidosRangoB(newB);
+                                      } else {
+                                        if (v >= pedidosRangoA) setPedidosRangoB(v);
+                                      }
+                                    }}
+                                    className="range-dual"
+                                    style={{ zIndex: 4 }}
+                                  />
+                                </div>
+                              </div>
+
+                              {/* Ordenar */}
+                              <div className="flex flex-col gap-1">
+                                <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Ordenar</span>
+                                <select
+                                  value={pedidosOrden}
+                                  onChange={(e) => setPedidosOrden(e.target.value as typeof pedidosOrden)}
+                                  className="neo-input text-xs font-mono py-1 w-36"
+                                >
+                                  <option value="fecha_desc">↓ Más reciente</option>
+                                  <option value="fecha_asc">↑ Más antiguo</option>
+                                  <option value="total_desc">↓ Mayor total</option>
+                                  <option value="total_asc">↑ Menor total</option>
+                                  <option value="estado">Por estado</option>
+                                  <option value="cliente">Cliente A→Z</option>
+                                </select>
+                              </div>
+
+                              {/* Toggle Lista / Kanban */}
+                              <div className="flex flex-col gap-1">
+                                <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Vista</span>
+                                <div className="flex border-2 border-black overflow-hidden">
+                                  <button type="button" onClick={() => setPedidosVista('lista')}
+                                    className={`font-mono text-[10px] font-bold px-3 py-1 ${pedidosVista === 'lista' ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                                  >Lista</button>
+                                  <button type="button" onClick={() => setPedidosVista('kanban')}
+                                    className={`font-mono text-[10px] font-bold px-3 py-1 border-l-2 border-black ${pedidosVista === 'kanban' ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                                  >Kanban</button>
+                                </div>
+                              </div>
+                            </div>
+
+                            <button
+                              onClick={() => setShowCreateOrder(true)}
+                              className="neo-btn-primary text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
+                            >
+                              <Plus size={14} />
+                              <span>Crear Pedido</span>
+                            </button>
+                          </div>
                         </div>
-                      </div>
-
-                      <button
-                        onClick={() => setShowCreateOrder(true)}
-                        className="neo-btn-primary text-xs py-2 w-full sm:w-auto flex items-center justify-center gap-1.5 shrink-0"
-                      >
-                        <Plus size={14} />
-                        <span>Crear Pedido</span>
-                      </button>
-
-                    </div>
+                      );
+                    })()}
 
                     {/* Vista Lista de Pedidos */}
                     {pedidosVista === 'lista' && (() => {
@@ -3404,12 +3537,36 @@ export default function AppHome() {
                         entregado: 'bg-green-50 border-green-300',
                         cancelado: 'bg-red-50 border-red-300',
                       };
-
                       const estadoOrdenFlujo: Record<string, number> = {
                         borrador: 0, confirmado: 1, en_preparacion: 2, despachado: 3, entregado: 4, cancelado: 5,
                       };
+
+                      // Helper ISO week (duplicado local para el closure de renderizado)
+                      const isoWk = (d: Date) => {
+                        const t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+                        t.setUTCDate(t.getUTCDate() + 4 - (t.getUTCDay() || 7));
+                        const ys = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+                        return Math.ceil(((t.getTime() - ys.getTime()) / 86400000 + 1) / 7);
+                      };
+                      const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+
+                      // Filtrar por estado Y por rango temporal
                       const pedidosFiltrados = orders
-                        .filter(ord => orderStatusFilter === 'all' || ord.estado === orderStatusFilter)
+                        .filter(ord => {
+                          if (orderStatusFilter !== 'all' && ord.estado !== orderStatusFilter) return false;
+                          const d = new Date(ord.fecha); d.setHours(0, 0, 0, 0);
+                          if (pedidosAgrupacion === 'dia') {
+                            const daysAgo = Math.round((hoy.getTime() - d.getTime()) / 86400000);
+                            return daysAgo >= pedidosRangoB && daysAgo <= pedidosRangoA;
+                          }
+                          if (pedidosAgrupacion === 'semana') {
+                            const w = isoWk(d);
+                            return w >= pedidosRangoA && w <= pedidosRangoB;
+                          }
+                          // mes
+                          const m = d.getMonth() + 1;
+                          return m >= pedidosRangoA && m <= pedidosRangoB;
+                        })
                         .sort((a, b) => {
                           switch (pedidosOrden) {
                             case 'fecha_asc': return new Date(a.fecha).getTime() - new Date(b.fecha).getTime();
@@ -3421,27 +3578,47 @@ export default function AppHome() {
                               const cb = customers.find(c => c.id === b.cliente_id)?.nombre ?? '';
                               return ca.localeCompare(cb, 'es');
                             }
-                            default: return new Date(b.fecha).getTime() - new Date(a.fecha).getTime(); // fecha_desc
+                            default: return new Date(b.fecha).getTime() - new Date(a.fecha).getTime();
                           }
                         });
 
-                      // Agrupar por fecha solo cuando el orden es cronológico
+                      // Agrupar según la unidad seleccionada (siempre, cuando el orden es cronológico)
                       const agruparPorFecha = pedidosOrden === 'fecha_desc' || pedidosOrden === 'fecha_asc';
-                      const porFecha = new Map<string, typeof pedidosFiltrados>();
+                      const porGrupo = new Map<string, typeof pedidosFiltrados>();
                       if (agruparPorFecha) {
                         for (const ord of pedidosFiltrados) {
-                          const key = ord.fecha.slice(0, 10);
-                          const lista = porFecha.get(key) ?? [];
+                          const d = new Date(ord.fecha);
+                          let key: string;
+                          if (pedidosAgrupacion === 'dia') {
+                            key = ord.fecha.slice(0, 10);
+                          } else if (pedidosAgrupacion === 'semana') {
+                            key = `sem-${isoWk(d)}-${d.getFullYear()}`;
+                          } else {
+                            key = `mes-${d.getMonth() + 1}-${d.getFullYear()}`;
+                          }
+                          const lista = porGrupo.get(key) ?? [];
                           lista.push(ord);
-                          porFecha.set(key, lista);
+                          porGrupo.set(key, lista);
                         }
                       }
-                      const fechasOrdenadas = agruparPorFecha
-                        ? [...porFecha.keys()].sort((a, b) => pedidosOrden === 'fecha_asc' ? a.localeCompare(b) : b.localeCompare(a))
-                        : [];
-                      // Cuando no agrupamos por fecha usamos un único bucket virtual
-                      const gruposFinal = agruparPorFecha ? porFecha : new Map([['__all__', pedidosFiltrados]]);
-                      const llavesFinal = agruparPorFecha ? fechasOrdenadas : ['__all__'];
+                      const llavesFinal = agruparPorFecha
+                        ? [...porGrupo.keys()].sort((a, b) => pedidosOrden === 'fecha_asc' ? a.localeCompare(b) : b.localeCompare(a))
+                        : ['__all__'];
+                      const gruposFinal = agruparPorFecha ? porGrupo : new Map([['__all__', pedidosFiltrados]]);
+
+                      const labelGrupo = (key: string) => {
+                        if (key === '__all__') return '';
+                        if (pedidosAgrupacion === 'dia') {
+                          return new Date(key + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' });
+                        }
+                        if (pedidosAgrupacion === 'semana') {
+                          const [, w, y] = key.split('-');
+                          return `Semana ${w} · ${y}`;
+                        }
+                        const [, m, y] = key.split('-');
+                        const mn = ['', 'Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'];
+                        return `${mn[Number(m)] ?? m} ${y}`;
+                      };
 
                       if (pedidosFiltrados.length === 0) return (
                         <div className="neo-card bg-white text-center py-12 text-xs text-neutral-400 font-mono italic">
@@ -3455,10 +3632,10 @@ export default function AppHome() {
                         <div className="flex flex-col gap-1">
                           {llavesFinal.map(llave => (
                             <div key={llave}>
-                              {/* Separador de fecha (solo en modo cronológico) */}
-                              {agruparPorFecha && (
+                              {/* Separador de grupo */}
+                              {agruparPorFecha && llave !== '__all__' && (
                                 <div className="font-mono text-[10px] font-bold text-neutral-400 uppercase tracking-widest px-2 py-1.5 border-b border-neutral-200 bg-neutral-50">
-                                  {new Date(llave + 'T12:00:00').toLocaleDateString('es-CO', { weekday: 'long', day: '2-digit', month: 'long', year: 'numeric' })}
+                                  {labelGrupo(llave)}
                                 </div>
                               )}
                               {(gruposFinal.get(llave) ?? []).map((ord) => {
@@ -3501,8 +3678,6 @@ export default function AppHome() {
                                           onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
                                           className="neo-btn px-2 py-0.5 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white"
                                         >Gestionar</button>
-                                        <button type="button" onClick={() => openEditOrder(ord)} className="neo-btn p-1.5 hover:bg-neutral-100"><Pencil size={12} /></button>
-                                        <button type="button" onClick={() => void handleDeleteOrder(ord)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"><Trash2 size={12} /></button>
                                       </div>
                                     </div>
 
@@ -3566,6 +3741,24 @@ export default function AppHome() {
                                               </button>
                                             ))}
                                           </div>
+                                        </div>
+
+                                        {/* Acciones de edición / eliminación */}
+                                        <div className="border-t border-dashed border-neutral-300 pt-3 flex gap-2">
+                                          <button
+                                            type="button"
+                                            onClick={() => { openEditOrder(ord); setPedidoExpandido(null); }}
+                                            className="neo-btn flex items-center gap-1.5 px-3 py-1.5 text-[9px] font-mono font-bold hover:bg-neutral-100"
+                                          >
+                                            <Pencil size={11} /> Editar pedido
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => void handleDeleteOrder(ord)}
+                                            className="neo-btn flex items-center gap-1.5 px-3 py-1.5 text-[9px] font-mono font-bold hover:bg-red-50 hover:text-brand-red"
+                                          >
+                                            <Trash2 size={11} /> Eliminar
+                                          </button>
                                         </div>
                                       </div>
                                     )}
@@ -7004,6 +7197,24 @@ export default function AppHome() {
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Footer: editar y eliminar */}
+                <div className="p-4 border-t-2 border-black flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => { openEditOrder(ord); setOrderManager(null); }}
+                    className="neo-btn flex items-center gap-1.5 px-4 py-2 text-xs font-mono font-bold hover:bg-neutral-100"
+                  >
+                    <Pencil size={13} /> Editar pedido
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { void handleDeleteOrder(ord); setOrderManager(null); }}
+                    className="neo-btn flex items-center gap-1.5 px-4 py-2 text-xs font-mono font-bold hover:bg-red-50 hover:text-brand-red"
+                  >
+                    <Trash2 size={13} /> Eliminar pedido
+                  </button>
                 </div>
               </div>
             </div>
