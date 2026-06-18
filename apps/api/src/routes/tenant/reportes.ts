@@ -92,11 +92,23 @@ function rangoSemana(año: number, semana: number): RangoFechas {
 }
 
 function parseQuery(q: Record<string, string | string[] | undefined>): RangoFechas {
+  // Rango directo — usado para semanas dentro de un mes
+  if (q.desde && q.hasta) {
+    const desde = String(q.desde)
+    const hasta = String(q.hasta)   // exclusive (día siguiente al último)
+    const label = String(q.label ?? `${desde} – ${hasta}`)
+    // Período anterior: misma duración, justo antes
+    const durMs = new Date(hasta).getTime() - new Date(desde).getTime()
+    const desdePrev = new Date(new Date(desde).getTime() - durMs).toISOString().slice(0, 10)
+    const hastaPrev = desde
+    return { desde, hasta, label, desdePrev, hastaPrev }
+  }
+
   const tipo = String(q.tipo ?? 'mes')
   const now = new Date()
   const año = parseInt(String(q.año ?? now.getFullYear()), 10)
 
-  if (tipo === 'semana') {
+  if (tipo === 'semana' || tipo === 'semanas') {
     const semana = parseInt(String(q.semana ?? isoWeek(now)), 10)
     return rangoSemana(año, semana)
   }
