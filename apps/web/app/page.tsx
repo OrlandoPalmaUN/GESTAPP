@@ -3363,32 +3363,47 @@ export default function AppHome() {
                         : pedidosAgrupacion === 'semana' ? 52
                         : 12;
 
+                      // Lunes de la semana ISO N del año actual
+                      const mondayOfWeek = (week: number) => {
+                        const jan4 = new Date(Date.UTC(now.getFullYear(), 0, 4));
+                        const day4 = jan4.getUTCDay() || 7;
+                        const d = new Date(jan4);
+                        d.setUTCDate(jan4.getUTCDate() - day4 + 1 + (week - 1) * 7);
+                        return d;
+                      };
+                      const fmtDia = (d: Date) =>
+                        `${d.getUTCDate()}/${d.getUTCMonth() + 1}`;
+
                       // Labels de los handles
                       const labelRango = (v: number) => {
                         if (pedidosAgrupacion === 'dia') {
-                          return v === 0 ? 'Hoy' : v === 1 ? 'Ayer' : `Hace ${v} días`;
+                          return v === 0 ? 'Hoy' : v === 1 ? 'Ayer' : `Hace ${v}d`;
                         }
-                        if (pedidosAgrupacion === 'semana') return `Sem ${v}`;
+                        if (pedidosAgrupacion === 'semana') {
+                          const lun = mondayOfWeek(v);
+                          const dom = new Date(lun); dom.setUTCDate(lun.getUTCDate() + 6);
+                          return `${fmtDia(lun)}–${fmtDia(dom)}`;
+                        }
                         const mesNombres = ['', 'Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
                         return mesNombres[v] ?? `Mes ${v}`;
                       };
 
-                      const estadoTabs: { val: string; label: string; color: string }[] = [
-                        { val: 'all', label: 'Todos', color: 'bg-black text-white' },
-                        { val: 'borrador', label: 'Borrador', color: 'bg-neutral-200 text-neutral-700' },
-                        { val: 'confirmado', label: 'Confirmado', color: 'bg-blue-200 text-blue-800' },
-                        { val: 'en_preparacion', label: 'En Prep.', color: 'bg-yellow-200 text-yellow-800' },
-                        { val: 'despachado', label: 'Despachado', color: 'bg-blue-500 text-white' },
-                        { val: 'entregado', label: 'Entregado', color: 'bg-green-200 text-green-800' },
-                        { val: 'cancelado', label: 'Cancelado', color: 'bg-red-200 text-red-800' },
+                      const estadoTabs: { val: string; label: string; activeCls: string }[] = [
+                        { val: 'all',            label: 'Todos',      activeCls: 'bg-black text-white border-black' },
+                        { val: 'borrador',       label: 'Borrador',   activeCls: 'bg-neutral-200 text-neutral-700 border-neutral-400' },
+                        { val: 'confirmado',     label: 'Confirmado', activeCls: 'bg-blue-200 text-blue-800 border-blue-400' },
+                        { val: 'en_preparacion', label: 'En Prep.',   activeCls: 'bg-yellow-200 text-yellow-800 border-yellow-400' },
+                        { val: 'despachado',     label: 'Despachado', activeCls: 'bg-blue-500 text-white border-blue-600' },
+                        { val: 'entregado',      label: 'Entregado',  activeCls: 'bg-green-200 text-green-800 border-green-400' },
+                        { val: 'cancelado',      label: 'Cancelado',  activeCls: 'bg-red-200 text-red-800 border-red-400' },
                       ];
 
                       return (
-                        <div className="flex flex-col gap-2 bg-white border-2 border-black p-3">
+                        <div className="flex flex-col gap-2">
 
-                          {/* Fila 1: Tabs de estado */}
-                          <div className="flex flex-wrap gap-1.5 items-center">
-                            {estadoTabs.map(({ val, label, color }) => {
+                          {/* Tabs de estado — recuadro propio */}
+                          <div className="bg-white border-2 border-black p-2.5 flex flex-wrap gap-1.5 items-center">
+                            {estadoTabs.map(({ val, label, activeCls }) => {
                               const count = val === 'all' ? orders.length : orders.filter(o => o.estado === val).length;
                               const isActive = orderStatusFilter === val;
                               return (
@@ -3396,17 +3411,18 @@ export default function AppHome() {
                                   key={val}
                                   type="button"
                                   onClick={() => setOrderStatusFilter(val)}
-                                  className={`font-mono text-[9px] font-bold px-2 py-0.5 border border-black transition-colors ${
-                                    isActive ? color : 'bg-white text-neutral-500 hover:bg-neutral-100'
+                                  className={`font-mono text-[9px] font-bold px-2.5 py-1 border-2 transition-colors ${
+                                    isActive ? activeCls : 'bg-white border-neutral-300 text-neutral-400 hover:border-black hover:text-neutral-700'
                                   }`}
                                 >
-                                  {label} <span className="opacity-70">({count})</span>
+                                  {label} <span className="opacity-60">({count})</span>
                                 </button>
                               );
                             })}
                           </div>
 
-                          {/* Fila 2: Agrupación + slider + orden + vista + crear */}
+                          {/* Agrupación + slider + orden + vista + crear */}
+                          <div className="bg-white border-2 border-black p-3">
                           <div className="flex flex-wrap gap-3 items-end justify-between">
                             <div className="flex flex-wrap gap-3 items-end">
 
@@ -3523,6 +3539,7 @@ export default function AppHome() {
                               <span>Crear Pedido</span>
                             </button>
                           </div>
+                          </div>{/* cierre recuadro controles */}
                         </div>
                       );
                     })()}
@@ -3641,42 +3658,53 @@ export default function AppHome() {
                               {(gruposFinal.get(llave) ?? []).map((ord) => {
                                 const client = customers.find(c => c.id === ord.cliente_id);
                                 const isExpanded = pedidoExpandido === ord.id;
+                                const cxcRow = invoices.find(i => i.tipo === 'cxc' && i.pedido_id === ord.id);
 
                                 return (
                                   <div key={ord.id} className={`border ${estadoClases[ord.estado] ?? 'bg-white border-neutral-300'} mb-1`}>
-                                    {/* Row compacto */}
-                                    <div className="flex flex-wrap items-center justify-between gap-2 px-3 py-2 text-xs">
-                                      <div className="flex items-center gap-2 min-w-0">
-                                        <span className="font-bold text-black truncate">{getOrderDisplayName(ord)}</span>
-                                        <span className="font-mono text-[9px] text-neutral-400 shrink-0">{ord.numero}</span>
-                                        <span className={`inline-block border border-black text-[9px] font-mono font-bold px-1.5 py-0.5 shrink-0 ${
+                                    {/* Row — grid de 4 columnas fijas: [nombre+numero] [estado] [total+saldo] [acciones] */}
+                                    <div className="grid items-center gap-x-3 px-3 py-2 text-xs"
+                                      style={{ gridTemplateColumns: '1fr 7rem 8rem auto' }}>
+
+                                      {/* Col 1: nombre + número */}
+                                      <div className="flex flex-col min-w-0">
+                                        <span className="font-bold text-black truncate leading-tight">{getOrderDisplayName(ord)}</span>
+                                        <span className="font-mono text-[9px] text-neutral-400 leading-tight">{ord.numero}</span>
+                                      </div>
+
+                                      {/* Col 2: estado (ancho fijo, siempre alineado) */}
+                                      <div>
+                                        <span className={`inline-block border border-black text-[9px] font-mono font-bold px-1.5 py-0.5 w-full text-center ${
                                           ord.estado === 'borrador' ? 'bg-neutral-200 text-neutral-700' :
                                           ord.estado === 'confirmado' ? 'bg-blue-200 text-blue-800' :
                                           ord.estado === 'en_preparacion' ? 'bg-yellow-200 text-yellow-800' :
                                           ord.estado === 'despachado' ? 'bg-blue-500 text-white' :
                                           ord.estado === 'entregado' ? 'bg-green-200 text-green-800' :
                                           'bg-red-200 text-red-800'
-                                        }`}>{ord.estado.toUpperCase()}</span>
+                                        }`}>{ord.estado.replace('_', ' ').toUpperCase()}</span>
                                       </div>
-                                      <div className="flex items-center gap-2 shrink-0">
+
+                                      {/* Col 3: total + saldo */}
+                                      <div className="flex flex-col items-end min-w-0">
                                         <span className="font-mono font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
-                                        {(() => {
-                                          const cxc = invoices.find(i => i.tipo === 'cxc' && i.pedido_id === ord.id);
-                                          return cxc && cxc.saldo_pendiente > 0 ? (
-                                            <span className="font-mono text-[9px] font-bold text-brand-red border border-brand-red bg-red-50 px-1 py-0.5">Debe ${cxc.saldo_pendiente.toLocaleString('es-CO')}</span>
-                                          ) : cxc && cxc.saldo_pendiente === 0 ? (
-                                            <span className="font-mono text-[9px] font-bold text-green-700 border border-green-300 bg-green-50 px-1 py-0.5">Pagado ✓</span>
-                                          ) : null;
-                                        })()}
+                                        {cxcRow && cxcRow.saldo_pendiente > 0 ? (
+                                          <span className="font-mono text-[9px] font-bold text-brand-red">Debe ${cxcRow.saldo_pendiente.toLocaleString('es-CO')}</span>
+                                        ) : cxcRow && cxcRow.saldo_pendiente === 0 ? (
+                                          <span className="font-mono text-[9px] font-bold text-green-700">Pagado ✓</span>
+                                        ) : null}
+                                      </div>
+
+                                      {/* Col 4: acciones */}
+                                      <div className="flex items-center gap-1.5 shrink-0">
                                         <button
                                           type="button"
                                           onClick={() => setPedidoExpandido(isExpanded ? null : ord.id)}
-                                          className="font-mono text-[9px] font-bold border border-black bg-white px-2 py-0.5 hover:bg-neutral-100"
+                                          className="font-mono text-[9px] font-bold border border-black bg-white px-2 py-1 hover:bg-neutral-100"
                                         >{isExpanded ? 'Ocultar' : 'Ver detalle'}</button>
                                         <button
                                           type="button"
                                           onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
-                                          className="neo-btn px-2 py-0.5 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white"
+                                          className="neo-btn px-2 py-1 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white"
                                         >Gestionar</button>
                                       </div>
                                     </div>
