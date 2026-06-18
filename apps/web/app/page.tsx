@@ -3803,13 +3803,13 @@ export default function AppHome() {
                         <div className="flex flex-col gap-1">
                           {/* Banner animado cuando el filtro es DESPACHADO */}
                           {orderStatusFilter === 'despachado' && (
-                            <div className="bg-blue-500 border-2 border-black flex items-center gap-4 px-4 py-2 overflow-hidden">
+                            <div className="border-2 border-black flex items-center gap-4 px-4 py-2 overflow-hidden" style={{ backgroundColor: colorSecundarioInput }}>
                               <TruckSprite scale={2} />
                               <div className="flex flex-col">
-                                <span className="font-mono text-[10px] font-black text-white uppercase tracking-widest">
+                                <span className="font-mono text-[10px] font-black text-white uppercase tracking-widest drop-shadow">
                                   {pedidosFiltrados.length} pedido{pedidosFiltrados.length !== 1 ? 's' : ''} en camino
                                 </span>
-                                <span className="font-mono text-[9px] text-blue-200">
+                                <span className="font-mono text-[9px] text-white/70">
                                   Filtrando por estado: DESPACHADO
                                 </span>
                               </div>
