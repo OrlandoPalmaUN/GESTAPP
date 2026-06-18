@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
+import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { IgDashboard } from '../components/redes/IgDashboard';
 import { AiChat } from '../components/ai/AiChat';
 import { AiNotasHelper } from '../components/ai/AiNotasHelper';
@@ -201,6 +201,144 @@ function movimientoAMockMovement(m: MovimientoInventario): InventoryMovement {
     fecha: m.createdAt,
     detalle: m.notas ?? '',
   };
+}
+
+// ── Truck sprite animado (16-bit pixel art) ────────────────────────────────
+function TruckSprite({ scale = 3 }: { scale?: number }) {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const rafRef    = useRef<number>(0);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = false;
+
+    const buf = document.createElement('canvas');
+    buf.width = 64; buf.height = 64;
+    const bc = buf.getContext('2d')!;
+    bc.imageSmoothingEnabled = false;
+
+    const C = {
+      blk:'#000000', blu:'#3a94d0', bLt:'#6ab8ee', bDk:'#1b5e96',
+      bUC:'#0c1e38', bIn:'#0d3a6a', pkg:'#000000', pkLt:'#2a2a2a',
+      pkDk:'#111111', win:'#b2c8d8', winH:'#d8eaf6', rim:'#a0a0a0',
+      rimD:'#505050', rimH:'#d0d0d0', red:'#cc2020', lamp:'#ffee44',
+      spd:'#3a78be',
+    };
+
+    const px  = (x:number,y:number,c:string) => { bc.fillStyle=c; bc.fillRect(x|0,y|0,1,1); };
+    const hln = (x:number,y:number,w:number,c:string) => { bc.fillStyle=c; bc.fillRect(x|0,y|0,w,1); };
+    const vln = (x:number,y:number,h:number,c:string) => { bc.fillStyle=c; bc.fillRect(x|0,y|0,1,h); };
+    const rct = (x:number,y:number,w:number,h:number,c:string) => { bc.fillStyle=c; bc.fillRect(x|0,y|0,w,h); };
+
+    // pre-render logo
+    const logoCv = document.createElement('canvas');
+    logoCv.width = 88; logoCv.height = 80;
+    const lc = logoCv.getContext('2d')!;
+    lc.fillStyle = '#000'; lc.fillRect(0,0,88,80);
+    lc.fillStyle = '#fff'; lc.font = 'bold 46px monospace';
+    lc.textAlign = 'center'; lc.textBaseline = 'middle';
+    lc.fillText('//', 44, 42);
+
+    function drawWheel(cx:number, cy:number, ang:number) {
+      const R = 8;
+      for (let dy=-R; dy<=R; dy++) for (let dx=-R; dx<=R; dx++) {
+        const d = Math.sqrt(dx*dx+dy*dy);
+        if (d > R+0.5) continue;
+        const c = d>R-0.6 ? C.blk : d>R-2.0 ? C.rimD : d>R-3.5 ? C.rimD : d>R-5.5 ? C.rim : C.rimD;
+        px(cx+dx, cy+dy, c);
+      }
+      bc.strokeStyle = C.rimH; bc.lineWidth = 1;
+      for (let i=0;i<4;i++) {
+        const a = ang + i*Math.PI*0.5;
+        bc.beginPath();
+        bc.moveTo((cx|0)+0.5,(cy|0)+0.5);
+        bc.lineTo(((cx+Math.cos(a)*4.5)|0)+0.5,((cy+Math.sin(a)*4.5)|0)+0.5);
+        bc.stroke();
+      }
+      rct(cx-1,cy-1,3,3,C.rim); px(cx,cy,C.rimH);
+    }
+
+    function drawFrame(t:number) {
+      const TAU = Math.PI*2;
+      const bnc = Math.sin(t*TAU*1.1)*1.3;
+      const vib = Math.sin(t*24)*0.45;
+      const spR = Math.sin(t*TAU*1.1+0.5)*0.75;
+      const spF = Math.sin(t*TAU*1.1-0.4)*0.75;
+      const wAng = t*4.0;
+      bc.clearRect(0,0,64,64);
+      const BX = 7+Math.round(vib);
+      const BY = 8+Math.round(bnc);
+      const r=(x:number,y:number,w:number,h:number,c:string)=>rct(BX+x,BY+y,w,h,c);
+      const h=(x:number,y:number,w:number,c:string)=>hln(BX+x,BY+y,w,c);
+      const v=(x:number,y:number,ht:number,c:string)=>vln(BX+x,BY+y,ht,c);
+      // speed lines
+      const sa = 0.55+0.35*Math.sin(t*5.5);
+      bc.globalAlpha=sa; bc.fillStyle=C.spd;
+      bc.fillRect(0,(BY+10)|0,5,1); bc.fillRect(0,(BY+15)|0,3,1);
+      bc.fillRect(0,(BY+20)|0,6,1); bc.fillRect(0,(BY+25)|0,4,1);
+      bc.globalAlpha=1;
+      // cargo box
+      r(0,0,38,30,C.blu); h(1,1,36,C.bLt); h(1,2,36,C.bLt); v(1,3,25,C.bLt);
+      h(1,27,36,C.bDk); h(1,28,36,C.bIn); h(1,29,36,C.bIn);
+      v(36,1,28,C.bDk); v(37,1,28,C.bIn);
+      h(0,0,38,C.blk); h(0,30,38,C.blk); v(0,0,31,C.blk); v(37,0,31,C.blk);
+      h(1,1,36,C.bLt); h(1,29,36,C.bIn); v(1,1,29,C.bLt); v(36,1,29,C.bDk);
+      // package
+      r(5,4,22,20,C.pkg);
+      h(5,4,22,C.blk); h(5,23,22,C.blk); v(5,4,20,C.blk); v(26,4,20,C.blk);
+      h(6,5,20,C.pkLt); v(6,5,17,C.pkLt); h(6,22,20,C.pkDk); v(25,5,17,C.pkDk);
+      bc.save(); bc.imageSmoothingEnabled=false;
+      bc.drawImage(logoCv,(BX+5)|0,(BY+4)|0,22,20); bc.restore();
+      // tail light
+      r(0,20,2,6,C.red); h(0,20,2,C.blk); h(0,26,2,C.blk); v(2,20,7,C.blk);
+      // cab
+      r(38,5,17,25,'#f0f0f0'); h(39,6,15,'#ffffff'); h(39,7,15,'#ffffff'); v(39,6,22,'#ffffff');
+      h(39,28,15,'#c0c0c0'); h(39,29,15,'#b0b0b0'); v(53,6,23,'#c8c8c8');
+      h(38,5,17,C.blk); h(38,30,17,C.blk); v(54,5,26,C.blk);
+      r(40,7,12,14,C.win); h(40,7,12,C.blk); h(40,21,12,C.blk); v(40,7,15,C.blk); v(52,7,15,C.blk);
+      r(41,8,4,4,C.winH); h(41,12,4,C.winH); v(46,8,7,C.win);
+      r(39,22,14,8,'#ececec'); v(39,22,9,'#ffffff'); h(39,21,14,'#c0c0c0');
+      h(43,26,4,C.blk);
+      r(52,9,3,7,C.lamp); h(52,9,3,C.blk); h(52,16,3,C.blk); v(55,9,8,C.blk); r(53,10,1,5,'#ffffff');
+      r(52,23,3,7,'#d8d8d8'); h(52,23,3,C.blk); v(55,23,8,C.blk); h(52,30,3,C.blk);
+      // undercarriage
+      rct(BX-1,BY+31,57,4,C.bUC); hln(BX-1,BY+31,57,'#1a3a6a'); hln(BX-1,BY+35,57,C.blk); vln(BX-1,BY+31,5,C.blk);
+      // wheel arches
+      for (let da=-8;da<=8;da++) {
+        const dep=Math.round(Math.sqrt(64-da*da));
+        rct(BX+11+da,BY+31-dep,1,dep,C.bUC); rct(BX+46+da,BY+31-dep,1,dep,C.bUC);
+      }
+      // wheels
+      drawWheel(BX+11, BY+31+Math.round(spR), wAng);
+      drawWheel(BX+46, BY+31+Math.round(spF), wAng);
+      // blit to display canvas
+      ctx!.clearRect(0,0,canvas!.width,canvas!.height);
+      ctx!.imageSmoothingEnabled=false;
+      ctx!.drawImage(buf,0,0,canvas!.width,canvas!.height);
+    }
+
+    let t0: number|null = null;
+    function loop(ts: number) {
+      if (!t0) t0 = ts;
+      drawFrame((ts-t0)*0.001);
+      rafRef.current = requestAnimationFrame(loop);
+    }
+    drawFrame(0);
+    rafRef.current = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [scale]);
+
+  const s = 64 * scale;
+  return (
+    <canvas
+      ref={canvasRef}
+      width={s} height={s}
+      style={{ width: s, height: s, imageRendering: 'pixelated' }}
+    />
+  );
 }
 
 export default function AppHome() {
@@ -3663,6 +3801,20 @@ export default function AppHome() {
 
                       return (
                         <div className="flex flex-col gap-1">
+                          {/* Banner animado cuando el filtro es DESPACHADO */}
+                          {orderStatusFilter === 'despachado' && (
+                            <div className="bg-blue-500 border-2 border-black flex items-center gap-4 px-4 py-2 overflow-hidden">
+                              <TruckSprite scale={2} />
+                              <div className="flex flex-col">
+                                <span className="font-mono text-[10px] font-black text-white uppercase tracking-widest">
+                                  {pedidosFiltrados.length} pedido{pedidosFiltrados.length !== 1 ? 's' : ''} en camino
+                                </span>
+                                <span className="font-mono text-[9px] text-blue-200">
+                                  Filtrando por estado: DESPACHADO
+                                </span>
+                              </div>
+                            </div>
+                          )}
                           {llavesFinal.map(llave => (
                             <div key={llave}>
                               {/* Separador de grupo */}
