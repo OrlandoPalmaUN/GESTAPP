@@ -1,6 +1,8 @@
 import type { FastifyReply, FastifyRequest } from 'fastify'
 import type { PoolClient } from 'pg'
 
+import type { SesionJWT } from '../plugins/auth.js'
+
 export interface TenantContext {
   id: string
   name: string
@@ -64,6 +66,28 @@ async function asignarTenantAlRequest(
   request.tenantDb = client
 }
 
+/**
+ * Intenta hidratar `request.user` sin exigir sesión. El tenant-resolver corre
+ * también en rutas públicas/admin, así que si no hay sesión simplemente no
+ * resuelve tenant; las rutas protegidas responderán 401 en su preHandler.
+ */
+async function verificarSesionOpcional(request: FastifyRequest): Promise<boolean> {
+  try {
+    await request.jwtVerify()
+    return true
+  } catch {
+    const auth = request.headers.authorization
+    if (!auth?.startsWith('Bearer ')) return false
+
+    try {
+      request.user = request.server.jwt.verify<SesionJWT>(auth.slice(7))
+      return true
+    } catch {
+      return false
+    }
+  }
+}
+
 export async function tenantResolver(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const fastify = request.server
   const host = request.headers.host ?? ''
@@ -80,11 +104,8 @@ export async function tenantResolver(request: FastifyRequest, reply: FastifyRepl
     // `jwtVerify` es seguro de llamar aquí aunque la ruta no sea protegida:
     // si no hay cookie de sesión o es inválida, simplemente no resuelve nada
     // y el request sigue sin tenant (rutas públicas/superadmin no lo necesitan).
-    try {
-      await request.jwtVerify()
-    } catch {
-      return
-    }
+    const tieneSesion = await verificarSesionOpcional(request)
+    if (!tieneSesion) return
 
     if (!request.user?.tenantId) return
 

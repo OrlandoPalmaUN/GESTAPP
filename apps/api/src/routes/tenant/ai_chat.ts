@@ -113,7 +113,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
         `),
         db.query<{ saldo: number }>(`
           SELECT COALESCE(SUM(saldo), 0)::numeric AS saldo
-          FROM cuentas_bancarias WHERE deleted_at IS NULL AND activa = TRUE
+          FROM cuentas_bancarias WHERE deleted_at IS NULL
         `),
       ])
 

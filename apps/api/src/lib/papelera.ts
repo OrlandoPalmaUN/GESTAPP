@@ -100,6 +100,24 @@ export const ENTIDADES_PAPELERA = {
     columnas: 'id, banco, numero, deleted_at',
     etiqueta: (r) => `${String(r.banco)} · ${String(r.numero)}`,
   },
+  gasto_operativo: {
+    tabla: 'gastos_operativos',
+    columnas: 'id, descripcion, monto, cuenta_bancaria_id, deleted_at',
+    etiqueta: (r) => `Gasto "${String(r.descripcion)}" · $${Number(r.monto).toLocaleString('es-CO')}`,
+    // Al restaurar, re-aplica el descuento a la cuenta bancaria.
+    alRestaurar: async (tenantDb, id) => {
+      const { rows } = await tenantDb.query<{ monto: string; cuenta_bancaria_id: string | null }>(
+        'SELECT monto, cuenta_bancaria_id FROM gastos_operativos WHERE id = $1',
+        [id],
+      )
+      const gasto = rows[0]
+      if (!gasto?.cuenta_bancaria_id) return
+      await tenantDb.query(
+        'UPDATE cuentas_bancarias SET saldo = saldo - $1 WHERE id = $2 AND deleted_at IS NULL',
+        [gasto.monto, gasto.cuenta_bancaria_id],
+      )
+    },
+  },
   ingreso_bancario: {
     tabla: 'ingresos_bancarios',
     columnas: 'id, descripcion, monto, cuenta_bancaria_id, deleted_at',

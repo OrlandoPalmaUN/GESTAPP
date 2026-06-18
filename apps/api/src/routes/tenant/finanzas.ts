@@ -508,6 +508,12 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
           await client.query('ROLLBACK')
           return reply.badRequest('La cuenta bancaria seleccionada no existe.')
         }
+        if (body.data.tipo === 'cxp' && Number(cuentaRes.rows[0]!.saldo) < body.data.monto) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            `Saldo insuficiente en la cuenta bancaria ($${Number(cuentaRes.rows[0]!.saldo).toLocaleString('es-CO')} disponible, se requieren $${body.data.monto.toLocaleString('es-CO')}).`,
+          )
+        }
       }
 
       const { rows } = await client.query<FilaAbono>(
@@ -717,6 +723,24 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   // DELETE /finanzas/cuentas/:id — borrado suave, recuperable desde /papelera.
   fastify.delete<{ Params: { id: string } }>('/finanzas/cuentas/:id', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
+    const usos = await request.tenantDb.query<{
+      abonos: number
+      gastos: number
+      ingresos: number
+      transferencias: number
+    }>(
+      `SELECT
+         (SELECT COUNT(*) FROM abonos WHERE cuenta_bancaria_id = $1 AND deleted_at IS NULL)::int AS abonos,
+         (SELECT COUNT(*) FROM gastos_operativos WHERE cuenta_bancaria_id = $1 AND deleted_at IS NULL)::int AS gastos,
+         (SELECT COUNT(*) FROM ingresos_bancarios WHERE cuenta_bancaria_id = $1 AND deleted_at IS NULL)::int AS ingresos,
+         (SELECT COUNT(*) FROM transferencias_bancarias WHERE cuenta_origen_id = $1 OR cuenta_destino_id = $1)::int AS transferencias`,
+      [request.params.id],
+    )
+    const uso = usos.rows[0]
+    if (uso && (uso.abonos > 0 || uso.gastos > 0 || uso.ingresos > 0 || uso.transferencias > 0)) {
+      return reply.badRequest('No puedes eliminar esta cuenta bancaria: tiene movimientos financieros asociados.')
+    }
+
     const { rowCount } = await request.tenantDb.query(
       'UPDATE cuentas_bancarias SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
       [request.params.id],
@@ -838,6 +862,12 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
         if (cuentaRes.rowCount === 0) {
           await client.query('ROLLBACK')
           return reply.badRequest('La cuenta bancaria seleccionada no existe.')
+        }
+        if (Number(cuentaRes.rows[0]!.saldo) < body.data.monto) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            `Saldo insuficiente en la cuenta bancaria ($${Number(cuentaRes.rows[0]!.saldo).toLocaleString('es-CO')} disponible, se requieren $${body.data.monto.toLocaleString('es-CO')}).`,
+          )
         }
       }
 

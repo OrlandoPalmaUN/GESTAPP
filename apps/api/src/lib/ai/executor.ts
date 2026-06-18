@@ -754,6 +754,17 @@ async function registrarAbono(args: RegistrarAbonoArgs, db: PoolClient): Promise
       }
     }
 
+    if (args.cuenta_bancaria_id) {
+      const cuenta = await db.query(
+        'SELECT id FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [args.cuenta_bancaria_id],
+      )
+      if (cuenta.rowCount === 0) {
+        await db.query('ROLLBACK')
+        return { success: false, error: 'Cuenta bancaria no encontrada.' }
+      }
+    }
+
     await db.query(
       `INSERT INTO abonos (tipo_documento, documento_id, monto, medio_pago, referencia, cuenta_bancaria_id)
        VALUES ('factura_venta', $1, $2, $3, $4, $5)`,
@@ -788,6 +799,9 @@ async function registrarAbono(args: RegistrarAbonoArgs, db: PoolClient): Promise
 async function registrarGasto(args: RegistrarGastoArgs, db: PoolClient): Promise<ToolResult> {
   await db.query('BEGIN')
   try {
+    const categoriasPermitidas = new Set(['arriendo', 'servicios', 'nomina', 'comisiones', 'marketing', 'otros'])
+    const categoria = args.categoria && categoriasPermitidas.has(args.categoria) ? args.categoria : 'otros'
+
     // Si tiene cuenta, validar saldo suficiente
     if (args.cuenta_bancaria_id) {
       const { rows } = await db.query<{ saldo: string }>(
@@ -811,7 +825,7 @@ async function registrarGasto(args: RegistrarGastoArgs, db: PoolClient): Promise
       `INSERT INTO gastos_operativos (descripcion, monto, categoria, cuenta_bancaria_id, fecha)
        VALUES ($1, $2, $3, $4, COALESCE($5::date, CURRENT_DATE))
        RETURNING id`,
-      [args.descripcion, args.monto, args.categoria ?? null, args.cuenta_bancaria_id ?? null, args.fecha ?? null],
+      [args.descripcion, args.monto, categoria, args.cuenta_bancaria_id ?? null, args.fecha ?? null],
     )
 
     if (args.cuenta_bancaria_id) {
@@ -824,7 +838,7 @@ async function registrarGasto(args: RegistrarGastoArgs, db: PoolClient): Promise
     await db.query('COMMIT')
     return {
       success: true,
-      data: { gastoId: gasto[0]!.id, descripcion: args.descripcion, monto: args.monto, categoria: args.categoria ?? null },
+      data: { gastoId: gasto[0]!.id, descripcion: args.descripcion, monto: args.monto, categoria },
     }
   } catch (err) {
     await db.query('ROLLBACK').catch(() => undefined)
@@ -836,7 +850,7 @@ async function registrarIngresoManual(args: RegistrarIngresoArgs, db: PoolClient
   await db.query('BEGIN')
   try {
     const cuenta = await db.query(
-      'SELECT id FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL',
+      'SELECT id FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
       [args.cuenta_bancaria_id],
     )
     if (cuenta.rowCount === 0) {
@@ -865,9 +879,9 @@ async function registrarIngresoManual(args: RegistrarIngresoArgs, db: PoolClient
 
 async function consultarCuentasBancarias(db: PoolClient): Promise<ToolResult> {
   const { rows } = await db.query(`
-    SELECT id, banco, numero, tipo, saldo, moneda
+    SELECT id, banco, numero, tipo, saldo
     FROM cuentas_bancarias
-    WHERE deleted_at IS NULL AND activa = TRUE
+    WHERE deleted_at IS NULL
     ORDER BY banco, numero
   `)
   return { success: true, data: rows }
@@ -988,22 +1002,30 @@ async function consultarKpisDashboard(db: PoolClient): Promise<ToolResult> {
     `),
     db.query(`
       SELECT COALESCE(SUM(saldo),0)::numeric AS total
-      FROM cuentas_bancarias WHERE deleted_at IS NULL AND activa = TRUE
+      FROM cuentas_bancarias WHERE deleted_at IS NULL
     `),
     db.query(`
       SELECT
         COALESCE((
-          SELECT SUM(fv.total) - COALESCE(SUM(ab.monto), 0)
+          SELECT SUM(GREATEST(fv.total - COALESCE((
+            SELECT SUM(ab.monto)
+            FROM abonos ab
+            WHERE ab.tipo_documento = 'factura_venta'
+              AND ab.documento_id = fv.id
+              AND ab.deleted_at IS NULL
+          ), 0), 0))
           FROM facturas_venta fv
-          LEFT JOIN abonos ab ON ab.tipo_documento = 'factura_venta'
-            AND ab.documento_id = fv.id AND ab.deleted_at IS NULL
           WHERE fv.deleted_at IS NULL
         ), 0) AS cxc_pendiente,
         COALESCE((
-          SELECT SUM(fc.total) - COALESCE(SUM(ab.monto), 0)
+          SELECT SUM(GREATEST(fc.total - COALESCE((
+            SELECT SUM(ab.monto)
+            FROM abonos ab
+            WHERE ab.tipo_documento = 'factura_compra'
+              AND ab.documento_id = fc.id
+              AND ab.deleted_at IS NULL
+          ), 0), 0))
           FROM facturas_compra fc
-          LEFT JOIN abonos ab ON ab.tipo_documento = 'factura_compra'
-            AND ab.documento_id = fc.id AND ab.deleted_at IS NULL
           WHERE fc.deleted_at IS NULL
         ), 0) AS cxp_pendiente
     `),

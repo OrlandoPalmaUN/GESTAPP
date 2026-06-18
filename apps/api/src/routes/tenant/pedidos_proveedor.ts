@@ -42,7 +42,7 @@ function aItem(row: FilaPedidoProveedorItem): PedidoProveedorItem {
     productoId: row.producto_id,
     concepto: row.concepto,
     cantidad: Number(row.cantidad),
-    cantidadRecibida: Number(row.cantidad_recibida),
+    cantidadRecibida: Number(row.cantidad_recibida ?? 0),
     precioUnitario: Number(row.precio_unitario),
     subtotal: Number(row.subtotal),
   }
@@ -101,6 +101,30 @@ async function generarNumeroFacturaCompra(tenantDb: NonNullable<FastifyRequest['
   )
   const n = Number(rows[0]?.total ?? 0) + 1
   return `FC-${anio}-${String(n).padStart(4, '0')}`
+}
+
+function redondearMoneda(valor: number): number {
+  return Math.round((valor + Number.EPSILON) * 100) / 100
+}
+
+function calcularTotalRecibido(items: FilaPedidoProveedorItem[], totalOrden: number): number {
+  const totalItems = items.reduce((acc, item) => acc + Number(item.subtotal), 0)
+  const totalRecibidoPorPrecio = items.reduce(
+    (acc, item) => acc + Number(item.cantidad_recibida) * Number(item.precio_unitario),
+    0,
+  )
+
+  const todoRecibido = items.every((item) => Number(item.cantidad_recibida) >= Number(item.cantidad))
+  if (todoRecibido) return redondearMoneda(totalOrden)
+
+  if (totalItems > 0) {
+    return redondearMoneda(totalOrden * (totalRecibidoPorPrecio / totalItems))
+  }
+
+  const cantidadTotal = items.reduce((acc, item) => acc + Number(item.cantidad), 0)
+  const cantidadRecibida = items.reduce((acc, item) => acc + Number(item.cantidad_recibida), 0)
+  if (cantidadTotal === 0) return 0
+  return redondearMoneda(totalOrden * (cantidadRecibida / cantidadTotal))
 }
 
 export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<void> {
@@ -167,10 +191,10 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
     const body = crearPedidoProveedorSchema.safeParse(request.body)
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
 
-    const numero = await generarNumeroOC(request.tenantDb)
-
     await request.tenantDb.query('BEGIN')
     try {
+      const numero = await generarNumeroOC(request.tenantDb)
+
       const { rows: [pedido] } = await request.tenantDb.query<FilaPedidoProveedor>(
         `INSERT INTO pedidos_proveedor (numero, proveedor_id, fecha_esperada, notas, usuario_id)
          VALUES ($1, $2, $3, $4, $5)
@@ -209,7 +233,7 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
         const { rows: [itemRow] } = await request.tenantDb.query<FilaPedidoProveedorItem>(
           `INSERT INTO pedidos_proveedor_items (pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario)
            VALUES ($1, $2, $3, $4, $5)
-           RETURNING id, pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario, subtotal`,
+           RETURNING id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal`,
           [pedido!.id, productoId, concepto, item.cantidad, precio],
         )
         total += Number(itemRow!.subtotal)
@@ -252,10 +276,14 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
     )
     if (existe === 0) return reply.notFound('Pedido a proveedor no encontrado.')
 
-    // Si la OC ya está recibida o cancelada, solo se permiten editar notas
+    // Si la OC ya empezó a recibir mercancía o generó CxP, no se reemplazan ítems:
+    // hacerlo desbalancearía inventario, CxP y cantidades recibidas.
     const estadoActual = actual[0]!.estado as EstadoPedidoProveedor
-    if (['recibido', 'cancelado'].includes(estadoActual) && body.data.items) {
+    if ((!['borrador', 'enviado'].includes(estadoActual) || actual[0]!.factura_compra_id) && body.data.items) {
       return reply.badRequest(`No se pueden editar los ítems de una OC en estado "${estadoActual}".`)
+    }
+    if (actual[0]!.factura_compra_id && body.data.proveedorId !== undefined) {
+      return reply.badRequest('No se puede cambiar el proveedor de una OC que ya generó una cuenta por pagar.')
     }
 
     await request.tenantDb.query('BEGIN')
@@ -300,7 +328,7 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
           const { rows: [itemRow] } = await request.tenantDb.query<FilaPedidoProveedorItem>(
             `INSERT INTO pedidos_proveedor_items (pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario)
              VALUES ($1, $2, $3, $4, $5)
-             RETURNING id, pedido_proveedor_id, producto_id, concepto, cantidad, precio_unitario, subtotal`,
+             RETURNING id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal`,
             [idParsed.data, productoId, concepto, item.cantidad, precio],
           )
           nuevoTotal += Number(itemRow!.subtotal)
@@ -356,6 +384,9 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
         `Transición no permitida: ${estadoActual} → ${estadoNuevo}. Transiciones válidas: ${transicionesValidas.join(', ') || 'ninguna (estado terminal)'}`,
       )
     }
+    if (estadoNuevo === 'recibido_parcial' && (!body.data.cantidades || body.data.cantidades.length === 0)) {
+      return reply.badRequest('Para marcar una OC como recibida parcialmente debes indicar las cantidades recibidas.')
+    }
 
     const db = request.tenantDb
     await db.query('BEGIN')
@@ -376,6 +407,12 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
       // --- Actualizar cantidad_recibida si aplica ---
       if (esRecepcion && body.data.cantidades) {
         const mapa = new Map(body.data.cantidades.map((c) => [c.itemId, c.cantidadRecibida]))
+        const idsValidos = new Set(itemsActuales.map((item) => item.id))
+        const itemDesconocido = body.data.cantidades.find((cantidad) => !idsValidos.has(cantidad.itemId))
+        if (itemDesconocido) {
+          await db.query('ROLLBACK')
+          return reply.badRequest('Una de las cantidades recibidas no corresponde a esta orden de compra.')
+        }
         for (const item of itemsActuales) {
           const nueva = mapa.get(item.id)
           if (nueva === undefined) continue
@@ -400,13 +437,30 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
         }
       }
 
+      if (esRecepcion) {
+        const algunoRecibido = itemsActuales.some((item) => Number(item.cantidad_recibida) > 0)
+        const todosRecibidos = itemsActuales.every((item) => Number(item.cantidad_recibida) >= Number(item.cantidad))
+
+        if (!algunoRecibido) {
+          await db.query('ROLLBACK')
+          return reply.badRequest('Registra al menos una cantidad recibida para generar inventario y CxP.')
+        }
+        if (estadoNuevo === 'recibido' && !todosRecibidos) {
+          await db.query('ROLLBACK')
+          return reply.badRequest('Para marcar la OC como recibida, todas las cantidades deben estar recibidas.')
+        }
+        if (estadoNuevo === 'recibido_parcial' && todosRecibidos) {
+          await db.query('ROLLBACK')
+          return reply.badRequest('Todas las cantidades están recibidas; marca la OC como "recibido".')
+        }
+      }
+
       // --- CxP: crear o actualizar según lo recibido ---
       let facturaCompraId = oc.factura_compra_id
       if (esRecepcion && oc.proveedor_id) {
-        // oc.total ya incorpora totalManual si el usuario lo ingresó al crear la OC,
-        // o el Σ(precio × cantidad) de los ítems si no lo hizo. Usar oc.total
-        // garantiza que la CxP refleje el total real negociado, no los precios de catálogo.
-        const totalRecibido = Number(oc.total)
+        // La CxP refleja lo recibido acumulado, no el total completo de la OC.
+        // Si la OC tiene total manual, se prorratea contra el avance recibido.
+        const totalRecibido = calcularTotalRecibido(itemsActuales, Number(oc.total))
         const fechaVenc = body.data.fechaVencimientoCxP ?? (() => {
           const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10)
         })()
@@ -505,17 +559,41 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
   })
 
   // DELETE /compras/:id — borrado suave
+  // Solo se permite si la OC no ha recibido inventario ni generado CxP.
   fastify.delete<{ Params: { id: string } }>('/compras/:id', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const idParsed = z.uuid().safeParse(request.params.id)
     if (!idParsed.success) return reply.badRequest('ID de pedido no válido.')
 
-    const { rowCount } = await request.tenantDb.query(
-      'UPDATE pedidos_proveedor SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',
-      [idParsed.data],
-    )
-    if (rowCount === 0) return reply.notFound('Pedido a proveedor no encontrado.')
-    return reply.status(204).send()
+    const db = request.tenantDb
+    await db.query('BEGIN')
+    try {
+      const actual = await db.query<{ factura_compra_id: string | null }>(
+        'SELECT factura_compra_id FROM pedidos_proveedor WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [idParsed.data],
+      )
+      if (actual.rowCount === 0) {
+        await db.query('ROLLBACK')
+        return reply.notFound('Pedido a proveedor no encontrado.')
+      }
+      const recibidaRes = await db.query<{ recibida: string }>(
+        'SELECT COALESCE(SUM(cantidad_recibida), 0)::text AS recibida FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1',
+        [idParsed.data],
+      )
+
+      const oc = actual.rows[0]!
+      if (oc.factura_compra_id || Number(recibidaRes.rows[0]?.recibida ?? 0) > 0) {
+        await db.query('ROLLBACK')
+        return reply.badRequest('No se puede eliminar una OC que ya recibió inventario o generó una cuenta por pagar.')
+      }
+
+      await db.query('UPDATE pedidos_proveedor SET deleted_at = NOW() WHERE id = $1', [idParsed.data])
+      await db.query('COMMIT')
+      return reply.status(204).send()
+    } catch (error) {
+      await db.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
   })
 }

@@ -180,8 +180,10 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         COALESCE(SUM(a.monto) FILTER (WHERE a.fecha >= $1 AND a.fecha < $2), 0) AS "cxcCobrada",
         COALESCE(SUM(a.monto) FILTER (WHERE a.fecha >= $3 AND a.fecha < $4), 0) AS "cxcCobradaPrev"
       FROM abonos a
-      JOIN facturas f ON a.factura_id = f.id
-      WHERE f.tipo = 'cxc' AND a.deleted_at IS NULL AND f.deleted_at IS NULL
+      JOIN facturas_venta fv
+        ON a.tipo_documento = 'factura_venta'
+       AND a.documento_id = fv.id
+      WHERE a.deleted_at IS NULL AND fv.deleted_at IS NULL
     `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
 
     // ── Top 5 productos ───────────────────────────────────────────────────
@@ -190,17 +192,18 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     }>(`
       SELECT
         p.nombre,
-        p.categoria,
+        c.nombre AS categoria,
         SUM(pi.cantidad)  AS unidades,
         SUM(pi.subtotal)  AS "ventasTotal"
       FROM pedido_items pi
       JOIN productos p   ON pi.producto_id = p.id
+      LEFT JOIN categorias c ON c.id = p.categoria_id
       JOIN pedidos pe    ON pi.pedido_id   = pe.id
       WHERE pe.created_at >= $1 AND pe.created_at < $2
         AND pe.estado != 'cancelado'
         AND pe.deleted_at IS NULL
         AND pi.producto_id IS NOT NULL
-      GROUP BY p.id, p.nombre, p.categoria
+      GROUP BY p.id, p.nombre, c.nombre
       ORDER BY "ventasTotal" DESC
       LIMIT 5
     `, [rango.desde, rango.hasta])
@@ -344,7 +347,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     // ── Semanas ───────────────────────────────────────────────────────────
     const totalSemanas = semanasEnAño(año)
     const desdeAño = mondayOfISOWeek(año, 1).toISOString().slice(0, 10)
-    const hastaAño = mondayOfISOWeek(año === semanasEnAño(año) ? año + 1 : año, 1).toISOString().slice(0, 10)
+    const hastaAño = mondayOfISOWeek(año + 1, 1).toISOString().slice(0, 10)
 
     const [ventasQ, gastosQ] = await Promise.all([
       db.query<{ semana: string; añoiso: string; pedidos: string; ventas: string }>(`

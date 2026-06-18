@@ -110,7 +110,7 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
         // Saldo total en cuentas activas
         request.tenantDb.query<{ saldo: string }>(`
           SELECT COALESCE(SUM(saldo), 0)::numeric AS saldo
-          FROM cuentas_bancarias WHERE deleted_at IS NULL AND activa = TRUE
+          FROM cuentas_bancarias WHERE deleted_at IS NULL
         `),
         // CxC pendiente
         request.tenantDb.query<{ pendiente: string }>(`
