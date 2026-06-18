@@ -3311,29 +3311,43 @@ export default function AppHome() {
                               return (
                                 <div
                                   key={ord.id}
-                                  className="bg-white border border-black p-2.5 flex flex-wrap items-center justify-between gap-2 text-xs"
+                                  className="bg-white border border-black px-3 py-2 text-xs grid items-center gap-x-3"
+                                  style={{ gridTemplateColumns: '1fr 7rem 8rem auto' }}
                                 >
-                                  <div className="flex items-center gap-3">
-                                    <span className="font-bold text-black">{getOrderDisplayName(ord)}</span>
-                                    <span className="font-mono text-[10px] text-neutral-400">{ord.numero}</span>
-                                    <span className={`inline-block border-[1.5px] border-black text-[9px] font-mono font-bold px-1.5 py-0.5 ${
-                                      ord.estado === 'borrador' ? 'bg-neutral-100 text-neutral-700' :
-                                      ord.estado === 'confirmado' ? 'bg-brand-blue/20 text-brand-blue' :
-                                      'bg-brand-yellow/20 text-neutral-700'
+                                  {/* Col 1: nombre + número */}
+                                  <div className="flex flex-col min-w-0">
+                                    <span className="font-bold text-black truncate leading-tight">{getOrderDisplayName(ord)}</span>
+                                    <span className="font-mono text-[9px] text-neutral-400 leading-tight">{ord.numero}</span>
+                                  </div>
+
+                                  {/* Col 2: estado con color */}
+                                  <div>
+                                    <span className={`inline-block border border-black text-[9px] font-mono font-bold px-1.5 py-0.5 w-full text-center ${
+                                      ord.estado === 'borrador' ? 'bg-neutral-200 text-neutral-700' :
+                                      ord.estado === 'confirmado' ? 'bg-blue-200 text-blue-800' :
+                                      ord.estado === 'en_preparacion' ? 'bg-yellow-200 text-yellow-800' :
+                                      ord.estado === 'despachado' ? 'bg-blue-500 text-white' :
+                                      ord.estado === 'entregado' ? 'bg-green-200 text-green-800' :
+                                      'bg-red-200 text-red-800'
                                     }`}>
-                                      {ord.estado.toUpperCase()}
+                                      {ord.estado.replace('_', ' ').toUpperCase()}
                                     </span>
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <span className={`font-mono text-[10px] font-bold ${dias >= 3 ? 'text-brand-red' : 'text-neutral-500'}`}>
-                                      {dias === 0 ? 'Hoy' : dias === 1 ? 'Hace 1 día' : `Hace ${dias} días`} esperando envío
+
+                                  {/* Col 3: tiempo esperando */}
+                                  <div className="flex flex-col items-end">
+                                    <span className={`font-mono text-[9px] font-bold ${dias >= 3 ? 'text-brand-red' : 'text-neutral-500'}`}>
+                                      {dias === 0 ? 'Hoy' : dias === 1 ? 'Hace 1 día' : `Hace ${dias} días`}
                                     </span>
-                                    <button
-                                      type="button"
-                                      onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
-                                      className="neo-btn px-2 py-0.5 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white"
-                                    >Gestionar</button>
+                                    <span className="font-mono text-[9px] text-neutral-400">esperando envío</span>
                                   </div>
+
+                                  {/* Col 4: acción */}
+                                  <button
+                                    type="button"
+                                    onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
+                                    className="neo-btn px-2 py-1 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white"
+                                  >Gestionar</button>
                                 </div>
                               );
                             })}
