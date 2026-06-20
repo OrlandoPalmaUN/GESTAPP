@@ -5818,50 +5818,87 @@ export default function AppHome() {
                           {(() => {
                             const d = reportesSemanaSel ? reportesDetalleSemana : reportesDetalleMes;
                             if (!d || reportesDetalleMesCargando || reportesDetalleSemanaCargando) return null;
-                            const exportarCSV = () => {
-                              const rows: string[][] = [
-                                ['Período', d.periodo.label],
-                                ['Desde', d.periodo.desde],
-                                ['Hasta', d.periodo.hasta],
-                                [],
-                                ['RESUMEN'],
-                                ['Ventas totales', String(d.ventas.total)],
-                                ['Pedidos', String(d.ventas.pedidos)],
-                                ['Ticket promedio', String(d.ventas.ticketPromedio)],
-                                ['Compras / OC', String(d.compras.total)],
-                                ['Gastos operativos', String(d.gastos.total)],
-                                ['CxC cobrada', String(d.cxcCobrada)],
-                                ['Ingresos manuales', String(d.ingresosManuales)],
-                                ['Margen bruto', String(d.margenBruto.total)],
-                                ['Margen bruto %', String(d.margenBruto.porcentaje)],
-                                ['Utilidad neta', String(d.utilidadNeta)],
-                                [],
-                                ['TOP PRODUCTOS'],
-                                ['Producto', 'Categoría', 'Unidades', 'Ventas'],
-                                ...(d.topProductos.map(p => [p.nombre, p.categoria ?? '', String(p.unidades), String(p.ventasTotal)])),
-                                [],
-                                ['TOP CLIENTES'],
-                                ['Cliente', 'Pedidos', 'Ventas', 'Saldo pendiente'],
-                                ...((reportesTopClientes ?? []).map(c => [c.nombre, String(c.pedidos), String(c.ventas), String(c.saldoPendiente)])),
-                                [],
-                                ['COMPARACIÓN SEMANAS'],
-                                ['Semana', 'Pedidos', 'Ventas', 'Gastos', 'Margen bruto', 'Top producto'],
-                                ...((reportesSemComp ?? []).map(s => [s.label, String(s.pedidos), String(s.ventas), String(s.gastos), String(s.margenBruto), s.topProducto?.nombre ?? ''])),
-                              ];
-                              const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-                              const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement('a');
-                              a.href = url;
-                              a.download = `reporte_${d.periodo.label.replace(/\s+/g,'_')}.csv`;
-                              a.click();
-                              URL.revokeObjectURL(url);
+                            const exportarPDF = async () => {
+                              const { jsPDF } = await import('jspdf');
+                              const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+                              const margin = 40;
+                              const pageWidth = doc.internal.pageSize.getWidth();
+                              const pageHeight = doc.internal.pageSize.getHeight();
+                              let y = margin;
+
+                              const checkPageBreak = (espacio: number) => {
+                                if (y + espacio > pageHeight - margin) { doc.addPage(); y = margin; }
+                              };
+                              const titulo = (texto: string) => {
+                                checkPageBreak(28);
+                                doc.setFontSize(13); doc.setFont('helvetica', 'bold');
+                                doc.text(texto, margin, y);
+                                y += 18;
+                                doc.setDrawColor(0); doc.setLineWidth(1);
+                                doc.line(margin, y - 10, pageWidth - margin, y - 10);
+                              };
+                              const fila = (cols: string[], anchos: number[], bold = false) => {
+                                checkPageBreak(16);
+                                doc.setFontSize(9); doc.setFont('helvetica', bold ? 'bold' : 'normal');
+                                let x = margin;
+                                cols.forEach((c, i) => { doc.text(String(c), x, y); x += anchos[i] ?? 100; });
+                                y += 14;
+                              };
+
+                              doc.setFontSize(17); doc.setFont('helvetica', 'bold');
+                              doc.text(`Reporte — ${d.periodo.label}`, margin, y); y += 16;
+                              doc.setFontSize(10); doc.setFont('helvetica', 'normal');
+                              doc.setTextColor(100);
+                              doc.text(`${d.periodo.desde} a ${d.periodo.hasta}`, margin, y); y += 24;
+                              doc.setTextColor(0);
+
+                              titulo('Resumen financiero'); y += 4;
+                              fila(['Ventas totales', `$${d.ventas.total.toLocaleString('es-CO')}`], [200, 200]);
+                              fila(['Pedidos', String(d.ventas.pedidos)], [200, 200]);
+                              fila(['Ticket promedio', `$${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}`], [200, 200]);
+                              fila(['Compras / OC', `$${d.compras.total.toLocaleString('es-CO')}`], [200, 200]);
+                              fila(['Gastos operativos', `$${d.gastos.total.toLocaleString('es-CO')}`], [200, 200]);
+                              fila(['CxC cobrada', `$${d.cxcCobrada.toLocaleString('es-CO')}`], [200, 200]);
+                              fila(['Ingresos manuales', `$${d.ingresosManuales.toLocaleString('es-CO')}`], [200, 200]);
+                              fila(['Margen bruto', `$${d.margenBruto.total.toLocaleString('es-CO')} (${d.margenBruto.porcentaje}%)`], [200, 200]);
+                              fila(['Utilidad neta', `$${d.utilidadNeta.toLocaleString('es-CO')}`], [200, 200], true);
+                              y += 14;
+
+                              if (d.topProductos.length > 0) {
+                                titulo('Top productos'); y += 4;
+                                fila(['Producto', 'Categoría', 'Unidades', 'Ventas'], [180, 120, 80, 100], true);
+                                d.topProductos.forEach(p => fila([p.nombre, p.categoria ?? '—', String(p.unidades), `$${p.ventasTotal.toLocaleString('es-CO')}`], [180, 120, 80, 100]));
+                                y += 14;
+                              }
+
+                              if ((reportesTopClientes ?? []).length > 0) {
+                                titulo('Top clientes'); y += 4;
+                                fila(['Cliente', 'Pedidos', 'Ventas', 'Saldo pendiente'], [180, 80, 120, 120], true);
+                                (reportesTopClientes ?? []).forEach(c => fila([c.nombre, String(c.pedidos), `$${c.ventas.toLocaleString('es-CO')}`, c.saldoPendiente > 0 ? `$${c.saldoPendiente.toLocaleString('es-CO')}` : '—'], [180, 80, 120, 120]));
+                                y += 14;
+                              }
+
+                              if ((reportesSemComp ?? []).length > 0) {
+                                titulo('Comparación entre semanas'); y += 4;
+                                fila(['Semana', 'Pedidos', 'Ventas', 'Gastos', 'Margen', 'Top producto'], [80, 60, 100, 100, 90, 120], true);
+                                (reportesSemComp ?? []).forEach(s => fila([s.label, String(s.pedidos), `$${s.ventas.toLocaleString('es-CO')}`, `$${s.gastos.toLocaleString('es-CO')}`, `$${s.margenBruto.toLocaleString('es-CO')}`, s.topProducto?.nombre ?? '—'], [80, 60, 100, 100, 90, 120]));
+                                y += 14;
+                              }
+
+                              if (reportesIA) {
+                                titulo('Análisis IA'); y += 4;
+                                doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+                                const lineas = doc.splitTextToSize(reportesIA.replace(/^##\s*/gm, '').replace(/^-\s*/gm, '• '), pageWidth - margin * 2);
+                                lineas.forEach((linea: string) => { checkPageBreak(13); doc.text(linea, margin, y); y += 13; });
+                              }
+
+                              doc.save(`reporte_${d.periodo.label.replace(/\s+/g, '_')}.pdf`);
                             };
                             return (
                               <>
                                 <div className="flex justify-end mb-1">
-                                  <button type="button" onClick={exportarCSV} className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5">
-                                    <FileSpreadsheet size={12} /> Exportar CSV
+                                  <button type="button" onClick={() => void exportarPDF()} className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5">
+                                    <FileSpreadsheet size={12} /> Exportar PDF
                                   </button>
                                 </div>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
