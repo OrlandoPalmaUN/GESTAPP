@@ -625,6 +625,38 @@ export const api = {
     const p = new URLSearchParams({ tipo, año: String(año) })
     if (mes !== undefined) p.set('mes', String(mes))
     if (semana !== undefined) p.set('semana', String(semana))
-    return request<{ analisis: string }>(`/reportes/ia?${p}`)
+    return request<{ analisis: string; postsAnalizados: number; guardado?: boolean }>(`/reportes/ia?${p}`)
   },
+
+  reportesAnalisisGuardado: (desde: string, hasta: string) =>
+    request<{ analisis: string | null; postsAnalizados?: number; generadoEn?: string }>(
+      `/reportes/analisis-guardado?desde=${desde}&hasta=${hasta}`
+    ),
+
+  reportesTopClientes: (desde: string, hasta: string) => {
+    const p = new URLSearchParams({ desde, hasta })
+    return request<{
+      periodo: { label: string; desde: string; hasta: string }
+      clientes: Array<{ clienteId: string; nombre: string; pedidos: number; ventas: number; saldoPendiente: number }>
+    }>(`/reportes/top-clientes?${p}`)
+  },
+
+  reportesCalor: (desde: string, hasta: string) => {
+    const p = new URLSearchParams({ desde, hasta })
+    return request<{
+      periodo: { label: string }
+      pedidos: Array<{ dow: number; hour: number; cantidad: number }>
+      igPosts: Array<{ dow: number; hour: number; tipo: string; cantidad: number }>
+    }>(`/reportes/calor?${p}`)
+  },
+
+  reportesSemanasComparacion: (año: number, semanas: number[]) =>
+    request<{
+      año: number
+      semanas: Array<{
+        semana: number; label: string; desde: string; hasta: string
+        pedidos: number; ventas: number; gastos: number; margenBruto: number
+        topProducto: { nombre: string; ventas: number } | null
+      }>
+    }>(`/reportes/semanas-comparacion?año=${año}&semanas=${semanas.join(',')}`),
 }

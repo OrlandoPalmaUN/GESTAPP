@@ -534,10 +534,192 @@ Responde en formato markdown con estas secciones (máximo 200 palabras en total)
 
     const analisis = completion.choices[0]?.message.content ?? 'No se pudo generar el análisis.'
 
+    // Guardar automáticamente en BD (upsert por periodo_key)
+    const periodoKey = rango.desde + '_' + rango.hasta
+    await request.tenantDb.query(
+      `INSERT INTO reportes_analisis (periodo_key, periodo_label, desde, hasta, analisis, posts_analizados)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (periodo_key) DO UPDATE
+         SET analisis = EXCLUDED.analisis,
+             posts_analizados = EXCLUDED.posts_analizados,
+             updated_at = NOW()`,
+      [periodoKey, rango.label, rango.desde, rango.hasta, analisis, igPosts.length],
+    )
+
     return reply.send({
       periodo: { label: rango.label, desde: rango.desde, hasta: rango.hasta },
       analisis,
       postsAnalizados: igPosts.length,
+      guardado: true,
     })
+  })
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // GET /reportes/analisis-guardado?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+  // Devuelve el análisis guardado para un período (si existe).
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.get('/reportes/analisis-guardado', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const q = request.query as Record<string, string>
+    if (!q.desde || !q.hasta) return reply.badRequest('Faltan parámetros desde/hasta')
+    const periodoKey = q.desde + '_' + q.hasta
+    const { rows } = await request.tenantDb.query<{
+      analisis: string; posts_analizados: number; updated_at: string
+    }>(
+      `SELECT analisis, posts_analizados, updated_at FROM reportes_analisis WHERE periodo_key = $1`,
+      [periodoKey],
+    )
+    if (!rows[0]) return reply.send({ analisis: null })
+    return reply.send({
+      analisis: rows[0].analisis,
+      postsAnalizados: rows[0].posts_analizados,
+      generadoEn: rows[0].updated_at,
+    })
+  })
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // GET /reportes/top-clientes?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+  // Top clientes del período: pedidos, ventas totales, saldo pendiente.
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.get('/reportes/top-clientes', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const q = request.query as Record<string, string>
+    const rango = parseQuery(q)
+    const db = request.tenantDb
+
+    const { rows } = await db.query<{
+      cliente_id: string; nombre: string; pedidos: string; ventas: string; saldo_pendiente: string
+    }>(`
+      SELECT
+        c.id                                                              AS cliente_id,
+        c.nombre,
+        COUNT(p.id)                                                       AS pedidos,
+        COALESCE(SUM(p.total), 0)                                         AS ventas,
+        COALESCE((
+          SELECT SUM(fv.total) - COALESCE(SUM(ab.monto) FILTER (WHERE ab.deleted_at IS NULL), 0)
+          FROM facturas_venta fv
+          LEFT JOIN abonos ab ON ab.tipo_documento = 'factura_venta' AND ab.documento_id = fv.id
+          WHERE fv.cliente_id = c.id AND fv.deleted_at IS NULL
+        ), 0)                                                             AS saldo_pendiente
+      FROM pedidos p
+      JOIN clientes c ON p.cliente_id = c.id
+      WHERE p.created_at >= $1 AND p.created_at < $2
+        AND p.estado != 'cancelado' AND p.deleted_at IS NULL
+        AND p.cliente_id IS NOT NULL
+      GROUP BY c.id, c.nombre
+      ORDER BY ventas DESC
+      LIMIT 10
+    `, [rango.desde, rango.hasta])
+
+    return reply.send({
+      periodo: { label: rango.label, desde: rango.desde, hasta: rango.hasta },
+      clientes: rows.map(r => ({
+        clienteId: r.cliente_id,
+        nombre: r.nombre,
+        pedidos: Number(r.pedidos),
+        ventas: Number(r.ventas),
+        saldoPendiente: Number(r.saldo_pendiente),
+      })),
+    })
+  })
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // GET /reportes/calor?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
+  // Mapa de calor: pedidos por día de semana × hora + posts IG por día/hora/tipo
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.get('/reportes/calor', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const q = request.query as Record<string, string>
+    const rango = parseQuery(q)
+    const db = request.tenantDb
+
+    const [pedidosCalorQ, igCalorQ] = await Promise.all([
+      db.query<{ dow: string; hour: string; cantidad: string }>(`
+        SELECT
+          EXTRACT(DOW FROM created_at AT TIME ZONE 'America/Bogota')::int::text  AS dow,
+          EXTRACT(HOUR FROM created_at AT TIME ZONE 'America/Bogota')::int::text AS hour,
+          COUNT(*)::text AS cantidad
+        FROM pedidos
+        WHERE created_at >= $1 AND created_at < $2
+          AND estado != 'cancelado' AND deleted_at IS NULL
+        GROUP BY dow, hour
+        ORDER BY dow, hour
+      `, [rango.desde, rango.hasta]),
+
+      db.query<{ dow: string; hour: string; tipo: string; cantidad: string }>(`
+        SELECT
+          EXTRACT(DOW FROM publicado_en AT TIME ZONE 'America/Bogota')::int::text  AS dow,
+          EXTRACT(HOUR FROM publicado_en AT TIME ZONE 'America/Bogota')::int::text AS hour,
+          tipo,
+          COUNT(*)::text AS cantidad
+        FROM ig_posts
+        WHERE publicado_en >= $1 AND publicado_en < $2
+          AND cuenta_id = (SELECT id FROM ig_cuentas ORDER BY created_at LIMIT 1)
+        GROUP BY dow, hour, tipo
+        ORDER BY dow, hour
+      `, [rango.desde, rango.hasta]).catch((): { rows: { dow: string; hour: string; tipo: string; cantidad: string }[] } => ({ rows: [] })),
+    ])
+
+    return reply.send({
+      periodo: { label: rango.label, desde: rango.desde, hasta: rango.hasta },
+      pedidos: pedidosCalorQ.rows.map(r => ({
+        dow: Number(r.dow), hour: Number(r.hour), cantidad: Number(r.cantidad),
+      })),
+      igPosts: igCalorQ.rows.map(r => ({
+        dow: Number(r.dow), hour: Number(r.hour), tipo: r.tipo, cantidad: Number(r.cantidad),
+      })),
+    })
+  })
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // GET /reportes/semanas-comparacion?año=2026&semanas=22,23,24,25
+  // Comparación de N semanas: ventas, pedidos, gastos, top producto.
+  // ──────────────────────────────────────────────────────────────────────────
+  fastify.get('/reportes/semanas-comparacion', conSesion, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const q = request.query as Record<string, string>
+    const año = parseInt(q.año ?? String(new Date().getFullYear()), 10)
+    const semanas = (q.semanas ?? '')
+      .split(',').map(s => parseInt(s.trim(), 10)).filter(n => !isNaN(n)).slice(0, 8)
+    if (!semanas.length) return reply.badRequest('Parámetro semanas requerido (ej: 22,23,24,25)')
+
+    const db = request.tenantDb
+    const resultados = await Promise.all(semanas.map(async (sem) => {
+      const rango = rangoSemana(año, sem)
+      const [v, g, top] = await Promise.all([
+        db.query<{ pedidos: string; ventas: string }>(`
+          SELECT COUNT(*) AS pedidos, COALESCE(SUM(total), 0) AS ventas
+          FROM pedidos
+          WHERE created_at >= $1 AND created_at < $2 AND estado != 'cancelado' AND deleted_at IS NULL
+        `, [rango.desde, rango.hasta]),
+        db.query<{ gastos: string }>(`
+          SELECT COALESCE(SUM(monto), 0) AS gastos FROM gastos_operativos
+          WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
+        `, [rango.desde, rango.hasta]),
+        db.query<{ nombre: string; ventas: string }>(`
+          SELECT p.nombre, SUM(pi.subtotal) AS ventas
+          FROM pedido_items pi JOIN productos p ON pi.producto_id = p.id
+          JOIN pedidos pe ON pi.pedido_id = pe.id
+          WHERE pe.created_at >= $1 AND pe.created_at < $2
+            AND pe.estado != 'cancelado' AND pe.deleted_at IS NULL AND pi.producto_id IS NOT NULL
+          GROUP BY p.id, p.nombre ORDER BY ventas DESC LIMIT 1
+        `, [rango.desde, rango.hasta]),
+      ])
+      const ventas = Number(v.rows[0]?.ventas ?? 0)
+      const gastos = Number(g.rows[0]?.gastos ?? 0)
+      return {
+        semana: sem,
+        label: rango.label,
+        desde: rango.desde,
+        hasta: rango.hasta,
+        pedidos: Number(v.rows[0]?.pedidos ?? 0),
+        ventas,
+        gastos,
+        margenBruto: ventas - gastos,
+        topProducto: top.rows[0] ? { nombre: top.rows[0].nombre, ventas: Number(top.rows[0].ventas) } : null,
+      }
+    }))
+
+    return reply.send({ año, semanas: resultados })
   })
 }

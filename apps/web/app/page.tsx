@@ -35,6 +35,7 @@ import {
   Sparkles,
   RefreshCw,
   X,
+  BarChart2,
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero } from '@antigravity/shared';
@@ -373,6 +374,19 @@ export default function AppHome() {
   const [reportesDetalleSemanaCargando, setReportesDetalleSemanaCargando] = useState(false);
   const [reportesIA, setReportesIA] = useState<string | null>(null);
   const [reportesIACargando, setReportesIACargando] = useState(false);
+  const [reportesIAGeneradoEn, setReportesIAGeneradoEn] = useState<string | null>(null);
+  const [reportesIAGuardado, setReportesIAGuardado] = useState(false); // true = viene de caché
+  type TopCliente = { clienteId: string; nombre: string; pedidos: number; ventas: number; saldoPendiente: number };
+  const [reportesTopClientes, setReportesTopClientes] = useState<TopCliente[] | null>(null);
+  const [reportesTopClientesCargando, setReportesTopClientesCargando] = useState(false);
+  type CalorCelda = { dow: number; hour: number; cantidad: number };
+  type CalorIG = { dow: number; hour: number; tipo: string; cantidad: number };
+  const [reportesCalorPedidos, setReportesCalorPedidos] = useState<CalorCelda[] | null>(null);
+  const [reportesCalorIG, setReportesCalorIG] = useState<CalorIG[] | null>(null);
+  const [reportesCalorCargando, setReportesCalorCargando] = useState(false);
+  type SemanaComp = { semana: number; label: string; desde: string; hasta: string; pedidos: number; ventas: number; gastos: number; margenBruto: number; topProducto: { nombre: string; ventas: number } | null };
+  const [reportesSemComp, setReportesSemComp] = useState<SemanaComp[] | null>(null);
+  const [reportesSemCompCargando, setReportesSemCompCargando] = useState(false);
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
   
   // --- ESTADOS DEL DATASET MUTABLE (Base de datos en memoria) ---
@@ -1161,6 +1175,61 @@ export default function AppHome() {
     }
   }, [usuario?.tenantId]);
 
+  // Cargar análisis guardado + datos extra cuando se abre un período
+  const fetchReportesExtras = useCallback(async (desde: string, hasta: string) => {
+    if (!usuario?.tenantId) return;
+    // análisis guardado
+    try {
+      const cached = await api.reportesAnalisisGuardado(desde, hasta);
+      if (cached.analisis) {
+        setReportesIA(cached.analisis);
+        setReportesIAGuardado(true);
+        setReportesIAGeneradoEn(cached.generadoEn ?? null);
+      } else {
+        setReportesIA(null);
+        setReportesIAGuardado(false);
+        setReportesIAGeneradoEn(null);
+      }
+    } catch { /* silencioso */ }
+    // top clientes
+    setReportesTopClientesCargando(true);
+    try {
+      const tc = await api.reportesTopClientes(desde, hasta);
+      setReportesTopClientes(tc.clientes);
+    } catch { setReportesTopClientes([]); }
+    finally { setReportesTopClientesCargando(false); }
+    // mapa de calor
+    setReportesCalorCargando(true);
+    try {
+      const calor = await api.reportesCalor(desde, hasta);
+      setReportesCalorPedidos(calor.pedidos);
+      setReportesCalorIG(calor.igPosts);
+    } catch { setReportesCalorPedidos([]); setReportesCalorIG([]); }
+    finally { setReportesCalorCargando(false); }
+    // comparación de semanas
+    setReportesSemCompCargando(true);
+    try {
+      const hastaDate = new Date(hasta);
+      const desdeDate = new Date(desde);
+      const diffMs = hastaDate.getTime() - desdeDate.getTime();
+      const diffDias = Math.round(diffMs / 86400000) + 1;
+      const añoRef = desdeDate.getFullYear();
+      const d = new Date(desdeDate);
+      d.setHours(12, 0, 0, 0);
+      d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
+      const week1 = new Date(d.getFullYear(), 0, 4);
+      const semRef = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+      const semanas: number[] = [];
+      for (let i = 0; i < Math.min(8, Math.ceil(diffDias / 7) + 4); i++) {
+        const s = semRef - i;
+        if (s > 0) semanas.push(s);
+      }
+      const sc = await api.reportesSemanasComparacion(añoRef, semanas.slice(0, 8));
+      setReportesSemComp(sc.semanas);
+    } catch { setReportesSemComp([]); }
+    finally { setReportesSemCompCargando(false); }
+  }, [usuario?.tenantId]);
+
   const fetchReportesDetalleMes = useCallback(async (año: number, mes: number) => {
     if (!usuario?.tenantId) return;
     setReportesDetalleMesCargando(true);
@@ -1169,24 +1238,35 @@ export default function AppHome() {
     setReportesSemanaSel(null);
     setReportesDetalleSemana(null);
     setReportesIA(null);
+    setReportesTopClientes(null);
+    setReportesCalorPedidos(null);
+    setReportesCalorIG(null);
     try {
       const res = await api.reportesPeriodo(año, mes);
       setReportesDetalleMes(res as ReporteDetalle);
+      // cargar análisis guardado + extras en paralelo
+      const desde = `${año}-${String(mes).padStart(2,'0')}-01`;
+      const hasta = new Date(año, mes, 1).toISOString().slice(0,10);
+      void fetchReportesExtras(desde, hasta);
     } catch (e) {
       setReportesDetalleMesError(e instanceof Error ? e.message : 'Error al cargar detalle del mes');
     } finally {
       setReportesDetalleMesCargando(false);
     }
-  }, [usuario?.tenantId]);
+  }, [usuario?.tenantId, fetchReportesExtras]);
 
   const fetchReportesDetalleSemana = useCallback(async (sem: { num: number; label: string; desde: string; hasta: string }) => {
     if (!usuario?.tenantId) return;
     setReportesDetalleSemanaCargando(true);
     setReportesDetalleSemana(null);
     setReportesIA(null);
+    setReportesTopClientes(null);
+    setReportesCalorPedidos(null);
+    setReportesCalorIG(null);
     try {
       const res = await api.reportesPeriodoRango(sem.desde, sem.hasta, sem.label);
       setReportesDetalleSemana(res as ReporteDetalle);
+      void fetchReportesExtras(sem.desde, sem.hasta);
     } catch (e) {
       console.error('Error semana', e);
     } finally {
@@ -1198,14 +1278,12 @@ export default function AppHome() {
     if (!usuario?.tenantId) return;
     setReportesIACargando(true);
     setReportesIA(null);
+    setReportesIAGuardado(false);
     try {
-      let res: { analisis: string };
-      if (semana) {
-        res = await api.reportesIA('meses', año, mes); // IA siempre a nivel mes por ahora
-      } else {
-        res = await api.reportesIA('meses', año, mes);
-      }
+      const res = await api.reportesIA('meses', año, mes);
       setReportesIA(res.analisis);
+      setReportesIAGuardado(false);
+      setReportesIAGeneradoEn(new Date().toISOString());
     } catch (e) {
       setReportesIA(`❌ ${e instanceof Error ? e.message : 'Error en análisis IA'}`);
     } finally {
@@ -5798,21 +5876,241 @@ export default function AppHome() {
                                   </div>
                                 )}
 
+                                {/* Top Clientes */}
+                                {(reportesTopClientes && reportesTopClientes.length > 0) && (
+                                  <div className="border-t border-black pt-4">
+                                    <h4 className="font-mono text-xs font-bold mb-3 flex items-center gap-2">
+                                      <Users size={13} /> TOP CLIENTES
+                                    </h4>
+                                    <div className="flex flex-col gap-1">
+                                      {reportesTopClientes.map((c, i) => {
+                                        const maxVentas = reportesTopClientes[0]?.ventas ?? 1;
+                                        return (
+                                          <div key={c.clienteId} className="flex items-center gap-2 text-xs">
+                                            <span className="font-mono text-[10px] text-neutral-400 w-4 shrink-0">{i+1}</span>
+                                            <span className="font-bold text-black truncate flex-1">{c.nombre}</span>
+                                            <span className="font-mono text-[10px] text-neutral-500 shrink-0">{c.pedidos} ped.</span>
+                                            <div className="w-20 bg-neutral-100 h-1.5 border border-black shrink-0">
+                                              <div className="bg-black h-full" style={{ width: `${Math.round((c.ventas / maxVentas) * 100)}%` }} />
+                                            </div>
+                                            <span className="font-mono font-bold text-black shrink-0 w-24 text-right">${c.ventas.toLocaleString('es-CO')}</span>
+                                            {c.saldoPendiente > 0 && (
+                                              <span className="font-mono text-[9px] font-bold text-brand-red shrink-0">Debe ${c.saldoPendiente.toLocaleString('es-CO')}</span>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  </div>
+                                )}
+                                {reportesTopClientesCargando && (
+                                  <div className="border-t border-black pt-4 text-xs font-mono text-neutral-400 flex items-center gap-2">
+                                    <RefreshCw size={11} className="animate-spin" /> Cargando top clientes…
+                                  </div>
+                                )}
+
+                                {/* Mapa de calor — pedidos + posts IG */}
+                                {(reportesCalorPedidos !== null && !reportesCalorCargando) && (() => {
+                                  const dias = ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb'];
+                                  const horas = Array.from({ length: 24 }, (_, i) => i);
+                                  // Pedidos por día×hora
+                                  const pedCalor = new Map(
+                                    (reportesCalorPedidos ?? []).map(c => [`${c.dow}-${c.hour}`, c.cantidad])
+                                  );
+                                  const maxPed = Math.max(1, ...(reportesCalorPedidos ?? []).map(c => c.cantidad));
+                                  // Posts IG por día×hora
+                                  const igCalor = new Map<string, number>();
+                                  for (const c of (reportesCalorIG ?? [])) {
+                                    const k = `${c.dow}-${c.hour}`;
+                                    igCalor.set(k, (igCalor.get(k) ?? 0) + c.cantidad);
+                                  }
+                                  const maxIG = Math.max(1, ...Array.from(igCalor.values()));
+                                  const hayPedidos = (reportesCalorPedidos ?? []).length > 0;
+                                  const hayIG = (reportesCalorIG ?? []).length > 0;
+                                  if (!hayPedidos && !hayIG) return null;
+                                  return (
+                                    <div className="border-t border-black pt-4">
+                                      <h4 className="font-mono text-xs font-bold mb-3 flex items-center gap-2">
+                                        <CalendarDays size={13} /> MAPA DE CALOR
+                                      </h4>
+                                      {hayPedidos && (
+                                        <div className="mb-4">
+                                          <div className="font-mono text-[9px] text-neutral-400 uppercase mb-1">Pedidos por día / hora</div>
+                                          <div className="overflow-x-auto">
+                                            <table className="border-collapse text-[9px] font-mono">
+                                              <thead>
+                                                <tr>
+                                                  <th className="w-8 text-neutral-400 font-normal" />
+                                                  {horas.map(h => (
+                                                    <th key={h} className="w-5 text-center text-neutral-400 font-normal pb-0.5">
+                                                      {h % 6 === 0 ? `${h}h` : ''}
+                                                    </th>
+                                                  ))}
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {dias.map((d, dow) => (
+                                                  <tr key={dow}>
+                                                    <td className="text-neutral-500 font-bold pr-1 py-px">{d}</td>
+                                                    {horas.map(h => {
+                                                      const val = pedCalor.get(`${dow}-${h}`) ?? 0;
+                                                      const pct = val / maxPed;
+                                                      const bg = pct === 0 ? '#f5f5f5'
+                                                        : pct < 0.25 ? '#bfdbfe'
+                                                        : pct < 0.5  ? '#60a5fa'
+                                                        : pct < 0.75 ? '#2563eb'
+                                                        : '#1e3a8a';
+                                                      const fg = pct >= 0.5 ? '#fff' : '#000';
+                                                      return (
+                                                        <td key={h} title={val ? `${d} ${h}h: ${val} pedidos` : undefined}
+                                                          style={{ backgroundColor: bg, color: fg, width: 20, height: 18, textAlign: 'center', border: '1px solid #e5e7eb' }}>
+                                                          {val > 0 ? val : ''}
+                                                        </td>
+                                                      );
+                                                    })}
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </div>
+                                      )}
+                                      {hayIG && (
+                                        <div>
+                                          <div className="font-mono text-[9px] text-neutral-400 uppercase mb-1">Posts Instagram por día / hora</div>
+                                          <div className="overflow-x-auto">
+                                            <table className="border-collapse text-[9px] font-mono">
+                                              <thead>
+                                                <tr>
+                                                  <th className="w-8 text-neutral-400 font-normal" />
+                                                  {horas.map(h => (
+                                                    <th key={h} className="w-5 text-center text-neutral-400 font-normal pb-0.5">
+                                                      {h % 6 === 0 ? `${h}h` : ''}
+                                                    </th>
+                                                  ))}
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {dias.map((d, dow) => (
+                                                  <tr key={dow}>
+                                                    <td className="text-neutral-500 font-bold pr-1 py-px">{d}</td>
+                                                    {horas.map(h => {
+                                                      const val = igCalor.get(`${dow}-${h}`) ?? 0;
+                                                      const pct = val / maxIG;
+                                                      const bg = pct === 0 ? '#f5f5f5'
+                                                        : pct < 0.33 ? '#fef08a'
+                                                        : pct < 0.66 ? '#fb923c'
+                                                        : '#dc2626';
+                                                      const fg = pct >= 0.66 ? '#fff' : '#000';
+                                                      return (
+                                                        <td key={h} title={val ? `${d} ${h}h: ${val} posts` : undefined}
+                                                          style={{ backgroundColor: bg, color: fg, width: 20, height: 18, textAlign: 'center', border: '1px solid #e5e7eb' }}>
+                                                          {val > 0 ? val : ''}
+                                                        </td>
+                                                      );
+                                                    })}
+                                                  </tr>
+                                                ))}
+                                              </tbody>
+                                            </table>
+                                          </div>
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })()}
+
+                                {/* Comparación entre semanas */}
+                                {(reportesSemComp !== null && reportesSemComp.length > 0 && !reportesSemCompCargando) && (
+                                  <div className="border-t border-black pt-4">
+                                    <h4 className="font-mono text-xs font-bold mb-3 flex items-center gap-2">
+                                      <BarChart2 size={13} /> COMPARACIÓN SEMANAS
+                                    </h4>
+                                    <div className="overflow-x-auto">
+                                      <table className="w-full text-[11px] font-mono border-collapse">
+                                        <thead>
+                                          <tr className="border-b-2 border-black">
+                                            <th className="text-left py-1 pr-2 font-bold">Semana</th>
+                                            <th className="text-right py-1 px-2 font-bold">Pedidos</th>
+                                            <th className="text-right py-1 px-2 font-bold">Ventas</th>
+                                            <th className="text-right py-1 px-2 font-bold">Gastos</th>
+                                            <th className="text-right py-1 px-2 font-bold">Margen</th>
+                                            <th className="text-left py-1 pl-2 font-bold">Top producto</th>
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {reportesSemComp.map((s, i) => {
+                                            const maxVentas = Math.max(1, ...reportesSemComp.map(x => x.ventas));
+                                            const pct = Math.round((s.ventas / maxVentas) * 100);
+                                            const margenPos = s.margenBruto >= 0;
+                                            return (
+                                              <tr key={s.semana} className={`border-b border-neutral-200 ${i === 0 ? 'bg-yellow-50' : ''}`}>
+                                                <td className="py-1 pr-2">
+                                                  <div className="font-bold">S{s.semana}</div>
+                                                  <div className="text-[9px] text-neutral-400">{s.label}</div>
+                                                </td>
+                                                <td className="text-right py-1 px-2 text-neutral-600">{s.pedidos}</td>
+                                                <td className="text-right py-1 px-2">
+                                                  <div className="flex items-center justify-end gap-1">
+                                                    <div className="w-12 bg-neutral-100 h-1 border border-neutral-300 shrink-0">
+                                                      <div className="bg-black h-full" style={{ width: `${pct}%` }} />
+                                                    </div>
+                                                    <span className="font-bold">${(s.ventas/1000).toFixed(0)}k</span>
+                                                  </div>
+                                                </td>
+                                                <td className="text-right py-1 px-2 text-neutral-500">${(s.gastos/1000).toFixed(0)}k</td>
+                                                <td className={`text-right py-1 px-2 font-bold ${margenPos ? 'text-green-700' : 'text-red-600'}`}>
+                                                  {margenPos ? '+' : ''}{(s.margenBruto/1000).toFixed(0)}k
+                                                </td>
+                                                <td className="pl-2 py-1 text-[10px] text-neutral-500 truncate max-w-[90px]">
+                                                  {s.topProducto ? <><span className="text-black font-bold">{s.topProducto.nombre}</span> ${(s.topProducto.ventas/1000).toFixed(0)}k</> : '—'}
+                                                </td>
+                                              </tr>
+                                            );
+                                          })}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  </div>
+                                )}
+                                {reportesSemCompCargando && (
+                                  <div className="border-t border-black pt-4 text-xs font-mono text-neutral-400 flex items-center gap-2">
+                                    <RefreshCw size={11} className="animate-spin" /> Cargando comparación de semanas…
+                                  </div>
+                                )}
+
                                 {/* Análisis IA */}
                                 <div className="border-t border-black pt-4">
-                                  <div className="flex items-center justify-between mb-3">
-                                    <h4 className="font-mono text-xs font-bold flex items-center gap-2"><Sparkles size={13} /> ANÁLISIS IA</h4>
+                                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                                    <div>
+                                      <h4 className="font-mono text-xs font-bold flex items-center gap-2"><Sparkles size={13} /> ANÁLISIS IA</h4>
+                                      {reportesIAGeneradoEn && (
+                                        <span className="font-mono text-[9px] text-neutral-400">
+                                          {reportesIAGuardado ? '💾 Guardado' : '✨ Nuevo'} · {new Date(reportesIAGeneradoEn).toLocaleString('es-CO', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}
+                                        </span>
+                                      )}
+                                    </div>
                                     <button
                                       type="button"
                                       onClick={() => void fetchReportesIA(reportesAño, reportesMesSel!, reportesSemanaSel ?? undefined)}
                                       disabled={reportesIACargando}
                                       className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
                                     >
-                                      {reportesIACargando ? <><RefreshCw size={11} className="animate-spin" /> Analizando…</> : <><Sparkles size={11} /> {reportesIA ? 'Re-analizar' : 'Generar análisis'}</>}
+                                      {reportesIACargando
+                                        ? <><RefreshCw size={11} className="animate-spin" /> Analizando…</>
+                                        : <><Sparkles size={11} /> {reportesIA ? 'Re-analizar' : 'Generar análisis'}</>}
                                     </button>
                                   </div>
-                                  {!reportesIA && !reportesIACargando && <p className="text-xs font-mono text-neutral-400 italic text-center py-3">Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales.</p>}
-                                  {reportesIACargando && <div className="flex items-center gap-2 py-4 text-xs font-mono text-neutral-500"><RefreshCw size={14} className="animate-spin" /> Analizando con IA…</div>}
+                                  {!reportesIA && !reportesIACargando && (
+                                    <p className="text-xs font-mono text-neutral-400 italic text-center py-3">
+                                      Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales.
+                                    </p>
+                                  )}
+                                  {reportesIACargando && (
+                                    <div className="flex items-center gap-2 py-4 text-xs font-mono text-neutral-500">
+                                      <RefreshCw size={14} className="animate-spin" /> Analizando con IA…
+                                    </div>
+                                  )}
                                   {reportesIA && !reportesIACargando && (
                                     <div className="font-mono text-xs leading-relaxed space-y-2">
                                       {reportesIA.split('\n').map((line, i) => {
