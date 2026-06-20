@@ -9,6 +9,8 @@
  */
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import type { PoolClient } from 'pg'
+import type Groq from 'groq-sdk'
 import { getGroq } from '../../lib/ai/client.js'
 
 function exigirTenant(
@@ -42,7 +44,7 @@ function mondayOfISOWeek(year: number, week: number): Date {
   return monday
 }
 
-type RangoFechas = {
+export type RangoFechas = {
   desde: string  // YYYY-MM-DD
   hasta: string  // YYYY-MM-DD  (exclusive: el primer día fuera del período)
   label: string
@@ -50,7 +52,7 @@ type RangoFechas = {
   hastaPrev: string
 }
 
-function rangoMes(año: number, mes: number): RangoFechas {
+export function rangoMes(año: number, mes: number): RangoFechas {
   const desde = new Date(Date.UTC(año, mes - 1, 1))
   const hasta = new Date(Date.UTC(año, mes, 1))   // primer día del mes siguiente
   const desdePrev = new Date(Date.UTC(año, mes - 2, 1))
@@ -121,6 +123,153 @@ function parseQuery(q: Record<string, string | string[] | undefined>): RangoFech
 function semanasEnAño(año: number): number {
   // La semana 53 existe si el 28 de diciembre cae en semana 53
   return isoWeek(new Date(Date.UTC(año, 11, 28))) === 53 ? 53 : 52
+}
+
+/**
+ * Genera el análisis de IA del período (negocio + Instagram) con Groq y lo
+ * guarda en `reportes_analisis` (UPSERT por periodo_key). Extraído como
+ * función standalone para que tanto la ruta `/reportes/ia` (clic manual) como
+ * el cron mensual (`reportes_cron.ts`, al cerrar cada mes) compartan la misma
+ * lógica — el cron no tiene un `request` de Fastify, solo una conexión `db`.
+ */
+export async function generarAnalisisIA(
+  db: PoolClient,
+  groq: Groq,
+  rango: RangoFechas,
+): Promise<{ analisis: string; postsAnalizados: number }> {
+  type IgPostRow = {
+    tipo: string; caption: string | null; publicadoEn: string;
+    likes: number; comentarios: number; reproducciones: number | null; hashtags: string[]
+  }
+  type VentasRow = {
+    totalPedidos: string; totalVentas: string; ticketPromedio: string;
+    totalVentasPrev: string; totalPedidosPrev: string;
+  }
+  type TopRow = { nombre: string; unidades: string; ventasTotal: string }
+  type GastosRow = { totalGastos: string }
+
+  // ── Datos de negocio del período ──────────────────────────────────────
+  const [ventasQ, topQ, gastosQ, igResultado] = await Promise.all([
+    db.query<VentasRow>(`
+      SELECT
+        COUNT(*) FILTER (WHERE created_at >= $1 AND created_at < $2)                 AS "totalPedidos",
+        COALESCE(SUM(total) FILTER (WHERE created_at >= $1 AND created_at < $2), 0)  AS "totalVentas",
+        COALESCE(AVG(total) FILTER (WHERE created_at >= $1 AND created_at < $2), 0)  AS "ticketPromedio",
+        COUNT(*) FILTER (WHERE created_at >= $3 AND created_at < $4)                 AS "totalPedidosPrev",
+        COALESCE(SUM(total) FILTER (WHERE created_at >= $3 AND created_at < $4), 0)  AS "totalVentasPrev"
+      FROM pedidos
+      WHERE estado != 'cancelado' AND deleted_at IS NULL
+    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev]),
+
+    db.query<TopRow>(`
+      SELECT p.nombre, SUM(pi.cantidad) AS unidades, SUM(pi.subtotal) AS "ventasTotal"
+      FROM pedido_items pi
+      JOIN productos p ON pi.producto_id = p.id
+      JOIN pedidos pe  ON pi.pedido_id  = pe.id
+      WHERE pe.created_at >= $1 AND pe.created_at < $2
+        AND pe.estado != 'cancelado' AND pe.deleted_at IS NULL AND pi.producto_id IS NOT NULL
+      GROUP BY p.id, p.nombre
+      ORDER BY "ventasTotal" DESC LIMIT 5
+    `, [rango.desde, rango.hasta]),
+
+    db.query<GastosRow>(`
+      SELECT COALESCE(SUM(monto), 0) AS "totalGastos"
+      FROM gastos_operativos WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
+    `, [rango.desde, rango.hasta]),
+
+    // Posts de Instagram del período — puede fallar si ig_posts no existe aún
+    db.query<IgPostRow>(`
+      SELECT tipo, caption, publicado_en AS "publicadoEn",
+             likes, comentarios, reproducciones, hashtags
+      FROM ig_posts
+      WHERE publicado_en >= $1 AND publicado_en < $2
+        AND cuenta_id = (SELECT id FROM ig_cuentas ORDER BY created_at LIMIT 1)
+      ORDER BY (likes + comentarios) DESC
+      LIMIT 20
+    `, [rango.desde, rango.hasta]).catch((): { rows: IgPostRow[] } => ({ rows: [] })),
+  ])
+
+  const igPosts: IgPostRow[] = igResultado.rows
+
+  const v = ventasQ.rows[0]!
+  const g = gastosQ.rows[0]!
+  const tops = topQ.rows
+
+  const totalVentas = Number(v.totalVentas)
+  const totalVentasPrev = Number(v.totalVentasPrev)
+  const cambioVentas = totalVentasPrev > 0
+    ? ((totalVentas - totalVentasPrev) / totalVentasPrev * 100).toFixed(1)
+    : null
+  const totalGastos = Number(g.totalGastos)
+
+  // ── Construir prompt ──────────────────────────────────────────────────
+  const negocioCtx = `
+PERÍODO ANALIZADO: ${rango.label}
+
+VENTAS:
+- Total: $${totalVentas.toLocaleString('es-CO')} COP
+- Pedidos: ${v.totalPedidos}
+- Ticket promedio: $${Number(v.ticketPromedio).toLocaleString('es-CO')} COP
+${cambioVentas !== null ? `- Variación vs período anterior: ${Number(cambioVentas) >= 0 ? '+' : ''}${cambioVentas}%` : ''}
+
+TOP PRODUCTOS VENDIDOS:
+${tops.map((p, i) => `${i + 1}. ${p.nombre} — ${p.unidades} unidades, $${Number(p.ventasTotal).toLocaleString('es-CO')} COP`).join('\n') || '(Sin datos)'}
+
+GASTOS OPERATIVOS: $${totalGastos.toLocaleString('es-CO')} COP
+MARGEN BRUTO ESTIMADO: $${(totalVentas - totalGastos).toLocaleString('es-CO')} COP`.trim()
+
+  const igLineas = igPosts.map((p: IgPostRow, i: number): string => {
+    const fecha = new Date(p.publicadoEn).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })
+    const caption = p.caption?.slice(0, 120).replace(/\n/g, ' ') ?? '(sin caption)'
+    const tags = p.hashtags?.slice(0, 5).map((h: string) => `#${h}`).join(' ') ?? ''
+    return `${i + 1}. [${p.tipo.toUpperCase()}] ${fecha} · ❤${p.likes} 💬${p.comentarios}${p.reproducciones ? ` 👁${p.reproducciones}` : ''} · "${caption}" ${tags}`
+  })
+
+  const igCtx = igPosts.length > 0
+    ? `\nPUBLICACIONES DE INSTAGRAM EN EL PERÍODO (${igPosts.length} posts, ordenados por engagement):\n${igLineas.join('\n')}`
+    : '\nINSTAGRAM: Sin publicaciones en este período.'
+
+  const prompt = `Eres un analista de negocio experto para pequeñas empresas colombianas. Analiza los datos del período y entrega un reporte en español conciso, directo y accionable.
+
+${negocioCtx}
+${igCtx}
+
+Responde en formato markdown con estas secciones (máximo 200 palabras en total):
+
+## 📊 Resumen del período
+(2-3 frases con lo más importante del negocio)
+
+## 🛒 Ventas y Productos
+(1-2 insights accionables sobre qué vendió bien, qué no, y por qué)
+
+## 📱 Redes Sociales
+(Solo si hay datos de Instagram: qué formato funcionó mejor, qué tono generó más interacción, qué días/contenido recomiendas)
+
+## ⚡ Recomendaciones
+(2-3 acciones concretas para el siguiente período)`
+
+  const completion = await groq.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    messages: [{ role: 'user', content: prompt }],
+    max_tokens: 600,
+    temperature: 0.6,
+  })
+
+  const analisis = completion.choices[0]?.message.content ?? 'No se pudo generar el análisis.'
+
+  // Guardar automáticamente en BD (upsert por periodo_key)
+  const periodoKey = rango.desde + '_' + rango.hasta
+  await db.query(
+    `INSERT INTO reportes_analisis (periodo_key, periodo_label, desde, hasta, analisis, posts_analizados)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     ON CONFLICT (periodo_key) DO UPDATE
+       SET analisis = EXCLUDED.analisis,
+           posts_analizados = EXCLUDED.posts_analizados,
+           updated_at = NOW()`,
+    [periodoKey, rango.label, rango.desde, rango.hasta, analisis, igPosts.length],
+  )
+
+  return { analisis, postsAnalizados: igPosts.length }
 }
 
 export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
@@ -411,145 +560,14 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     }
 
     const rango = parseQuery(request.query as Record<string, string>)
-    const db = request.tenantDb
     const groq = getGroq(fastify.config.GROQ_API_KEY)
 
-    type IgPostRow = {
-      tipo: string; caption: string | null; publicadoEn: string;
-      likes: number; comentarios: number; reproducciones: number | null; hashtags: string[]
-    }
-    type VentasRow = {
-      totalPedidos: string; totalVentas: string; ticketPromedio: string;
-      totalVentasPrev: string; totalPedidosPrev: string;
-    }
-    type TopRow = { nombre: string; unidades: string; ventasTotal: string }
-    type GastosRow = { totalGastos: string }
-
-    // ── Datos de negocio del período ──────────────────────────────────────
-    const [ventasQ, topQ, gastosQ, igResultado] = await Promise.all([
-      db.query<VentasRow>(`
-        SELECT
-          COUNT(*) FILTER (WHERE created_at >= $1 AND created_at < $2)                 AS "totalPedidos",
-          COALESCE(SUM(total) FILTER (WHERE created_at >= $1 AND created_at < $2), 0)  AS "totalVentas",
-          COALESCE(AVG(total) FILTER (WHERE created_at >= $1 AND created_at < $2), 0)  AS "ticketPromedio",
-          COUNT(*) FILTER (WHERE created_at >= $3 AND created_at < $4)                 AS "totalPedidosPrev",
-          COALESCE(SUM(total) FILTER (WHERE created_at >= $3 AND created_at < $4), 0)  AS "totalVentasPrev"
-        FROM pedidos
-        WHERE estado != 'cancelado' AND deleted_at IS NULL
-      `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev]),
-
-      db.query<TopRow>(`
-        SELECT p.nombre, SUM(pi.cantidad) AS unidades, SUM(pi.subtotal) AS "ventasTotal"
-        FROM pedido_items pi
-        JOIN productos p ON pi.producto_id = p.id
-        JOIN pedidos pe  ON pi.pedido_id  = pe.id
-        WHERE pe.created_at >= $1 AND pe.created_at < $2
-          AND pe.estado != 'cancelado' AND pe.deleted_at IS NULL AND pi.producto_id IS NOT NULL
-        GROUP BY p.id, p.nombre
-        ORDER BY "ventasTotal" DESC LIMIT 5
-      `, [rango.desde, rango.hasta]),
-
-      db.query<GastosRow>(`
-        SELECT COALESCE(SUM(monto), 0) AS "totalGastos"
-        FROM gastos_operativos WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
-      `, [rango.desde, rango.hasta]),
-
-      // Posts de Instagram del período — puede fallar si ig_posts no existe aún
-      db.query<IgPostRow>(`
-        SELECT tipo, caption, publicado_en AS "publicadoEn",
-               likes, comentarios, reproducciones, hashtags
-        FROM ig_posts
-        WHERE publicado_en >= $1 AND publicado_en < $2
-          AND cuenta_id = (SELECT id FROM ig_cuentas ORDER BY created_at LIMIT 1)
-        ORDER BY (likes + comentarios) DESC
-        LIMIT 20
-      `, [rango.desde, rango.hasta]).catch((): { rows: IgPostRow[] } => ({ rows: [] })),
-    ])
-
-    const igPosts: IgPostRow[] = igResultado.rows
-
-    const v = ventasQ.rows[0]!
-    const g = gastosQ.rows[0]!
-    const tops = topQ.rows
-
-    const totalVentas = Number(v.totalVentas)
-    const totalVentasPrev = Number(v.totalVentasPrev)
-    const cambioVentas = totalVentasPrev > 0
-      ? ((totalVentas - totalVentasPrev) / totalVentasPrev * 100).toFixed(1)
-      : null
-    const totalGastos = Number(g.totalGastos)
-
-    // ── Construir prompt ──────────────────────────────────────────────────
-    const negocioCtx = `
-PERÍODO ANALIZADO: ${rango.label}
-
-VENTAS:
-- Total: $${totalVentas.toLocaleString('es-CO')} COP
-- Pedidos: ${v.totalPedidos}
-- Ticket promedio: $${Number(v.ticketPromedio).toLocaleString('es-CO')} COP
-${cambioVentas !== null ? `- Variación vs período anterior: ${Number(cambioVentas) >= 0 ? '+' : ''}${cambioVentas}%` : ''}
-
-TOP PRODUCTOS VENDIDOS:
-${tops.map((p, i) => `${i + 1}. ${p.nombre} — ${p.unidades} unidades, $${Number(p.ventasTotal).toLocaleString('es-CO')} COP`).join('\n') || '(Sin datos)'}
-
-GASTOS OPERATIVOS: $${totalGastos.toLocaleString('es-CO')} COP
-MARGEN BRUTO ESTIMADO: $${(totalVentas - totalGastos).toLocaleString('es-CO')} COP`.trim()
-
-    const igLineas = igPosts.map((p: IgPostRow, i: number): string => {
-      const fecha = new Date(p.publicadoEn).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })
-      const caption = p.caption?.slice(0, 120).replace(/\n/g, ' ') ?? '(sin caption)'
-      const tags = p.hashtags?.slice(0, 5).map((h: string) => `#${h}`).join(' ') ?? ''
-      return `${i + 1}. [${p.tipo.toUpperCase()}] ${fecha} · ❤${p.likes} 💬${p.comentarios}${p.reproducciones ? ` 👁${p.reproducciones}` : ''} · "${caption}" ${tags}`
-    })
-
-    const igCtx = igPosts.length > 0
-      ? `\nPUBLICACIONES DE INSTAGRAM EN EL PERÍODO (${igPosts.length} posts, ordenados por engagement):\n${igLineas.join('\n')}`
-      : '\nINSTAGRAM: Sin publicaciones en este período.'
-
-    const prompt = `Eres un analista de negocio experto para pequeñas empresas colombianas. Analiza los datos del período y entrega un reporte en español conciso, directo y accionable.
-
-${negocioCtx}
-${igCtx}
-
-Responde en formato markdown con estas secciones (máximo 200 palabras en total):
-
-## 📊 Resumen del período
-(2-3 frases con lo más importante del negocio)
-
-## 🛒 Ventas y Productos
-(1-2 insights accionables sobre qué vendió bien, qué no, y por qué)
-
-## 📱 Redes Sociales
-(Solo si hay datos de Instagram: qué formato funcionó mejor, qué tono generó más interacción, qué días/contenido recomiendas)
-
-## ⚡ Recomendaciones
-(2-3 acciones concretas para el siguiente período)`
-
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
-      max_tokens: 600,
-      temperature: 0.6,
-    })
-
-    const analisis = completion.choices[0]?.message.content ?? 'No se pudo generar el análisis.'
-
-    // Guardar automáticamente en BD (upsert por periodo_key)
-    const periodoKey = rango.desde + '_' + rango.hasta
-    await request.tenantDb.query(
-      `INSERT INTO reportes_analisis (periodo_key, periodo_label, desde, hasta, analisis, posts_analizados)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (periodo_key) DO UPDATE
-         SET analisis = EXCLUDED.analisis,
-             posts_analizados = EXCLUDED.posts_analizados,
-             updated_at = NOW()`,
-      [periodoKey, rango.label, rango.desde, rango.hasta, analisis, igPosts.length],
-    )
+    const { analisis, postsAnalizados } = await generarAnalisisIA(request.tenantDb, groq, rango)
 
     return reply.send({
       periodo: { label: rango.label, desde: rango.desde, hasta: rango.hasta },
       analisis,
-      postsAnalizados: igPosts.length,
+      postsAnalizados,
       guardado: true,
     })
   })

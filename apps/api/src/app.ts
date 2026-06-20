@@ -8,6 +8,7 @@ import { releaseTenantConnection, tenantResolver } from './middleware/tenant-res
 import authPlugin from './plugins/auth.js'
 import dbPlugin from './plugins/db.js'
 import { igCronPlugin } from './plugins/ig_cron.js'
+import { reportesCronPlugin } from './plugins/reportes_cron.js'
 import { provisionarSchemaDeTenant } from '@antigravity/db'
 import { adminTenantsRoutes } from './routes/admin/tenants.js'
 import { adminUsuariosRoutes } from './routes/admin/usuarios.js'
@@ -95,6 +96,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(aiChatRoutes)
   await app.register(webhookApifyRoutes)
   await app.register(igCronPlugin)
+  await app.register(reportesCronPlugin)
   await app.register(papeleraRoutes)
   await app.register(dashboardRoutes)
   await app.register(reportesRoutes)

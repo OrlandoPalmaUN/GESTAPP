@@ -6237,7 +6237,7 @@ export default function AppHome() {
                                   </div>
                                   {!reportesIA && !reportesIACargando && (
                                     <p className="text-xs font-mono text-neutral-400 italic text-center py-3">
-                                      Haz clic en &quot;Generar análisis&quot; para obtener insights de IA sobre ventas, productos y redes sociales.
+                                      Aún no hay análisis para este período. Se genera automáticamente cuando el mes cierra — o haz clic en &quot;Generar análisis&quot; para verlo ahora.
                                     </p>
                                   )}
                                   {reportesIACargando && (
