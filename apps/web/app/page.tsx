@@ -1272,9 +1272,9 @@ export default function AppHome() {
     } finally {
       setReportesDetalleSemanaCargando(false);
     }
-  }, [usuario?.tenantId]);
+  }, [usuario?.tenantId, fetchReportesExtras]);
 
-  const fetchReportesIA = useCallback(async (año: number, mes: number, semana?: { desde: string; hasta: string; label: string }) => {
+  const fetchReportesIA = useCallback(async (año: number, mes: number) => {
     if (!usuario?.tenantId) return;
     setReportesIACargando(true);
     setReportesIA(null);
@@ -5972,7 +5972,6 @@ export default function AppHome() {
                                     igPorTipo.get(tipo)!.set(k, (igPorTipo.get(tipo)!.get(k) ?? 0) + c.cantidad);
                                   }
                                   const tiposIG = Array.from(igPorTipo.keys()).sort();
-                                  const maxIG = Math.max(1, ...(reportesCalorIG ?? []).map(c => c.cantidad));
                                   const hayPedidos = (reportesCalorPedidos ?? []).length > 0;
                                   const hayIG = (reportesCalorIG ?? []).length > 0;
                                   if (!hayPedidos && !hayIG) return null;
@@ -6145,7 +6144,7 @@ export default function AppHome() {
                                     </div>
                                     <button
                                       type="button"
-                                      onClick={() => void fetchReportesIA(reportesAño, reportesMesSel!, reportesSemanaSel ?? undefined)}
+                                      onClick={() => void fetchReportesIA(reportesAño, reportesMesSel!)}
                                       disabled={reportesIACargando}
                                       className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50"
                                     >
