@@ -1243,26 +1243,40 @@ export default function AppHome() {
       setReportesCalorIG(calor.igPosts);
     } catch { setReportesCalorPedidos([]); setReportesCalorIG([]); }
     finally { setReportesCalorCargando(false); }
-    // comparación de semanas
+    // comparación de semanas — solo las semanas ISO que caen dentro del período analizado (el mes/semana abierto)
     setReportesSemCompCargando(true);
     try {
+      const isoWeekNumDe = (date: Date): { semana: number; año: number } => {
+        const d = new Date(date);
+        d.setHours(12, 0, 0, 0);
+        d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7)); // jueves de esa semana ISO
+        const año = d.getFullYear();
+        const week1 = new Date(año, 0, 4);
+        const semana = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+        return { semana, año };
+      };
+
       const hastaDate = new Date(hasta);
-      const desdeDate = new Date(desde);
-      const diffMs = hastaDate.getTime() - desdeDate.getTime();
-      const diffDias = Math.round(diffMs / 86400000) + 1;
-      const añoRef = desdeDate.getFullYear();
-      const d = new Date(desdeDate);
-      d.setHours(12, 0, 0, 0);
-      d.setDate(d.getDate() + 3 - ((d.getDay() + 6) % 7));
-      const week1 = new Date(d.getFullYear(), 0, 4);
-      const semRef = 1 + Math.round(((d.getTime() - week1.getTime()) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
-      const semanas: number[] = [];
-      for (let i = 0; i < Math.min(8, Math.ceil(diffDias / 7) + 4); i++) {
-        const s = semRef - i;
-        if (s > 0) semanas.push(s);
+      const cursor = new Date(desde);
+      cursor.setHours(12, 0, 0, 0);
+      const semanasVistas = new Set<string>();
+      const semanasPorAño = new Map<number, number[]>();
+      while (cursor < hastaDate) {
+        const { semana, año } = isoWeekNumDe(cursor);
+        const clave = `${año}-${semana}`;
+        if (!semanasVistas.has(clave)) {
+          semanasVistas.add(clave);
+          if (!semanasPorAño.has(año)) semanasPorAño.set(año, []);
+          semanasPorAño.get(año)!.push(semana);
+        }
+        cursor.setDate(cursor.getDate() + 7);
       }
-      const sc = await api.reportesSemanasComparacion(añoRef, semanas.slice(0, 8));
-      setReportesSemComp(sc.semanas);
+
+      const resultados = await Promise.all(
+        Array.from(semanasPorAño.entries()).map(([año, semanas]) => api.reportesSemanasComparacion(año, semanas)),
+      );
+      const todasLasSemanas = resultados.flatMap((r) => r.semanas).reverse(); // más reciente primero
+      setReportesSemComp(todasLasSemanas);
     } catch { setReportesSemComp([]); }
     finally { setReportesSemCompCargando(false); }
   }, [usuario?.tenantId]);
