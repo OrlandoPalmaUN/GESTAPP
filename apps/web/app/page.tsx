@@ -2989,16 +2989,16 @@ export default function AppHome() {
                           <div className="flex items-center gap-2">
                             <CalendarDays size={18} className="text-brand-blue shrink-0" />
                             <div>
-                              <h3 className="font-mono text-sm font-bold">PRÓXIMOS 7 DÍAS</h3>
+                              <h3 className="font-mono text-sm font-bold">PRÓXIMOS DÍAS</h3>
                               <p className="text-[11px] text-neutral-500">Notas, recordatorios y posts planeados — módulo de Comunicaciones</p>
                             </div>
                           </div>
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"
-                              onClick={() => setDashboardWeekOffset((o) => o - 7)}
+                              onClick={() => setDashboardWeekOffset((o) => o - 1)}
                               className="neo-btn p-1.5 hover:bg-neutral-100"
-                              title="7 días atrás"
+                              title="1 día atrás"
                             >
                               <ChevronLeft size={14} />
                             </button>
@@ -3014,9 +3014,9 @@ export default function AppHome() {
                             )}
                             <button
                               type="button"
-                              onClick={() => setDashboardWeekOffset((o) => o + 7)}
+                              onClick={() => setDashboardWeekOffset((o) => o + 1)}
                               className="neo-btn p-1.5 hover:bg-neutral-100"
-                              title="7 días adelante"
+                              title="1 día adelante"
                             >
                               <ChevronRight size={14} />
                             </button>
@@ -3024,10 +3024,10 @@ export default function AppHome() {
                         </div>
 
                         {(() => {
-                          const dias = Array.from({ length: 7 }, (_, i) => {
+                          const dias = [-1, 0, 1, 2].map((offset) => {
                             const d = new Date();
                             d.setHours(0, 0, 0, 0);
-                            d.setDate(d.getDate() + dashboardWeekOffset + i);
+                            d.setDate(d.getDate() + dashboardWeekOffset + offset);
                             return d;
                           });
                           const hoy = new Date();

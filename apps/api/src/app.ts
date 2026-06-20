@@ -8,6 +8,7 @@ import { releaseTenantConnection, tenantResolver } from './middleware/tenant-res
 import authPlugin from './plugins/auth.js'
 import dbPlugin from './plugins/db.js'
 import { igCronPlugin } from './plugins/ig_cron.js'
+import { provisionarSchemaDeTenant } from '@antigravity/db'
 import { adminTenantsRoutes } from './routes/admin/tenants.js'
 import { adminUsuariosRoutes } from './routes/admin/usuarios.js'
 import { authRoutes } from './routes/auth.js'
@@ -96,6 +97,26 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(papeleraRoutes)
   await app.register(dashboardRoutes)
   await app.register(reportesRoutes)
+
+  // Al arrancar el servidor, aplica migraciones de tenant pendientes en todos
+  // los tenants activos. Idempotente — solo corre lo que no está en migration_log.
+  app.addHook('onReady', async () => {
+    try {
+      const tenants = await app.prisma.tenant.findMany({ where: { status: 'active' } })
+      for (const tenant of tenants) {
+        try {
+          const aplicadas = await provisionarSchemaDeTenant(app.pg, tenant.schemaName)
+          if (aplicadas.length > 0) {
+            app.log.info({ slug: tenant.slug, aplicadas }, 'migraciones de tenant aplicadas al arrancar')
+          }
+        } catch (err) {
+          app.log.error({ slug: tenant.slug, err }, 'error al migrar tenant al arrancar')
+        }
+      }
+    } catch (err) {
+      app.log.error({ err }, 'error al obtener tenants para migración de arranque')
+    }
+  })
 
   return app
 }
