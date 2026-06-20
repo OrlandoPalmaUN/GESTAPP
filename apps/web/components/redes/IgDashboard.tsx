@@ -168,18 +168,19 @@ function PostRow({
     <button
       type="button"
       onClick={() => onSelect(post.id)}
-      className="w-full flex items-center gap-3 border-b border-neutral-200 last:border-b-0 py-2 text-xs text-left hover:bg-neutral-50 transition-colors"
+      className="w-full grid items-center gap-3 border-b border-neutral-200 last:border-b-0 py-2 text-xs text-left hover:bg-neutral-50 transition-colors"
+      style={{ gridTemplateColumns: '3.5rem 2rem 1fr 7.5rem 4.5rem 1rem' }}
     >
       {/* Tipo badge */}
-      <span className="font-mono text-[9px] border border-black px-1 shrink-0 uppercase">{post.tipo}</span>
+      <span className="font-mono text-[9px] border border-black px-1 justify-self-start uppercase">{post.tipo}</span>
       {/* Thumbnail */}
-      {post.thumbnailUrl && (
-        <img src={imgProxyUrl(post.thumbnailUrl)} alt="" className="w-8 h-8 object-cover border border-black shrink-0" />
-      )}
+      {post.thumbnailUrl ? (
+        <img src={imgProxyUrl(post.thumbnailUrl)} alt="" className="w-8 h-8 object-cover border border-black" />
+      ) : <span />}
       {/* Caption */}
-      <span className="text-neutral-700 truncate flex-1">{preview || <em className="text-neutral-400">Sin caption</em>}</span>
+      <span className="text-neutral-700 truncate">{preview || <em className="text-neutral-400">Sin caption</em>}</span>
       {/* Métricas */}
-      <div className="flex items-center gap-3 font-mono text-[10px] text-neutral-600 shrink-0">
+      <div className="flex items-center gap-3 font-mono text-[10px] text-neutral-600 justify-self-end">
         <span className="flex items-center gap-0.5"><Heart size={10} /> {n(post.likes)}</span>
         <span className="flex items-center gap-0.5"><MessageCircle size={10} /> {n(post.comentarios)}</span>
         {post.reproducciones != null && (
@@ -189,8 +190,8 @@ function PostRow({
         )}
       </div>
       {/* Fecha */}
-      <span className="font-mono text-[10px] text-neutral-400 shrink-0">{fmtDate(post.publicadoEn)}</span>
-      <ArrowUpRight size={12} className="text-neutral-300 shrink-0" />
+      <span className="font-mono text-[10px] text-neutral-400 justify-self-end">{fmtDate(post.publicadoEn)}</span>
+      <ArrowUpRight size={12} className="text-neutral-300 justify-self-end" />
     </button>
   )
 }
