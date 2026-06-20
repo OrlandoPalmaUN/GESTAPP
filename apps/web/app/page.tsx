@@ -5818,8 +5818,52 @@ export default function AppHome() {
                           {(() => {
                             const d = reportesSemanaSel ? reportesDetalleSemana : reportesDetalleMes;
                             if (!d || reportesDetalleMesCargando || reportesDetalleSemanaCargando) return null;
+                            const exportarCSV = () => {
+                              const rows: string[][] = [
+                                ['Período', d.periodo.label],
+                                ['Desde', d.periodo.desde],
+                                ['Hasta', d.periodo.hasta],
+                                [],
+                                ['RESUMEN'],
+                                ['Ventas totales', String(d.ventas.total)],
+                                ['Pedidos', String(d.ventas.pedidos)],
+                                ['Ticket promedio', String(d.ventas.ticketPromedio)],
+                                ['Compras / OC', String(d.compras.total)],
+                                ['Gastos operativos', String(d.gastos.total)],
+                                ['CxC cobrada', String(d.cxcCobrada)],
+                                ['Ingresos manuales', String(d.ingresosManuales)],
+                                ['Margen bruto', String(d.margenBruto.total)],
+                                ['Margen bruto %', String(d.margenBruto.porcentaje)],
+                                ['Utilidad neta', String(d.utilidadNeta)],
+                                [],
+                                ['TOP PRODUCTOS'],
+                                ['Producto', 'Categoría', 'Unidades', 'Ventas'],
+                                ...(d.topProductos.map(p => [p.nombre, p.categoria ?? '', String(p.unidades), String(p.ventasTotal)])),
+                                [],
+                                ['TOP CLIENTES'],
+                                ['Cliente', 'Pedidos', 'Ventas', 'Saldo pendiente'],
+                                ...((reportesTopClientes ?? []).map(c => [c.nombre, String(c.pedidos), String(c.ventas), String(c.saldoPendiente)])),
+                                [],
+                                ['COMPARACIÓN SEMANAS'],
+                                ['Semana', 'Pedidos', 'Ventas', 'Gastos', 'Margen bruto', 'Top producto'],
+                                ...((reportesSemComp ?? []).map(s => [s.label, String(s.pedidos), String(s.ventas), String(s.gastos), String(s.margenBruto), s.topProducto?.nombre ?? ''])),
+                              ];
+                              const csv = rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
+                              const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8;' });
+                              const url = URL.createObjectURL(blob);
+                              const a = document.createElement('a');
+                              a.href = url;
+                              a.download = `reporte_${d.periodo.label.replace(/\s+/g,'_')}.csv`;
+                              a.click();
+                              URL.revokeObjectURL(url);
+                            };
                             return (
                               <>
+                                <div className="flex justify-end mb-1">
+                                  <button type="button" onClick={exportarCSV} className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5">
+                                    <FileSpreadsheet size={12} /> Exportar CSV
+                                  </button>
+                                </div>
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                   {[
                                     { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''}`, delta: d.ventas.delta, color: 'text-green-700' },
@@ -5919,12 +5963,16 @@ export default function AppHome() {
                                   );
                                   const maxPed = Math.max(1, ...(reportesCalorPedidos ?? []).map(c => c.cantidad));
                                   // Posts IG por día×hora
-                                  const igCalor = new Map<string, number>();
+                                  // Agrupar IG por tipo → Map<tipo, Map<"dow-hour", cantidad>>
+                                  const igPorTipo = new Map<string, Map<string, number>>();
                                   for (const c of (reportesCalorIG ?? [])) {
+                                    const tipo = c.tipo ?? 'otro';
+                                    if (!igPorTipo.has(tipo)) igPorTipo.set(tipo, new Map());
                                     const k = `${c.dow}-${c.hour}`;
-                                    igCalor.set(k, (igCalor.get(k) ?? 0) + c.cantidad);
+                                    igPorTipo.get(tipo)!.set(k, (igPorTipo.get(tipo)!.get(k) ?? 0) + c.cantidad);
                                   }
-                                  const maxIG = Math.max(1, ...Array.from(igCalor.values()));
+                                  const tiposIG = Array.from(igPorTipo.keys()).sort();
+                                  const maxIG = Math.max(1, ...(reportesCalorIG ?? []).map(c => c.cantidad));
                                   const hayPedidos = (reportesCalorPedidos ?? []).length > 0;
                                   const hayIG = (reportesCalorIG ?? []).length > 0;
                                   if (!hayPedidos && !hayIG) return null;
@@ -5975,47 +6023,52 @@ export default function AppHome() {
                                           </div>
                                         </div>
                                       )}
-                                      {hayIG && (
-                                        <div>
-                                          <div className="font-mono text-[9px] text-neutral-400 uppercase mb-1">Posts Instagram por día / hora</div>
-                                          <div className="overflow-x-auto">
-                                            <table className="border-collapse text-[9px] font-mono">
-                                              <thead>
-                                                <tr>
-                                                  <th className="w-8 text-neutral-400 font-normal" />
-                                                  {horas.map(h => (
-                                                    <th key={h} className="w-5 text-center text-neutral-400 font-normal pb-0.5">
-                                                      {h % 6 === 0 ? `${h}h` : ''}
-                                                    </th>
-                                                  ))}
-                                                </tr>
-                                              </thead>
-                                              <tbody>
-                                                {dias.map((d, dow) => (
-                                                  <tr key={dow}>
-                                                    <td className="text-neutral-500 font-bold pr-1 py-px">{d}</td>
-                                                    {horas.map(h => {
-                                                      const val = igCalor.get(`${dow}-${h}`) ?? 0;
-                                                      const pct = val / maxIG;
-                                                      const bg = pct === 0 ? '#f5f5f5'
-                                                        : pct < 0.33 ? '#fef08a'
-                                                        : pct < 0.66 ? '#fb923c'
-                                                        : '#dc2626';
-                                                      const fg = pct >= 0.66 ? '#fff' : '#000';
-                                                      return (
-                                                        <td key={h} title={val ? `${d} ${h}h: ${val} posts` : undefined}
-                                                          style={{ backgroundColor: bg, color: fg, width: 20, height: 18, textAlign: 'center', border: '1px solid #e5e7eb' }}>
-                                                          {val > 0 ? val : ''}
-                                                        </td>
-                                                      );
-                                                    })}
+                                      {hayIG && tiposIG.map(tipo => {
+                                        const calor = igPorTipo.get(tipo)!;
+                                        const maxT = Math.max(1, ...Array.from(calor.values()));
+                                        const label = tipo === 'IMAGE' ? 'Foto' : tipo === 'VIDEO' ? 'Video' : tipo === 'CAROUSEL_ALBUM' ? 'Carrusel' : tipo === 'REEL' ? 'Reel' : tipo;
+                                        return (
+                                          <div key={tipo} className="mb-3">
+                                            <div className="font-mono text-[9px] text-neutral-400 uppercase mb-1">Instagram · {label}</div>
+                                            <div className="overflow-x-auto">
+                                              <table className="border-collapse text-[9px] font-mono">
+                                                <thead>
+                                                  <tr>
+                                                    <th className="w-8 text-neutral-400 font-normal" />
+                                                    {horas.map(h => (
+                                                      <th key={h} className="w-5 text-center text-neutral-400 font-normal pb-0.5">
+                                                        {h % 6 === 0 ? `${h}h` : ''}
+                                                      </th>
+                                                    ))}
                                                   </tr>
-                                                ))}
-                                              </tbody>
-                                            </table>
+                                                </thead>
+                                                <tbody>
+                                                  {dias.map((d, dow) => (
+                                                    <tr key={dow}>
+                                                      <td className="text-neutral-500 font-bold pr-1 py-px">{d}</td>
+                                                      {horas.map(h => {
+                                                        const val = calor.get(`${dow}-${h}`) ?? 0;
+                                                        const pct = val / maxT;
+                                                        const bg = pct === 0 ? '#f5f5f5'
+                                                          : pct < 0.33 ? '#fef08a'
+                                                          : pct < 0.66 ? '#fb923c'
+                                                          : '#dc2626';
+                                                        const fg = pct >= 0.66 ? '#fff' : '#000';
+                                                        return (
+                                                          <td key={h} title={val ? `${d} ${h}h: ${val} ${label}` : undefined}
+                                                            style={{ backgroundColor: bg, color: fg, width: 20, height: 18, textAlign: 'center', border: '1px solid #e5e7eb' }}>
+                                                            {val > 0 ? val : ''}
+                                                          </td>
+                                                        );
+                                                      })}
+                                                    </tr>
+                                                  ))}
+                                                </tbody>
+                                              </table>
+                                            </div>
                                           </div>
-                                        </div>
-                                      )}
+                                        );
+                                      })}
                                     </div>
                                   );
                                 })()}
