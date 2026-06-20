@@ -795,6 +795,42 @@ export default function AppHome() {
     }
   };
 
+  // Configuración visual de la empresa: nombre a mostrar y slogan en el
+  // header (en vez de "EMPRESA: nombre (slug)"). Editable desde Suscripción/Configuración.
+  const [configEmpresa, setConfigEmpresa] = useState<{ nombreDisplay: string | null; slogan: string | null } | null>(null);
+  const [nombreDisplayInput, setNombreDisplayInput] = useState('');
+  const [sloganInput, setSloganInput] = useState('');
+  const [guardandoConfigEmpresa, setGuardandoConfigEmpresa] = useState(false);
+  const [configEmpresaError, setConfigEmpresaError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!usuario?.tenantId) return;
+    void (async () => {
+      try {
+        const res = await api.obtenerConfigEmpresa();
+        setConfigEmpresa(res);
+        setNombreDisplayInput(res.nombreDisplay ?? '');
+        setSloganInput(res.slogan ?? '');
+      } catch { /* silencioso — header cae al nombre del tenant */ }
+    })();
+  }, [usuario?.tenantId]);
+
+  const handleGuardarConfigEmpresa = async () => {
+    setGuardandoConfigEmpresa(true);
+    setConfigEmpresaError(null);
+    try {
+      const res = await api.actualizarConfigEmpresa({
+        nombreDisplay: nombreDisplayInput.trim() || null,
+        slogan: sloganInput.trim() || null,
+      });
+      setConfigEmpresa(res);
+    } catch (error) {
+      setConfigEmpresaError(error instanceof ApiError ? error.message : 'No se pudo guardar la configuración.');
+    } finally {
+      setGuardandoConfigEmpresa(false);
+    }
+  };
+
   const fetchInventario = useCallback(async () => {
     if (!usuario?.tenantId) return;
     setInventarioCargando(true);
@@ -2613,13 +2649,21 @@ export default function AppHome() {
               {"// GESTAPP"}
             </span>
             <div className="border-l border-black h-6 hidden sm:block"></div>
-            <div className="flex items-center gap-1.5 bg-brand-sage/60 px-2 py-1 border border-black font-mono text-xs">
-              <Building size={14} className="text-black" />
-              <span>EMPRESA: </span>
-              <span className="font-bold text-black select-all">
-                {tenant ? `${tenant.name} (${tenant.slug})` : usuario?.rol === 'superadmin' ? 'Sin empresa — Super Admin' : 'Sin empresa'}
-              </span>
-            </div>
+            {tenant ? (
+              <div className="flex flex-col leading-tight">
+                <span className="font-mono font-black text-base text-black">
+                  {configEmpresa?.nombreDisplay || tenant.name}
+                </span>
+                {configEmpresa?.slogan && (
+                  <span className="font-mono text-[10px] text-neutral-500 italic">{configEmpresa.slogan}</span>
+                )}
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5 bg-brand-sage/60 px-2 py-1 border border-black font-mono text-xs">
+                <Building size={14} className="text-black" />
+                <span>{usuario?.rol === 'superadmin' ? 'Sin empresa — Super Admin' : 'Sin empresa'}</span>
+              </div>
+            )}
 
             {/* SUPER ADMIN: solo visible (y togglable) para usuarios con ese rol real — no es un disfraz para cualquiera. */}
             {usuario?.rol === 'superadmin' && (
@@ -6223,6 +6267,56 @@ export default function AppHome() {
                 {/* --- CONFIGURACIÓN TAB --- */}
                 {activeTab === 'config' && (
                   <div className="flex flex-col gap-6">
+
+                    {/* Nombre y slogan de la empresa — reemplaza el "EMPRESA: x" del header */}
+                    <div className="neo-card bg-white flex flex-col gap-4">
+                      <h3 className="font-mono text-sm font-bold border-b border-black pb-2">NOMBRE Y SLOGAN DE LA EMPRESA</h3>
+                      <p className="text-xs text-neutral-600 leading-relaxed">
+                        Personaliza cómo se muestra tu empresa en el encabezado de la app. Si lo dejas vacío, se usa el nombre registrado de la empresa.
+                      </p>
+
+                      <div className="flex flex-col gap-3 max-w-md">
+                        <label className="flex flex-col gap-1">
+                          <span className="font-mono text-[10px] font-bold text-neutral-500">NOMBRE A MOSTRAR</span>
+                          <input
+                            type="text"
+                            value={nombreDisplayInput}
+                            onChange={(e) => setNombreDisplayInput(e.target.value)}
+                            placeholder={tenant?.name ?? 'Nombre de la empresa'}
+                            maxLength={80}
+                            className="neo-input text-sm"
+                          />
+                        </label>
+                        <label className="flex flex-col gap-1">
+                          <span className="font-mono text-[10px] font-bold text-neutral-500">SLOGAN (OPCIONAL)</span>
+                          <input
+                            type="text"
+                            value={sloganInput}
+                            onChange={(e) => setSloganInput(e.target.value)}
+                            placeholder="Ej: Moda con propósito"
+                            maxLength={140}
+                            className="neo-input text-sm"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          disabled={guardandoConfigEmpresa}
+                          onClick={() => void handleGuardarConfigEmpresa()}
+                          className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-4 py-2 disabled:opacity-50 self-start"
+                        >
+                          {guardandoConfigEmpresa ? 'Guardando...' : 'Guardar'}
+                        </button>
+                        {configEmpresaError && <p className="text-brand-red font-mono text-[10px]">{configEmpresaError}</p>}
+                      </div>
+
+                      <div className="flex items-center gap-3 text-xs border-t border-neutral-200 pt-3">
+                        <span className="font-mono text-neutral-500">VISTA PREVIA:</span>
+                        <div className="flex flex-col leading-tight">
+                          <span className="font-mono font-black text-base text-black">{nombreDisplayInput || tenant?.name}</span>
+                          {sloganInput && <span className="font-mono text-[10px] text-neutral-500 italic">{sloganInput}</span>}
+                        </div>
+                      </div>
+                    </div>
 
                     {/* Personalización de la interfaz — color secundario por usuario */}
                     <div className="neo-card bg-white flex flex-col gap-4">

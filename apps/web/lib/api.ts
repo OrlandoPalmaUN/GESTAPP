@@ -111,6 +111,15 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  obtenerConfigEmpresa: () =>
+    request<{ nombreDisplay: string | null; slogan: string | null }>('/tenant/config-empresa'),
+
+  actualizarConfigEmpresa: (data: { nombreDisplay?: string | null; slogan?: string | null }) =>
+    request<{ nombreDisplay: string | null; slogan: string | null }>('/tenant/config-empresa', {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   // --- Inventario (opera sobre el schema del tenant del usuario logueado) ---
 
   listarCategorias: () => request<{ categorias: Categoria[] }>('/inventario/categorias'),

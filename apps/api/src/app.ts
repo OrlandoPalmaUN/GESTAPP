@@ -15,6 +15,7 @@ import { authRoutes } from './routes/auth.js'
 import { healthRoutes } from './routes/health.js'
 import { clientesRoutes } from './routes/tenant/clientes.js'
 import { comunicacionesRoutes } from './routes/tenant/comunicaciones.js'
+import { configEmpresaRoutes } from './routes/tenant/config_empresa.js'
 import { redesSocialesRoutes } from './routes/tenant/redes_sociales.js'
 import { aiChatRoutes } from './routes/tenant/ai_chat.js'
 import { webhookApifyRoutes } from './routes/webhook_apify.js'
@@ -97,6 +98,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(papeleraRoutes)
   await app.register(dashboardRoutes)
   await app.register(reportesRoutes)
+  await app.register(configEmpresaRoutes)
 
   // Al arrancar el servidor, aplica migraciones de tenant pendientes en todos
   // los tenants activos. Idempotente — solo corre lo que no está en migration_log.
