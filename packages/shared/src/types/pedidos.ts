@@ -101,6 +101,8 @@ export interface Cliente {
 export interface PedidoItem {
   id: string
   productoId: string | null
+  /** Solo si `productoId` referencia un producto con `tieneVariantes: true`. */
+  varianteId: string | null
   /** Solo presente en cargos libres (`productoId === null`) — p.ej. "Envío". */
   concepto: string | null
   cantidad: number

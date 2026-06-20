@@ -77,6 +77,8 @@ export const actualizarClienteSchema = z.object({
 /** Línea normal — referencia un producto del catálogo. */
 const crearPedidoItemProductoSchema = z.object({
   productoId: z.uuid(),
+  /** Obligatorio solo si el producto tiene variantes (`Producto.tieneVariantes`) — la API lo valida contra el catálogo, no este schema. */
+  varianteId: z.uuid().nullable().optional(),
   cantidad: z.number().positive('La cantidad debe ser mayor que cero.'),
   // Precio "excepcional" — opcional. Si el cliente lo manda, sobreescribe el
   // precio de catálogo para ESTE ítem (p.ej. un descuento puntual negociado

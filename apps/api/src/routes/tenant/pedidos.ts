@@ -26,6 +26,7 @@ interface FilaPedidoItem {
   id: string
   pedido_id: string
   producto_id: string | null
+  variante_id: string | null
   concepto: string | null
   cantidad: string
   precio_unitario: string
@@ -37,6 +38,7 @@ function aPedidoItem(row: FilaPedidoItem): PedidoItem {
   return {
     id: row.id,
     productoId: row.producto_id,
+    varianteId: row.variante_id,
     concepto: row.concepto,
     cantidad: Number(row.cantidad),
     precioUnitario: Number(row.precio_unitario),
@@ -140,7 +142,7 @@ async function cargarItemsDePedidos(
 ): Promise<Map<string, PedidoItem[]>> {
   if (pedidoIds.length === 0) return new Map()
   const { rows } = await tenantDb.query<FilaPedidoItem>(
-    `SELECT id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal
+    `SELECT id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal
      FROM pedido_items WHERE pedido_id = ANY($1::uuid[])`,
     [pedidoIds],
   )
@@ -203,15 +205,29 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
       const productoIds = body.data.items
         .map((i) => ('productoId' in i ? i.productoId : null))
         .filter((id): id is string => id !== null)
-      const productosRes = await client.query<{ id: string; precio_venta: string | null; precio_costo: string | null; nombre: string }>(
-        'SELECT id, precio_venta, precio_costo, nombre FROM productos WHERE id = ANY($1::uuid[])',
+      const productosRes = await client.query<{ id: string; precio_venta: string | null; precio_costo: string | null; nombre: string; tiene_variantes: boolean }>(
+        'SELECT id, precio_venta, precio_costo, nombre, tiene_variantes FROM productos WHERE id = ANY($1::uuid[])',
         [productoIds],
       )
       const catalogo = new Map(productosRes.rows.map((p) => [p.id, p]))
 
+      // Validar de una sola consulta TODAS las variantes referenciadas — más
+      // simple que una query por ítem dentro del loop.
+      const varianteIds = body.data.items
+        .map((i) => ('productoId' in i ? i.varianteId : null))
+        .filter((id): id is string => id != null)
+      const variantesRes = varianteIds.length > 0
+        ? await client.query<{ id: string; producto_id: string; precio_venta: string | null }>(
+            'SELECT id, producto_id, precio_venta FROM variantes_producto WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL',
+            [varianteIds],
+          )
+        : { rows: [] as { id: string; producto_id: string; precio_venta: string | null }[] }
+      const variantesCatalogo = new Map(variantesRes.rows.map((v) => [v.id, v]))
+
       let total = 0
       const itemsAInsertar: {
         productoId: string | null
+        varianteId: string | null
         concepto: string | null
         cantidad: number
         precioUnitario: number
@@ -224,18 +240,32 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
             await client.query('ROLLBACK')
             return reply.badRequest(`Uno de los productos del pedido no existe (id ${item.productoId}).`)
           }
+          let variante: { id: string; producto_id: string; precio_venta: string | null } | undefined
+          if (producto.tiene_variantes) {
+            if (!item.varianteId) {
+              await client.query('ROLLBACK')
+              return reply.badRequest(`"${producto.nombre}" tiene variantes — indica cuál (talla/color/etc.) para cada ítem.`)
+            }
+            variante = variantesCatalogo.get(item.varianteId)
+            if (!variante || variante.producto_id !== item.productoId) {
+              await client.query('ROLLBACK')
+              return reply.badRequest(`La variante elegida para "${producto.nombre}" no existe o no le pertenece.`)
+            }
+          }
           // Precio "excepcional": si el cliente lo manda, sobreescribe el
           // precio de catálogo para este ítem puntual (p.ej. un descuento
-          // negociado). Si no, el catálogo sigue siendo la fuente de verdad.
+          // negociado). Si no, el precio de la variante (si tiene override)
+          // o el del producto-modelo es la fuente de verdad, en ese orden.
+          const precioCatalogo = variante?.precio_venta ?? producto.precio_venta
           const precioUnitario =
             item.precioUnitario !== undefined
               ? item.precioUnitario
-              : producto.precio_venta === null
+              : precioCatalogo === null
                 ? 0
-                : Number(producto.precio_venta)
+                : Number(precioCatalogo)
           const precioCosto = producto.precio_costo === null ? null : Number(producto.precio_costo)
           total += precioUnitario * item.cantidad
-          itemsAInsertar.push({ productoId: item.productoId, concepto: null, cantidad: item.cantidad, precioUnitario, precioCosto })
+          itemsAInsertar.push({ productoId: item.productoId, varianteId: item.varianteId ?? null, concepto: null, cantidad: item.cantidad, precioUnitario, precioCosto })
         } else {
           // Cargo libre (p.ej. "Envío"): no está en el catálogo, así que el
           // precio lo manda el cliente y el costo se IGUALA al precio — se
@@ -243,6 +273,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
           total += item.precioUnitario * item.cantidad
           itemsAInsertar.push({
             productoId: null,
+            varianteId: null,
             concepto: item.concepto,
             cantidad: item.cantidad,
             precioUnitario: item.precioUnitario,
@@ -263,10 +294,10 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
       const itemsInsertados: PedidoItem[] = []
       for (const item of itemsAInsertar) {
         const { rows } = await client.query<FilaPedidoItem>(
-          `INSERT INTO pedido_items (pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           RETURNING id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal`,
-          [pedido.id, item.productoId, item.concepto, item.cantidad, item.precioUnitario, item.precioCosto],
+          `INSERT INTO pedido_items (pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           RETURNING id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal`,
+          [pedido.id, item.productoId, item.varianteId, item.concepto, item.cantidad, item.precioUnitario, item.precioCosto],
         )
         itemsInsertados.push(aPedidoItem(rows[0]!))
       }
@@ -318,7 +349,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const itemsRes = await client.query<FilaPedidoItem>(
-        `SELECT id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal
+        `SELECT id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal
          FROM pedido_items WHERE pedido_id = $1`,
         [pedido.id],
       )
@@ -341,9 +372,9 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
           if (item.productoId === null) continue
           await client.query(
             `INSERT INTO movimientos_inventario
-               (producto_id, tipo, cantidad, referencia_tipo, referencia_id, notas, usuario_id)
-             VALUES ($1, $2, $3, 'pedido', $4, $5, $6)`,
-            [item.productoId, tipo, item.cantidad, pedido.id, detallePorTipo[tipo], request.user.sub],
+               (producto_id, variante_id, tipo, cantidad, referencia_tipo, referencia_id, notas, usuario_id)
+             VALUES ($1, $2, $3, $4, 'pedido', $5, $6, $7)`,
+            [item.productoId, item.varianteId, tipo, item.cantidad, pedido.id, detallePorTipo[tipo], request.user.sub],
           )
         }
       }
@@ -410,7 +441,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('COMMIT')
 
       const itemsRes = await client.query<FilaPedidoItem>(
-        `SELECT id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1`,
+        `SELECT id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1`,
         [request.params.id],
       )
       return reply.send({ pedido: aPedido(rows[0]!, itemsRes.rows.map(aPedidoItem)) })
@@ -468,17 +499,18 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
       // para siempre aunque el pedido ya no exista.
       if (estadoActual === 'confirmado' || estadoActual === 'en_preparacion') {
         const itemsRes = await client.query<FilaPedidoItem>(
-          'SELECT id, pedido_id, producto_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1',
+          'SELECT id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1',
           [request.params.id],
         )
         for (const item of itemsRes.rows) {
           if (item.producto_id === null) continue // cargos libres no tienen stock
           await client.query(
             `INSERT INTO movimientos_inventario
-               (producto_id, tipo, cantidad, precio_unitario, referencia_tipo, referencia_id, notas, usuario_id)
-             VALUES ($1, 'liberacion_reserva', $2, $3, 'pedido', $4, $5, $6)`,
+               (producto_id, variante_id, tipo, cantidad, precio_unitario, referencia_tipo, referencia_id, notas, usuario_id)
+             VALUES ($1, $2, 'liberacion_reserva', $3, $4, 'pedido', $5, $6, $7)`,
             [
               item.producto_id,
+              item.variante_id,
               item.cantidad,
               item.precio_unitario,
               request.params.id,

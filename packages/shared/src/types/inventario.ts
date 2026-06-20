@@ -46,12 +46,47 @@ export interface Producto {
   createdAt: string
   /** Calculado: suma de movimientos de inventario — no se persiste como columna (fuente de verdad = movimientos). */
   stockDisponible: number
+  /**
+   * Opt-in por producto (default false): si es true, el stock vive a nivel
+   * de `VarianteProducto` (suma de sus variantes) en vez de a nivel de
+   * producto — ver `ProductoAtributo`/`VarianteProducto` más abajo. La
+   * mayoría de productos nunca activa esto y sigue funcionando igual.
+   */
+  tieneVariantes: boolean
+}
+
+/** Un eje que varía para un producto puntual — "Talla", "Color", "Material"... (genérico, no hardcodeado a ropa). */
+export interface ProductoAtributo {
+  id: string
+  productoId: string
+  nombre: string
+  orden: number
+}
+
+/**
+ * Una combinación concreta de atributos de un producto con variantes —
+ * "Talla L, Color Negro" — con su propio SKU y stock independiente.
+ * `valores` es genérico: las claves son los `nombre` de `ProductoAtributo`.
+ */
+export interface VarianteProducto {
+  id: string
+  productoId: string
+  sku: string | null
+  valores: Record<string, string>
+  /** Override de precio; `null` = hereda `Producto.precioVenta`. */
+  precioVenta: number | null
+  activo: boolean
+  createdAt: string
+  /** Calculado igual que `Producto.stockDisponible`, pero filtrado a esta variante. */
+  stockDisponible: number
 }
 
 /** Movimiento de inventario — registro inmutable, fuente de verdad del stock. */
 export interface MovimientoInventario {
   id: string
   productoId: string
+  /** Solo cuando el producto tiene variantes — identifica CUÁL varió. `null` = movimiento a nivel de producto (comportamiento de siempre). */
+  varianteId: string | null
   tipo: TipoMovimiento
   cantidad: number
   precioUnitario: number | null
@@ -66,6 +101,12 @@ export interface MovimientoInventario {
  * Calcula el stock disponible de un producto a partir de sus movimientos —
  * la MISMA regla que usa el frontend (mockData) y que debe vivir aquí para
  * que servidor y cliente nunca diverjan en el cálculo.
+ *
+ * Funciona igual para productos sin variantes (todos sus movimientos) y para
+ * una variante puntual (solo los suyos) — la función no sabe ni le importa
+ * cuál es: quien llama filtra/agrupa por `productoId` o por `varianteId`
+ * antes de pasarle el array. El stock de un producto CON variantes es la
+ * suma de `calcularStockDisponible(...)` de cada una de sus variantes.
  */
 export function calcularStockDisponible(movimientos: Pick<MovimientoInventario, 'tipo' | 'cantidad'>[]): number {
   return movimientos.reduce((stock, mov) => {
