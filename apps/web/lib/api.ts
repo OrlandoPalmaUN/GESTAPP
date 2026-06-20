@@ -1,4 +1,6 @@
-import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, Proveedor, ResumenFinanciero, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario } from '@antigravity/shared'
+import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, ProductoAtributo, Proveedor, ResumenFinanciero, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario, VarianteProducto } from '@antigravity/shared'
+
+export type { ProductoAtributo, VarianteProducto }
 
 /** Un elemento en la papelera — puede ser de cualquier módulo (ver `EntidadPapelera` en la API). */
 export interface ItemPapelera {
@@ -197,6 +199,7 @@ export const api = {
     unidad?: string
     stockMinimo?: number
     stockInicial?: number
+    tieneVariantes?: boolean
   }) =>
     request<{ producto: Producto }>('/inventario/productos', {
       method: 'POST',
@@ -215,6 +218,7 @@ export const api = {
       unidad: string
       stockMinimo: number
       activo: boolean
+      tieneVariantes: boolean
     }>,
   ) =>
     request<{ producto: Producto }>(`/inventario/productos/${id}`, {
@@ -225,10 +229,46 @@ export const api = {
   eliminarProducto: (id: string) =>
     request<void>(`/inventario/productos/${id}`, { method: 'DELETE' }),
 
+  // --- Variantes de producto (talla/color/etc. — opt-in vía tieneVariantes) ---
+
+  obtenerAtributosProducto: (productoId: string) =>
+    request<{ atributos: ProductoAtributo[] }>(`/inventario/productos/${productoId}/atributos`),
+
+  definirAtributosProducto: (productoId: string, atributos: string[]) =>
+    request<{ atributos: ProductoAtributo[] }>(`/inventario/productos/${productoId}/atributos`, {
+      method: 'PUT',
+      body: JSON.stringify({ atributos }),
+    }),
+
+  listarVariantesProducto: (productoId: string) =>
+    request<{ variantes: VarianteProducto[] }>(`/inventario/productos/${productoId}/variantes`),
+
+  crearVarianteProducto: (productoId: string, data: { sku?: string; valores: Record<string, string>; precioVenta?: number | null; stockInicial?: number }) =>
+    request<{ variante: VarianteProducto }>(`/inventario/productos/${productoId}/variantes`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  generarVariantesProducto: (productoId: string, combinaciones: Record<string, string[]>, stockInicial?: number) =>
+    request<{ variantes: VarianteProducto[]; omitidas: number }>(`/inventario/productos/${productoId}/variantes/generar`, {
+      method: 'POST',
+      body: JSON.stringify({ combinaciones, stockInicial }),
+    }),
+
+  actualizarVarianteProducto: (varianteId: string, data: Partial<{ sku: string | null; precioVenta: number | null; activo: boolean }>) =>
+    request<{ variante: VarianteProducto }>(`/inventario/variantes/${varianteId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  eliminarVarianteProducto: (varianteId: string) =>
+    request<void>(`/inventario/variantes/${varianteId}`, { method: 'DELETE' }),
+
   listarMovimientosInventario: () => request<{ movimientos: MovimientoInventario[] }>('/inventario/movimientos'),
 
   crearMovimientoInventario: (data: {
     productoId: string
+    varianteId?: string | null
     tipo: MovimientoInventario['tipo']
     cantidad: number
     precioUnitario?: number | null
@@ -269,7 +309,7 @@ export const api = {
     clienteId?: string | null
     notas?: string
     items: (
-      | { productoId: string; cantidad: number; precioUnitario?: number }
+      | { productoId: string; varianteId?: string | null; cantidad: number; precioUnitario?: number }
       | { concepto: string; cantidad: number; precioUnitario: number }
     )[]
   }) =>

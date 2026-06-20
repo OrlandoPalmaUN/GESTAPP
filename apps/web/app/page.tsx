@@ -132,7 +132,7 @@ const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
   comisiones: 'Comisiones', marketing: 'Marketing', otros: 'Otros',
 };
 
-import { api, ApiError, type EntradaAuditoria } from '../lib/api';
+import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type VarianteProducto } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import {
   TENANTS_GLOBAL_METRICS,
@@ -168,6 +168,7 @@ function productoAMockProduct(p: Producto): Product {
     // lo guardamos aparte (stockDisponibleById) y usamos este campo solo
     // como valor inicial/semilla para no romper el shape de Product.
     stock_inicial: p.stockDisponible,
+    tiene_variantes: p.tieneVariantes,
   };
 }
 
@@ -706,6 +707,7 @@ export default function AppHome() {
     precio_venta: '',
     stock_minimo: '10',
     stock_inicial: '20',
+    tiene_variantes: false,
   });
   // Crear categoría "al vuelo" desde el propio selector — evita el viaje a otra
   // pantalla solo para dar de alta una categoría que no existía todavía.
@@ -740,8 +742,94 @@ export default function AppHome() {
   // Edición de Producto
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editProductForm, setEditProductForm] = useState({
-    sku: '', nombre: '', descripcion: '', categoria_id: '', precio_costo: '', precio_venta: '', stock_minimo: '',
+    sku: '', nombre: '', descripcion: '', categoria_id: '', precio_costo: '', precio_venta: '', stock_minimo: '', tiene_variantes: false,
   });
+
+  // --- Gestionar variantes de producto (talla/color/etc.) ---
+  const [variantesProduct, setVariantesProduct] = useState<Product | null>(null);
+  const [variantesAtributos, setVariantesAtributos] = useState<ProductoAtributo[]>([]);
+  const [variantesLista, setVariantesLista] = useState<VarianteProducto[]>([]);
+  const [variantesCargando, setVariantesCargando] = useState(false);
+  const [variantesError, setVariantesError] = useState<string | null>(null);
+  const [atributosInput, setAtributosInput] = useState<string[]>(['']);
+  const [guardandoAtributos, setGuardandoAtributos] = useState(false);
+  const [valoresGenerar, setValoresGenerar] = useState<Record<string, string>>({});
+  const [stockInicialGenerar, setStockInicialGenerar] = useState('0');
+  const [generandoVariantes, setGenerandoVariantes] = useState(false);
+
+  const fetchVariantesProducto = useCallback(async (productoId: string) => {
+    setVariantesCargando(true);
+    setVariantesError(null);
+    try {
+      const [atribRes, varRes] = await Promise.all([
+        api.obtenerAtributosProducto(productoId),
+        api.listarVariantesProducto(productoId),
+      ]);
+      setVariantesAtributos(atribRes.atributos);
+      setVariantesLista(varRes.variantes);
+      setAtributosInput(atribRes.atributos.length > 0 ? atribRes.atributos.map((a) => a.nombre) : ['']);
+    } catch (e) {
+      setVariantesError(e instanceof ApiError ? e.message : 'No se pudieron cargar las variantes.');
+    } finally {
+      setVariantesCargando(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (variantesProduct) void fetchVariantesProducto(variantesProduct.id);
+  }, [variantesProduct, fetchVariantesProducto]);
+
+  const handleGuardarAtributos = async () => {
+    if (!variantesProduct) return;
+    const nombres = atributosInput.map((a) => a.trim()).filter(Boolean);
+    if (nombres.length === 0) { setVariantesError('Define al menos un atributo (ej: Talla, Color).'); return; }
+    setGuardandoAtributos(true);
+    setVariantesError(null);
+    try {
+      const res = await api.definirAtributosProducto(variantesProduct.id, nombres);
+      setVariantesAtributos(res.atributos);
+      await fetchInventario();
+    } catch (e) {
+      setVariantesError(e instanceof ApiError ? e.message : 'No se pudieron guardar los atributos.');
+    } finally {
+      setGuardandoAtributos(false);
+    }
+  };
+
+  const handleGenerarVariantes = async () => {
+    if (!variantesProduct) return;
+    const combinaciones: Record<string, string[]> = {};
+    for (const atrib of variantesAtributos) {
+      const valores = (valoresGenerar[atrib.nombre] ?? '').split(',').map((v) => v.trim()).filter(Boolean);
+      if (valores.length > 0) combinaciones[atrib.nombre] = valores;
+    }
+    if (Object.keys(combinaciones).length === 0) {
+      setVariantesError('Escribe al menos un valor (separados por coma) para alguno de los atributos.');
+      return;
+    }
+    setGenerandoVariantes(true);
+    setVariantesError(null);
+    try {
+      await api.generarVariantesProducto(variantesProduct.id, combinaciones, parseInt(stockInicialGenerar) || 0);
+      setValoresGenerar({});
+      setStockInicialGenerar('0');
+      await fetchVariantesProducto(variantesProduct.id);
+    } catch (e) {
+      setVariantesError(e instanceof ApiError ? e.message : 'No se pudieron generar las variantes.');
+    } finally {
+      setGenerandoVariantes(false);
+    }
+  };
+
+  const handleEliminarVariante = async (varianteId: string) => {
+    if (!variantesProduct) return;
+    try {
+      await api.eliminarVarianteProducto(varianteId);
+      await fetchVariantesProducto(variantesProduct.id);
+    } catch (e) {
+      setVariantesError(e instanceof ApiError ? e.message : 'No se pudo eliminar la variante.');
+    }
+  };
 
   // --- Registrar entrada de stock (reabastecimiento manual) ---
   const [stockEntryProduct, setStockEntryProduct] = useState<Product | null>(null);
@@ -850,9 +938,33 @@ export default function AppHome() {
   // (PRECIO_CORRIENTE); si el usuario lo edita, viaja como override puntual
   // de ESTE pedido (p.ej. un descuento negociado) — el margen se recalcula
   // en vivo comparándolo contra el costo del producto.
-  const [orderItems, setOrderItems] = useState<{ producto_id: string; cantidad: number; precio_excepcional: number | null }[]>([
-    { producto_id: 'prod-1', cantidad: 1, precio_excepcional: null },
+  const [orderItems, setOrderItems] = useState<{ producto_id: string; variante_id: string | null; cantidad: number; precio_excepcional: number | null }[]>([
+    { producto_id: 'prod-1', variante_id: null, cantidad: 1, precio_excepcional: null },
   ]);
+  // Variantes del producto elegido por cada ítem — se cargan al vuelo cuando
+  // el producto seleccionado tiene `tiene_variantes` (evita pedir TODAS las
+  // variantes de TODOS los productos por adelantado).
+  const [variantesPorItem, setVariantesPorItem] = useState<Record<string, VarianteProducto[]>>({});
+
+  const cargarVariantesParaItem = useCallback(async (productoId: string) => {
+    if (variantesPorItem[productoId]) return;
+    try {
+      const res = await api.listarVariantesProducto(productoId);
+      setVariantesPorItem((prev) => ({ ...prev, [productoId]: res.variantes }));
+    } catch { /* silencioso — el selector simplemente queda vacío */ }
+  }, [variantesPorItem]);
+
+  // Red de seguridad: si el modal abre con un ítem que ya apunta a un
+  // producto con variantes (p.ej. el ítem por defecto), precarga sus
+  // variantes sin esperar a que el usuario cambie el select manualmente.
+  useEffect(() => {
+    if (!showCreateOrder) return;
+    for (const item of orderItems) {
+      const producto = products.find((p) => p.id === item.producto_id);
+      if (producto?.tiene_variantes) void cargarVariantesParaItem(producto.id);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showCreateOrder, orderItems, products]);
   const [orderValidationError, setOrderValidationError] = useState<string | null>(null);
   // Cargo dinámico de "Envío": un ítem que NO está en el catálogo — se cobra
   // "a costo" (costo = precio, margen cero) pero el cliente igual debe
@@ -2079,6 +2191,7 @@ export default function AppHome() {
       precio_costo: String(p.precio_costo),
       precio_venta: String(p.precio_venta),
       stock_minimo: String(p.stock_minimo),
+      tiene_variantes: p.tiene_variantes,
     });
   };
   const handleSaveEditProduct = async (e: React.FormEvent) => {
@@ -2093,6 +2206,7 @@ export default function AppHome() {
         precioCosto: parseFloat(editProductForm.precio_costo) || 0,
         precioVenta: parseFloat(editProductForm.precio_venta) || 0,
         stockMinimo: parseInt(editProductForm.stock_minimo) || 0,
+        tieneVariantes: editProductForm.tiene_variantes,
       });
       setEditingProduct(null);
       await fetchInventario();
@@ -2540,6 +2654,7 @@ export default function AppHome() {
         precioVenta: price,
         stockMinimo: minStock,
         stockInicial: initStock,
+        tieneVariantes: newProduct.tiene_variantes,
       });
 
       setShowCreateProduct(false);
@@ -2551,6 +2666,7 @@ export default function AppHome() {
         precio_venta: '',
         stock_minimo: '10',
         stock_inicial: '20',
+        tiene_variantes: false,
       });
       setShowNewCategoryInput(false);
       setNewCategoryName('');
@@ -2625,6 +2741,7 @@ export default function AppHome() {
             precio_venta: 22000,
             stock_minimo: 50,
             stock_inicial: 150,
+            tiene_variantes: false,
           };
           setProducts(prevProducts => [importedProd, ...prevProducts]);
           
@@ -2658,10 +2775,19 @@ export default function AppHome() {
     // (ver `apps/api/.../pedidos.ts`); `orderValidationError` queda solo para
     // mostrar errores reales que el servidor devuelva.
 
+    for (const item of orderItems) {
+      const producto = products.find((p) => p.id === item.producto_id);
+      if (producto?.tiene_variantes && !item.variante_id) {
+        setOrderValidationError(`"${producto.nombre}" tiene variantes — elige cuál (talla/color/etc.) para cada ítem.`);
+        return;
+      }
+    }
+
     void (async () => {
       try {
         const itemsAEnviar: Parameters<typeof api.crearPedido>[0]['items'] = orderItems.map((item) => ({
           productoId: item.producto_id,
+          varianteId: item.variante_id,
           cantidad: item.cantidad,
           ...(item.precio_excepcional !== null ? { precioUnitario: item.precio_excepcional } : {}),
         }));
@@ -2673,7 +2799,7 @@ export default function AppHome() {
           items: itemsAEnviar,
         });
         setShowCreateOrder(false);
-        setOrderItems([{ producto_id: products[0]?.id ?? 'prod-1', cantidad: 1, precio_excepcional: null }]);
+        setOrderItems([{ producto_id: products[0]?.id ?? 'prod-1', variante_id: null, cantidad: 1, precio_excepcional: null }]);
         setShippingEnabled(false);
         setShippingPrice('');
         await Promise.all([fetchPedidos(), fetchFinanzas()]);
@@ -6885,16 +7011,30 @@ export default function AppHome() {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">STOCK COMPRA INICIAL</label>
+                  <label className={`font-mono font-bold ${newProduct.tiene_variantes ? 'text-neutral-400' : ''}`}>STOCK COMPRA INICIAL</label>
                   <input
                     type="number"
-                    required
+                    required={!newProduct.tiene_variantes}
+                    disabled={newProduct.tiene_variantes}
                     value={newProduct.stock_inicial}
                     onChange={(e) => setNewProduct({ ...newProduct, stock_inicial: e.target.value })}
-                    className="neo-input font-mono"
+                    className="neo-input font-mono disabled:bg-neutral-100 disabled:text-neutral-400"
                   />
                 </div>
               </div>
+
+              <label className="flex items-start gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50">
+                <input
+                  type="checkbox"
+                  checked={newProduct.tiene_variantes}
+                  onChange={(e) => setNewProduct({ ...newProduct, tiene_variantes: e.target.checked })}
+                  className="w-4 h-4 border-2 border-black accent-black mt-0.5"
+                />
+                <span>
+                  <span className="font-mono font-bold block">Este producto tiene variantes</span>
+                  <span className="text-[10px] text-neutral-500">Ej: tallas, colores u otro atributo. Después de crearlo podrás definir los atributos y generar las combinaciones desde &quot;Gestionar variantes&quot;.</span>
+                </span>
+              </label>
 
               <button type="submit" className="neo-btn bg-brand-blue text-white hover:opacity-90 mt-2 py-2.5">
                 CREAR Y REGISTRAR EN STOCK
@@ -7152,7 +7292,8 @@ export default function AppHome() {
                     onClick={() => {
                       const firstProd = products[0];
                       if (firstProd) {
-                        setOrderItems([...orderItems, { producto_id: firstProd.id, cantidad: 1, precio_excepcional: null }]);
+                        setOrderItems([...orderItems, { producto_id: firstProd.id, variante_id: null, cantidad: 1, precio_excepcional: null }]);
+                        if (firstProd.tiene_variantes) void cargarVariantesParaItem(firstProd.id);
                       }
                     }}
                     className="text-brand-blue hover:underline font-bold flex items-center gap-0.5 text-[10px]"
@@ -7183,8 +7324,11 @@ export default function AppHome() {
                               const target = updated[idx];
                               if (target) {
                                 target.producto_id = e.target.value;
+                                target.variante_id = null; // nuevo producto → hay que elegir variante de nuevo si aplica
                                 target.precio_excepcional = null; // nuevo producto → vuelve al precio de catálogo
                                 setOrderItems(updated);
+                                const nuevoProd = products.find((p) => p.id === e.target.value);
+                                if (nuevoProd?.tiene_variantes) void cargarVariantesParaItem(nuevoProd.id);
                               }
                             }}
                             className="neo-input flex-1 py-1.5"
@@ -7217,13 +7361,41 @@ export default function AppHome() {
                               const updated = orderItems.filter((_, i) => i !== idx);
                               const firstProd = products[0];
                               const defaultId = firstProd ? firstProd.id : '';
-                              setOrderItems(updated.length === 0 ? [{ producto_id: defaultId, cantidad: 1, precio_excepcional: null }] : updated);
+                              setOrderItems(updated.length === 0 ? [{ producto_id: defaultId, variante_id: null, cantidad: 1, precio_excepcional: null }] : updated);
                             }}
                             className="font-mono font-bold text-base hover:text-brand-red px-2"
                           >
                             ×
                           </button>
                         </div>
+
+                        {/* Selector de variante — solo si el producto elegido tiene talla/color/etc. */}
+                        {activeProd?.tiene_variantes && (
+                          <div className="pl-0.5">
+                            <select
+                              value={item.variante_id ?? ''}
+                              onChange={(e) => {
+                                const updated = [...orderItems];
+                                const target = updated[idx];
+                                if (target) {
+                                  target.variante_id = e.target.value || null;
+                                  setOrderItems(updated);
+                                }
+                              }}
+                              className={`neo-input w-full py-1.5 text-[11px] ${!item.variante_id ? 'border-brand-red' : ''}`}
+                            >
+                              <option value="">— Elige talla/color/etc. —</option>
+                              {(variantesPorItem[activeProd.id] ?? []).map((v) => (
+                                <option key={v.id} value={v.id}>
+                                  {Object.entries(v.valores).map(([k, val]) => `${k}: ${val}`).join(' · ')} (Dispo: {v.stockDisponible})
+                                </option>
+                              ))}
+                            </select>
+                            {!variantesPorItem[activeProd.id] && (
+                              <span className="text-[10px] font-mono text-neutral-400">Cargando variantes…</span>
+                            )}
+                          </div>
+                        )}
 
                         {/* Precio excepcional + margen — permite cobrar distinto al precio de
                             catálogo (p.ej. un descuento puntual) y ver de inmediato cuánto
@@ -8304,6 +8476,24 @@ export default function AppHome() {
                 <label className="font-mono font-bold">STOCK MÍNIMO ALERTA</label>
                 <input type="number" required value={editProductForm.stock_minimo} onChange={(e) => setEditProductForm({ ...editProductForm, stock_minimo: e.target.value })} className="neo-input font-mono" />
               </div>
+              <label className="flex items-center justify-between gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50">
+                <span className="font-mono font-bold">Este producto tiene variantes</span>
+                <input
+                  type="checkbox"
+                  checked={editProductForm.tiene_variantes}
+                  onChange={(e) => setEditProductForm({ ...editProductForm, tiene_variantes: e.target.checked })}
+                  className="w-4 h-4 border-2 border-black accent-black"
+                />
+              </label>
+              {editProductForm.tiene_variantes && (
+                <button
+                  type="button"
+                  onClick={() => { setVariantesProduct(editingProduct); setEditingProduct(null); }}
+                  className="neo-btn flex items-center justify-center gap-1.5 py-2 text-xs font-mono font-bold hover:bg-neutral-100"
+                >
+                  <Tag size={13} /> Gestionar variantes
+                </button>
+              )}
               <button type="submit" className="neo-btn bg-brand-blue text-white hover:opacity-90 mt-2 py-2.5">GUARDAR CAMBIOS</button>
             </form>
             <div className="border-t border-black pt-3">
@@ -8312,6 +8502,129 @@ export default function AppHome() {
               </div>
               <HistorialEntidad entidadTipo="productos" entidadId={editingProduct.id} />
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* 7b. Modal: Gestionar variantes de producto (talla/color/etc.) */}
+      {variantesProduct && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setVariantesProduct(null)}>
+          <div className="neo-card bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col gap-4" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center border-b border-black pb-2">
+              <h3 className="font-mono text-sm font-bold text-black flex items-center gap-2">
+                <Tag size={16} /> VARIANTES — {variantesProduct.nombre}
+              </h3>
+              <button onClick={() => setVariantesProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+
+            {variantesError && <p className="text-brand-red font-mono text-[10px] border border-brand-red p-2">{variantesError}</p>}
+            {variantesCargando && <div className="flex items-center gap-2 text-xs font-mono text-neutral-500"><RefreshCw size={13} className="animate-spin" /> Cargando…</div>}
+
+            {/* Atributos (ejes) */}
+            <div className="flex flex-col gap-2">
+              <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Atributos (ej: Talla, Color)</span>
+              {atributosInput.map((valor, idx) => (
+                <div key={idx} className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder={idx === 0 ? 'Talla' : idx === 1 ? 'Color' : 'Otro atributo'}
+                    value={valor}
+                    onChange={(e) => setAtributosInput((prev) => prev.map((v, i) => (i === idx ? e.target.value : v)))}
+                    className="neo-input text-xs flex-1"
+                  />
+                  {atributosInput.length > 1 && (
+                    <button type="button" onClick={() => setAtributosInput((prev) => prev.filter((_, i) => i !== idx))} className="neo-btn px-2.5 hover:bg-red-50">
+                      <X size={13} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              <div className="flex gap-2">
+                <button type="button" onClick={() => setAtributosInput((prev) => [...prev, ''])} className="neo-btn text-xs px-3 py-1.5 flex items-center gap-1">
+                  <Plus size={12} /> Agregar atributo
+                </button>
+                <button
+                  type="button"
+                  disabled={guardandoAtributos}
+                  onClick={() => void handleGuardarAtributos()}
+                  className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-3 py-1.5 disabled:opacity-50"
+                >
+                  {guardandoAtributos ? 'Guardando…' : 'Guardar atributos'}
+                </button>
+              </div>
+            </div>
+
+            {/* Generar variantes a partir de los atributos guardados */}
+            {variantesAtributos.length > 0 && (
+              <div className="flex flex-col gap-2 border-t border-black pt-3">
+                <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">
+                  Generar variantes — valores separados por coma
+                </span>
+                {variantesAtributos.map((atrib) => (
+                  <label key={atrib.id} className="flex flex-col gap-1">
+                    <span className="font-mono text-[10px] font-bold">{atrib.nombre}</span>
+                    <input
+                      type="text"
+                      placeholder={atrib.nombre === 'Talla' ? 'S, M, L, XL' : 'Negro, Blanco, Azul'}
+                      value={valoresGenerar[atrib.nombre] ?? ''}
+                      onChange={(e) => setValoresGenerar((prev) => ({ ...prev, [atrib.nombre]: e.target.value }))}
+                      className="neo-input text-xs"
+                    />
+                  </label>
+                ))}
+                <label className="flex flex-col gap-1 max-w-[160px]">
+                  <span className="font-mono text-[10px] font-bold">Stock inicial (cada una)</span>
+                  <input
+                    type="number"
+                    min="0"
+                    value={stockInicialGenerar}
+                    onChange={(e) => setStockInicialGenerar(e.target.value)}
+                    className="neo-input text-xs font-mono"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={generandoVariantes}
+                  onClick={() => void handleGenerarVariantes()}
+                  className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-3 py-2 disabled:opacity-50 self-start"
+                >
+                  {generandoVariantes ? 'Generando…' : 'Generar variantes'}
+                </button>
+              </div>
+            )}
+
+            {/* Lista de variantes existentes con stock */}
+            {variantesLista.length > 0 && (
+              <div className="flex flex-col gap-1.5 border-t border-black pt-3">
+                <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-1">
+                  Variantes ({variantesLista.length})
+                </span>
+                {variantesLista.map((v) => {
+                  const nivel = v.stockDisponible <= 0 ? 'danger' : v.stockDisponible <= variantesProduct.stock_minimo ? 'warning' : 'success';
+                  const colores = nivel === 'danger' ? 'bg-red-100 text-red-700' : nivel === 'warning' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700';
+                  return (
+                    <div key={v.id} className="flex items-center gap-2 text-xs border border-black p-2">
+                      <span className="flex-1 font-bold truncate">
+                        {Object.entries(v.valores).map(([k, val]) => `${k}: ${val}`).join(' · ')}
+                      </span>
+                      {v.sku && <span className="font-mono text-[10px] text-neutral-400 shrink-0">{v.sku}</span>}
+                      <span className={`font-mono text-[10px] font-bold px-2 py-1 shrink-0 ${colores}`}>{v.stockDisponible} disp.</span>
+                      <span className="font-mono text-[10px] text-neutral-500 shrink-0">
+                        ${(v.precioVenta ?? variantesProduct.precio_venta).toLocaleString('es-CO')}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => void handleEliminarVariante(v.id)}
+                        className="neo-btn p-1 hover:bg-red-50 hover:text-brand-red shrink-0"
+                        title="Eliminar variante"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

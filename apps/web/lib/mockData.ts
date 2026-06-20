@@ -14,6 +14,7 @@ export interface Product {
   precio_venta: number;
   stock_minimo: number;
   stock_inicial: number;
+  tiene_variantes: boolean;
 }
 
 export interface InventoryMovement {
@@ -113,6 +114,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     precio_venta: 89000,
     stock_minimo: 25,
     stock_inicial: 85,
+    tiene_variantes: false,
   },
   {
     id: 'prod-2',
@@ -124,6 +126,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     precio_venta: 149000,
     stock_minimo: 15,
     stock_inicial: 12, // Stock crítico
+    tiene_variantes: false,
   },
   {
     id: 'prod-3',
@@ -135,6 +138,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     precio_venta: 169000,
     stock_minimo: 10,
     stock_inicial: 28,
+    tiene_variantes: false,
   },
   {
     id: 'prod-4',
@@ -146,6 +150,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     precio_venta: 129000,
     stock_minimo: 20,
     stock_inicial: 18, // Ligeramente bajo el mínimo
+    tiene_variantes: false,
   },
   {
     id: 'prod-5',
@@ -157,6 +162,7 @@ export const INITIAL_PRODUCTS: Product[] = [
     precio_venta: 45000,
     stock_minimo: 30,
     stock_inicial: 95,
+    tiene_variantes: false,
   },
 ];
 
