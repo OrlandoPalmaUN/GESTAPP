@@ -38,7 +38,7 @@ export async function configEmpresaRoutes(fastify: FastifyInstance): Promise<voi
 
   fastify.patch(
     '/tenant/config-empresa',
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.requireRole('admin', 'superadmin')] },
     async (request, reply) => {
       if (!exigirTenant(request, reply)) return
 

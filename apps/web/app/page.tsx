@@ -802,6 +802,7 @@ export default function AppHome() {
   const [sloganInput, setSloganInput] = useState('');
   const [guardandoConfigEmpresa, setGuardandoConfigEmpresa] = useState(false);
   const [configEmpresaError, setConfigEmpresaError] = useState<string | null>(null);
+  const puedeEditarConfigEmpresa = usuario?.rol === 'admin' || usuario?.rol === 'superadmin';
 
   useEffect(() => {
     if (!usuario?.tenantId) return;
@@ -6273,6 +6274,7 @@ export default function AppHome() {
                       <h3 className="font-mono text-sm font-bold border-b border-black pb-2">NOMBRE Y SLOGAN DE LA EMPRESA</h3>
                       <p className="text-xs text-neutral-600 leading-relaxed">
                         Personaliza cómo se muestra tu empresa en el encabezado de la app. Si lo dejas vacío, se usa el nombre registrado de la empresa.
+                        {!puedeEditarConfigEmpresa && ' Solo un administrador puede modificar esta configuración.'}
                       </p>
 
                       <div className="flex flex-col gap-3 max-w-md">
@@ -6284,7 +6286,8 @@ export default function AppHome() {
                             onChange={(e) => setNombreDisplayInput(e.target.value)}
                             placeholder={tenant?.name ?? 'Nombre de la empresa'}
                             maxLength={80}
-                            className="neo-input text-sm"
+                            disabled={!puedeEditarConfigEmpresa}
+                            className="neo-input text-sm disabled:bg-neutral-100 disabled:text-neutral-400"
                           />
                         </label>
                         <label className="flex flex-col gap-1">
@@ -6295,17 +6298,20 @@ export default function AppHome() {
                             onChange={(e) => setSloganInput(e.target.value)}
                             placeholder="Ej: Moda con propósito"
                             maxLength={140}
-                            className="neo-input text-sm"
+                            disabled={!puedeEditarConfigEmpresa}
+                            className="neo-input text-sm disabled:bg-neutral-100 disabled:text-neutral-400"
                           />
                         </label>
-                        <button
-                          type="button"
-                          disabled={guardandoConfigEmpresa}
-                          onClick={() => void handleGuardarConfigEmpresa()}
-                          className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-4 py-2 disabled:opacity-50 self-start"
-                        >
-                          {guardandoConfigEmpresa ? 'Guardando...' : 'Guardar'}
-                        </button>
+                        {puedeEditarConfigEmpresa && (
+                          <button
+                            type="button"
+                            disabled={guardandoConfigEmpresa}
+                            onClick={() => void handleGuardarConfigEmpresa()}
+                            className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-4 py-2 disabled:opacity-50 self-start"
+                          >
+                            {guardandoConfigEmpresa ? 'Guardando...' : 'Guardar'}
+                          </button>
+                        )}
                         {configEmpresaError && <p className="text-brand-red font-mono text-[10px]">{configEmpresaError}</p>}
                       </div>
 
