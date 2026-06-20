@@ -13,6 +13,18 @@ type TenantDeSesion = Pick<Tenant, 'id' | 'name' | 'slug' | 'status'> & { plan: 
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
+/**
+ * Las miniaturas de Instagram (thumbnailUrl/displayUrl de ig_posts) apuntan
+ * directo al CDN de Instagram, que bloquea hotlinking desde otros dominios —
+ * por eso se ven rotas si se usan tal cual en un <img src>. Esta función
+ * arma la URL del proxy del backend (`GET /redes/ig/img-proxy`) que las
+ * redescarga server-side y las re-sirve sin ese bloqueo.
+ */
+export function imgProxyUrl(url: string | null | undefined): string | undefined {
+  if (!url) return undefined
+  return `${API_URL}/redes/ig/img-proxy?url=${encodeURIComponent(url)}`
+}
+
 const TOKEN_KEY = 'gestapp_token'
 
 /** Guarda el JWT en localStorage (para iOS Safari que bloquea cookies cross-origin) */

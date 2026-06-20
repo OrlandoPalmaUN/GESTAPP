@@ -27,7 +27,7 @@ import type {
   IgResumen,
   IgSnapshotPerfil,
 } from '@antigravity/shared'
-import { api, ApiError } from '../../lib/api'
+import { api, ApiError, imgProxyUrl } from '../../lib/api'
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -174,7 +174,7 @@ function PostRow({
       <span className="font-mono text-[9px] border border-black px-1 shrink-0 uppercase">{post.tipo}</span>
       {/* Thumbnail */}
       {post.thumbnailUrl && (
-        <img src={post.thumbnailUrl} alt="" className="w-8 h-8 object-cover border border-black shrink-0" />
+        <img src={imgProxyUrl(post.thumbnailUrl)} alt="" className="w-8 h-8 object-cover border border-black shrink-0" />
       )}
       {/* Caption */}
       <span className="text-neutral-700 truncate flex-1">{preview || <em className="text-neutral-400">Sin caption</em>}</span>

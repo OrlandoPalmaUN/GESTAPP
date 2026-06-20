@@ -8,6 +8,7 @@ import {
   vincularIgCuentaSchema,
 } from '@antigravity/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { Readable } from 'stream'
 import { scrapeIgProfileOnly } from '../../lib/apify/scraper.js'
 import { executeIgScrapeRun } from '../../lib/apify/runs.js'
 
@@ -31,6 +32,62 @@ function exigirTenant(
 export async function redesSocialesRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
   const { APIFY_TOKEN, APIFY_DEFAULT_ACTOR, IG_REFRESH_COOLDOWN_HOURS } = fastify.config
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // IMÁGENES — proxy de thumbnails de Instagram
+  // ─────────────────────────────────────────────────────────────────────────
+
+  /**
+   * GET /redes/ig/img-proxy?url=<thumbnailUrl o displayUrl de ig_posts>
+   *
+   * Las URLs que Apify guarda en `thumbnail_url`/`url` apuntan directo al CDN
+   * de Instagram (cdninstagram.com / fbcdn.net), que bloquea hotlinking desde
+   * dominios externos (revisa el header Referer del navegador) — por eso las
+   * fotos salían rotas en el dashboard. Al pedirlas desde el servidor (que no
+   * envía Referer del navegador) el bloqueo no aplica, así que las
+   * descargamos aquí y las re-servimos.
+   *
+   * Solo se permite proxyear hosts de Instagram/Facebook — si no, esta ruta
+   * sería un proxy abierto (SSRF) hacia cualquier URL que el cliente pida.
+   *
+   * Sin `conSesion` a propósito: un `<img src>` plano no puede mandar el
+   * Authorization Bearer (fallback de iOS Safari) ni siempre la cookie
+   * cross-domain, así que exigir sesión aquí rompería las miniaturas para
+   * esos casos. El riesgo es bajo — solo reenvía imágenes públicas de
+   * Instagram, no expone datos del tenant.
+   */
+  const HOSTS_PERMITIDOS = /\.(cdninstagram\.com|fbcdn\.net)$/i
+
+  fastify.get('/redes/ig/img-proxy', async (request, reply) => {
+    const { url } = request.query as { url?: string }
+    if (!url) return reply.badRequest('Falta el parámetro url.')
+
+    let parsed: URL
+    try {
+      parsed = new URL(url)
+    } catch {
+      return reply.badRequest('URL inválida.')
+    }
+    if (!HOSTS_PERMITIDOS.test(parsed.hostname)) {
+      return reply.forbidden('Solo se permite proxyear imágenes de Instagram/Facebook.')
+    }
+
+    try {
+      const res = await fetch(parsed.toString())
+      if (!res.ok || !res.body) {
+        return reply.notFound('No se pudo obtener la imagen (puede que el enlace haya expirado).')
+      }
+      // `res.body` es un ReadableStream WHATWG (de fetch) — Fastify espera un
+      // stream de Node para responder en streaming, así que se convierte.
+      const stream = Readable.fromWeb(res.body as import('stream/web').ReadableStream)
+      reply.header('Content-Type', res.headers.get('content-type') ?? 'image/jpeg')
+      reply.header('Cache-Control', 'public, max-age=86400') // 24h — suficiente para no re-pedir en cada render
+      return reply.send(stream)
+    } catch (err) {
+      fastify.log.warn({ err, url }, 'img-proxy: error al descargar imagen de Instagram')
+      return reply.notFound('No se pudo obtener la imagen.')
+    }
+  })
 
   // ─────────────────────────────────────────────────────────────────────────
   // CUENTA
