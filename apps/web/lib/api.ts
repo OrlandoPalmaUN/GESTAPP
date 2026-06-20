@@ -11,6 +11,19 @@ export interface ItemPapelera {
 /** Info mínima del tenant — la incluye `/auth/me` cuando el usuario pertenece a una empresa. */
 type TenantDeSesion = Pick<Tenant, 'id' | 'name' | 'slug' | 'status'> & { plan: PlanId }
 
+/** Una entrada del historial de auditoría ("footsteps") — ver GET /auditoria. */
+export interface EntradaAuditoria {
+  id: string
+  usuarioId: string | null
+  usuarioNombre: string | null
+  accion: 'crear' | 'editar' | 'eliminar' | 'restaurar'
+  entidadTipo: string
+  entidadId: string
+  etiqueta: string | null
+  cambios: Record<string, { antes: unknown; despues: unknown }>
+  creadoEn: string
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
 /**
@@ -131,6 +144,27 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
+
+  // --- Auditoría ("footsteps") ---
+
+  listarAuditoria: (filtros?: { entidadTipo?: string; usuarioId?: string; accion?: string; desde?: string; hasta?: string; page?: number; pageSize?: number }) => {
+    const params = new URLSearchParams()
+    if (filtros?.entidadTipo) params.set('entidadTipo', filtros.entidadTipo)
+    if (filtros?.usuarioId) params.set('usuarioId', filtros.usuarioId)
+    if (filtros?.accion) params.set('accion', filtros.accion)
+    if (filtros?.desde) params.set('desde', filtros.desde)
+    if (filtros?.hasta) params.set('hasta', filtros.hasta)
+    if (filtros?.page) params.set('page', String(filtros.page))
+    if (filtros?.pageSize) params.set('pageSize', String(filtros.pageSize))
+    const qs = params.toString()
+    return request<{ entradas: EntradaAuditoria[]; total: number; page: number; pageSize: number }>(`/auditoria${qs ? `?${qs}` : ''}`)
+  },
+
+  listarUsuariosAuditoria: () =>
+    request<{ usuarios: { usuarioId: string; usuarioNombre: string | null }[] }>('/auditoria/usuarios'),
+
+  historialEntidad: (entidadTipo: string, entidadId: string) =>
+    request<{ entradas: EntradaAuditoria[] }>(`/auditoria/${entidadTipo}/${entidadId}`),
 
   // --- Inventario (opera sobre el schema del tenant del usuario logueado) ---
 

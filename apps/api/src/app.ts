@@ -14,6 +14,7 @@ import { adminTenantsRoutes } from './routes/admin/tenants.js'
 import { adminUsuariosRoutes } from './routes/admin/usuarios.js'
 import { authRoutes } from './routes/auth.js'
 import { healthRoutes } from './routes/health.js'
+import { auditoriaRoutes } from './routes/tenant/auditoria.js'
 import { clientesRoutes } from './routes/tenant/clientes.js'
 import { comunicacionesRoutes } from './routes/tenant/comunicaciones.js'
 import { configEmpresaRoutes } from './routes/tenant/config_empresa.js'
@@ -101,6 +102,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(dashboardRoutes)
   await app.register(reportesRoutes)
   await app.register(configEmpresaRoutes)
+  await app.register(auditoriaRoutes)
 
   // Al arrancar el servidor, aplica migraciones de tenant pendientes en todos
   // los tenants activos. Idempotente — solo corre lo que no está en migration_log.

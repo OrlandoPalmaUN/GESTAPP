@@ -50,6 +50,12 @@ async function asignarTenantAlRequest(
   const client = await fastify.pg.connect()
   try {
     await client.query(`SET search_path TO "${tenant.schemaName}", public`)
+    // GUC de sesión que lee `public.fn_auditoria()` (ver migración 019) para
+    // saber quién hizo cada crear/editar/eliminar — la conexión es DEDICADA
+    // a este request, así que el valor no se filtra a otro tenant/usuario.
+    // `set_config(..., false)` en vez de interpolar el id directo en el SQL:
+    // así no hace falta validar el formato del UUID a mano.
+    await client.query(`SELECT set_config('app.current_user_id', $1, false)`, [request.user?.sub ?? ''])
   } catch (error) {
     client.release()
     throw error
@@ -142,6 +148,7 @@ export async function releaseTenantConnection(request: FastifyRequest): Promise<
   request.tenantDb = undefined
   try {
     await client.query('RESET search_path')
+    await client.query(`SELECT set_config('app.current_user_id', '', false)`)
   } finally {
     client.release()
   }

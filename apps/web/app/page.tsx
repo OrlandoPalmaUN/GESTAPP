@@ -36,6 +36,8 @@ import {
   RefreshCw,
   X,
   BarChart2,
+  ChevronDown,
+  Footprints,
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero } from '@antigravity/shared';
@@ -55,6 +57,55 @@ function adjustColor(hex: string, amount: number): string {
   const b = Math.min(255, Math.max(0, (num & 0xFF) + amount));
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`;
 }
+
+// ─── Helpers de auditoría ("footsteps") ──────────────────────────────────────
+
+/** "hace 3 min" / "hace 2 h" / "hace 5 d" / fecha completa si es muy viejo. */
+function tiempoRelativo(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'hace un momento';
+  if (min < 60) return `hace ${min} min`;
+  const horas = Math.floor(min / 60);
+  if (horas < 24) return `hace ${horas} h`;
+  const dias = Math.floor(horas / 24);
+  if (dias < 7) return `hace ${dias} d`;
+  return new Date(iso).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+const ENTIDAD_LABELS: Record<string, string> = {
+  productos: 'Producto', categorias: 'Categoría', clientes: 'Cliente', proveedores: 'Proveedor',
+  pedidos: 'Pedido', pedido_items: 'Ítem de pedido', pedidos_proveedor: 'Orden de compra', pedidos_proveedor_items: 'Ítem de OC',
+  facturas_venta: 'Factura de venta', facturas_compra: 'Factura de compra', abonos: 'Abono', gastos_operativos: 'Gasto',
+  ingresos_bancarios: 'Ingreso bancario', cuentas_bancarias: 'Cuenta bancaria', transferencias_bancarias: 'Transferencia',
+  eventos_calendario: 'Evento de calendario', notas_crm: 'Nota CRM', notas_internas: 'Nota interna',
+  config_empresa: 'Configuración de empresa', movimientos_inventario: 'Movimiento de inventario',
+  ig_cuentas: 'Cuenta de Instagram', ig_config: 'Configuración de Instagram',
+  producto_atributos: 'Atributo de producto', variantes_producto: 'Variante de producto',
+};
+function humanizarEntidad(tipo: string): string {
+  return ENTIDAD_LABELS[tipo] ?? tipo.replace(/_/g, ' ');
+}
+function humanizarCampo(campo: string): string {
+  return campo.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+function formatearValorAuditoria(v: unknown): string {
+  if (v === null || v === undefined) return '—';
+  if (typeof v === 'boolean') return v ? 'Sí' : 'No';
+  if (typeof v === 'object') return JSON.stringify(v);
+  const s = String(v);
+  // fechas ISO completas se ven mejor cortas
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(s)) {
+    return new Date(s).toLocaleString('es-CO', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+  return s.length > 60 ? `${s.slice(0, 60)}…` : s;
+}
+const ACCION_STYLE: Record<string, { label: string; bg: string; text: string }> = {
+  crear:     { label: 'Creó',      bg: 'bg-green-100',  text: 'text-green-700' },
+  editar:    { label: 'Editó',     bg: 'bg-blue-100',   text: 'text-blue-700' },
+  eliminar:  { label: 'Eliminó',   bg: 'bg-red-100',    text: 'text-red-700' },
+  restaurar: { label: 'Restauró',  bg: 'bg-amber-100',  text: 'text-amber-700' },
+};
 
 // Icono TikTok (no está en lucide-react)
 const TikTokIcon = ({ size = 16 }: { size?: number }) => (
@@ -81,7 +132,7 @@ const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
   comisiones: 'Comisiones', marketing: 'Marketing', otros: 'Otros',
 };
 
-import { api, ApiError } from '../lib/api';
+import { api, ApiError, type EntradaAuditoria } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
 import {
   TENANTS_GLOBAL_METRICS,
@@ -342,9 +393,82 @@ function TruckSprite({ scale = 3 }: { scale?: number }) {
   );
 }
 
+/**
+ * Mini-historial embebido en el detalle de un objeto puntual (pedido,
+ * producto, etc.) — reusa GET /auditoria/:entidadTipo/:entidadId. Componente
+ * standalone (no parte de AppHome) para poder montarlo/desmontarlo según el
+ * modal abierto sin arrastrar todo el estado del timeline global.
+ */
+function HistorialEntidad({ entidadTipo, entidadId }: { entidadTipo: string; entidadId: string }) {
+  const [entradas, setEntradas] = useState<EntradaAuditoria[] | null>(null);
+  const [cargando, setCargando] = useState(true);
+  const [expandida, setExpandida] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let activo = true;
+    setCargando(true);
+    api.historialEntidad(entidadTipo, entidadId)
+      .then((res) => { if (activo) setEntradas(res.entradas); })
+      .catch(() => { if (activo) setEntradas([]); })
+      .finally(() => { if (activo) setCargando(false); });
+    return () => { activo = false; };
+  }, [entidadTipo, entidadId]);
+
+  const toggle = (id: string) => setExpandida((prev) => {
+    const next = new Set(prev);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  if (cargando) return <div className="flex items-center gap-2 text-[11px] font-mono text-neutral-400 py-2"><RefreshCw size={11} className="animate-spin" /> Cargando historial…</div>;
+  if (!entradas || entradas.length === 0) return <p className="text-[11px] font-mono text-neutral-400 italic py-2">Sin actividad registrada.</p>;
+
+  return (
+    <div className="flex flex-col gap-0 border border-black">
+      {entradas.map((entrada, i) => {
+        const estilo = ACCION_STYLE[entrada.accion] ?? ACCION_STYLE.editar!;
+        const campos = Object.keys(entrada.cambios);
+        const abierta = expandida.has(entrada.id);
+        return (
+          <div key={entrada.id} className={`border-b border-neutral-200 last:border-b-0 ${i % 2 === 1 ? 'bg-neutral-50' : ''}`}>
+            <button
+              type="button"
+              onClick={() => toggle(entrada.id)}
+              className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-neutral-100"
+            >
+              <span className={`font-mono text-[9px] font-bold px-1.5 py-0.5 shrink-0 ${estilo.bg} ${estilo.text}`}>{estilo.label}</span>
+              <span className="text-[11px] flex-1 truncate">
+                <span className="font-bold">{entrada.usuarioNombre ?? 'Sistema'}</span>
+              </span>
+              <span className="font-mono text-[9px] text-neutral-400 shrink-0">{tiempoRelativo(entrada.creadoEn)}</span>
+              {campos.length > 0 && <ChevronDown size={12} className={`text-neutral-400 shrink-0 transition-transform ${abierta ? 'rotate-180' : ''}`} />}
+            </button>
+            {abierta && campos.length > 0 && (
+              <div className="px-2.5 pb-2 pl-7">
+                <table className="w-full text-[10px] font-mono">
+                  <tbody>
+                    {campos.map((campo) => (
+                      <tr key={campo}>
+                        <td className="text-neutral-500 py-0.5 pr-2 align-top whitespace-nowrap">{humanizarCampo(campo)}</td>
+                        <td className="text-neutral-400 py-0.5 pr-2 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.antes)}</td>
+                        <td className="text-neutral-400 py-0.5 pr-1 align-top">→</td>
+                        <td className="text-black font-bold py-0.5 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.despues)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export default function AppHome() {
   // --- ESTADOS GENERALES DE LA APP ---
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'config'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'auditoria' | 'config'>('dashboard');
   // --- REPORTES ---
   const [reportesAño, setReportesAño] = useState(() => new Date().getFullYear());
   const [reportesOverview, setReportesOverview] = useState<Array<{
@@ -807,6 +931,65 @@ export default function AppHome() {
   // Captura visual del panel de Reportes (KPIs, mapas de calor, tablas) para exportar a PDF tal como se ve en pantalla.
   const reporteCapturaRef = useRef<HTMLDivElement>(null);
   const [exportandoPDF, setExportandoPDF] = useState(false);
+
+  // Historial de auditoría ("footsteps") — timeline de quién hizo qué, ver auditoria.ts en la API.
+  const [auditoriaEntradas, setAuditoriaEntradas] = useState<EntradaAuditoria[]>([]);
+  const [auditoriaCargando, setAuditoriaCargando] = useState(false);
+  const [auditoriaError, setAuditoriaError] = useState<string | null>(null);
+  const [auditoriaTotal, setAuditoriaTotal] = useState(0);
+  const [auditoriaPage, setAuditoriaPage] = useState(1);
+  const AUDITORIA_PAGE_SIZE = 25;
+  const [auditoriaFiltroUsuario, setAuditoriaFiltroUsuario] = useState('');
+  const [auditoriaFiltroEntidad, setAuditoriaFiltroEntidad] = useState('');
+  const [auditoriaFiltroAccion, setAuditoriaFiltroAccion] = useState('');
+  const [auditoriaFiltroDesde, setAuditoriaFiltroDesde] = useState('');
+  const [auditoriaFiltroHasta, setAuditoriaFiltroHasta] = useState('');
+  const [auditoriaUsuarios, setAuditoriaUsuarios] = useState<{ usuarioId: string; usuarioNombre: string | null }[]>([]);
+  const [auditoriaExpandida, setAuditoriaExpandida] = useState<Set<string>>(new Set());
+
+  const fetchAuditoria = useCallback(async (page: number) => {
+    if (!usuario?.tenantId) return;
+    setAuditoriaCargando(true);
+    setAuditoriaError(null);
+    try {
+      const res = await api.listarAuditoria({
+        page,
+        pageSize: AUDITORIA_PAGE_SIZE,
+        usuarioId: auditoriaFiltroUsuario || undefined,
+        entidadTipo: auditoriaFiltroEntidad || undefined,
+        accion: auditoriaFiltroAccion || undefined,
+        desde: auditoriaFiltroDesde || undefined,
+        hasta: auditoriaFiltroHasta ? `${auditoriaFiltroHasta}T23:59:59` : undefined,
+      });
+      setAuditoriaEntradas(res.entradas);
+      setAuditoriaTotal(res.total);
+      setAuditoriaPage(res.page);
+    } catch (e) {
+      setAuditoriaError(e instanceof ApiError ? e.message : 'No se pudo cargar el historial de actividad.');
+    } finally {
+      setAuditoriaCargando(false);
+    }
+  }, [usuario?.tenantId, auditoriaFiltroUsuario, auditoriaFiltroEntidad, auditoriaFiltroAccion, auditoriaFiltroDesde, auditoriaFiltroHasta]);
+
+  useEffect(() => {
+    if (activeTab !== 'auditoria' || !usuario?.tenantId) return;
+    void fetchAuditoria(1);
+    void (async () => {
+      try {
+        const res = await api.listarUsuariosAuditoria();
+        setAuditoriaUsuarios(res.usuarios);
+      } catch { /* silencioso — el filtro de usuario simplemente queda vacío */ }
+    })();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, usuario?.tenantId]);
+
+  const toggleAuditoriaExpandida = (id: string) => {
+    setAuditoriaExpandida((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!usuario?.tenantId) return;
@@ -2803,6 +2986,16 @@ export default function AppHome() {
               >
                 <BarChart3 size={18} />
                 <span>Reportes</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('auditoria'); setSuperAdminMode(false); }}
+                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                  activeTab === 'auditoria' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                }`}
+              >
+                <Footprints size={18} />
+                <span>Actividad</span>
               </button>
 
               <button
@@ -6276,6 +6469,142 @@ export default function AppHome() {
                   </div>
                 )}
 
+                {/* --- ACTIVIDAD TAB ("footsteps") --- */}
+                {activeTab === 'auditoria' && (
+                  <div className="flex flex-col gap-4">
+                    <div className="flex items-center gap-2 bg-white border-2 border-black p-3">
+                      <Footprints size={16} />
+                      <h2 className="font-mono text-sm font-bold uppercase">Historial de actividad</h2>
+                      <button type="button" onClick={() => void fetchAuditoria(1)} className="neo-btn p-1.5 hover:bg-neutral-100 ml-auto" title="Recargar"><RefreshCw size={14} /></button>
+                    </div>
+
+                    {/* Filtros */}
+                    <div className="bg-white border-2 border-black p-3 flex flex-wrap items-end gap-3">
+                      <label className="flex flex-col gap-1">
+                        <span className="font-mono text-[10px] font-bold text-neutral-500">USUARIO</span>
+                        <select value={auditoriaFiltroUsuario} onChange={(e) => setAuditoriaFiltroUsuario(e.target.value)} className="neo-input text-xs py-1.5">
+                          <option value="">Todos</option>
+                          {auditoriaUsuarios.map((u) => (
+                            <option key={u.usuarioId} value={u.usuarioId}>{u.usuarioNombre ?? u.usuarioId}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="font-mono text-[10px] font-bold text-neutral-500">TIPO</span>
+                        <select value={auditoriaFiltroEntidad} onChange={(e) => setAuditoriaFiltroEntidad(e.target.value)} className="neo-input text-xs py-1.5">
+                          <option value="">Todos</option>
+                          {Object.entries(ENTIDAD_LABELS).map(([tipo, label]) => (
+                            <option key={tipo} value={tipo}>{label}</option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="font-mono text-[10px] font-bold text-neutral-500">ACCIÓN</span>
+                        <select value={auditoriaFiltroAccion} onChange={(e) => setAuditoriaFiltroAccion(e.target.value)} className="neo-input text-xs py-1.5">
+                          <option value="">Todas</option>
+                          <option value="crear">Crear</option>
+                          <option value="editar">Editar</option>
+                          <option value="eliminar">Eliminar</option>
+                          <option value="restaurar">Restaurar</option>
+                        </select>
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="font-mono text-[10px] font-bold text-neutral-500">DESDE</span>
+                        <input type="date" value={auditoriaFiltroDesde} onChange={(e) => setAuditoriaFiltroDesde(e.target.value)} className="neo-input text-xs py-1.5" />
+                      </label>
+                      <label className="flex flex-col gap-1">
+                        <span className="font-mono text-[10px] font-bold text-neutral-500">HASTA</span>
+                        <input type="date" value={auditoriaFiltroHasta} onChange={(e) => setAuditoriaFiltroHasta(e.target.value)} className="neo-input text-xs py-1.5" />
+                      </label>
+                      <button type="button" onClick={() => void fetchAuditoria(1)} className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-4 py-2">
+                        Filtrar
+                      </button>
+                      {(auditoriaFiltroUsuario || auditoriaFiltroEntidad || auditoriaFiltroAccion || auditoriaFiltroDesde || auditoriaFiltroHasta) && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAuditoriaFiltroUsuario(''); setAuditoriaFiltroEntidad(''); setAuditoriaFiltroAccion('');
+                            setAuditoriaFiltroDesde(''); setAuditoriaFiltroHasta('');
+                            void fetchAuditoria(1);
+                          }}
+                          className="neo-btn text-xs px-3 py-2"
+                        >
+                          Limpiar
+                        </button>
+                      )}
+                    </div>
+
+                    {auditoriaError && <p className="text-xs font-mono text-brand-red p-2">{auditoriaError}</p>}
+                    {auditoriaCargando && <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 p-2"><RefreshCw size={13} className="animate-spin" /> Cargando actividad…</div>}
+
+                    {!auditoriaCargando && auditoriaEntradas.length === 0 && (
+                      <p className="text-xs font-mono text-neutral-400 italic text-center py-8 bg-white border-2 border-black">
+                        No hay actividad registrada con estos filtros.
+                      </p>
+                    )}
+
+                    {/* Timeline */}
+                    {!auditoriaCargando && auditoriaEntradas.length > 0 && (
+                      <div className="bg-white border-2 border-black">
+                        {auditoriaEntradas.map((entrada, i) => {
+                          const estilo = ACCION_STYLE[entrada.accion] ?? ACCION_STYLE.editar!;
+                          const camposCambiados = Object.keys(entrada.cambios);
+                          const expandida = auditoriaExpandida.has(entrada.id);
+                          return (
+                            <div key={entrada.id} className={`border-b border-neutral-200 last:border-b-0 ${i % 2 === 1 ? 'bg-neutral-50' : ''}`}>
+                              <button
+                                type="button"
+                                onClick={() => toggleAuditoriaExpandida(entrada.id)}
+                                className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-100 transition-colors"
+                              >
+                                <span className={`font-mono text-[10px] font-bold px-2 py-1 shrink-0 ${estilo.bg} ${estilo.text}`}>
+                                  {estilo.label}
+                                </span>
+                                <span className="text-xs flex-1 truncate">
+                                  <span className="font-bold">{entrada.usuarioNombre ?? 'Sistema'}</span>
+                                  <span className="text-neutral-500"> · {humanizarEntidad(entrada.entidadTipo)}</span>
+                                  {entrada.etiqueta && <span className="text-neutral-700"> — {entrada.etiqueta}</span>}
+                                </span>
+                                <span className="font-mono text-[10px] text-neutral-400 shrink-0">{tiempoRelativo(entrada.creadoEn)}</span>
+                                {camposCambiados.length > 0 && (
+                                  <ChevronDown size={14} className={`text-neutral-400 shrink-0 transition-transform ${expandida ? 'rotate-180' : ''}`} />
+                                )}
+                              </button>
+                              {expandida && camposCambiados.length > 0 && (
+                                <div className="px-4 pb-3 pl-9">
+                                  <table className="w-full text-[11px] font-mono">
+                                    <tbody>
+                                      {camposCambiados.map((campo) => (
+                                        <tr key={campo} className="border-b border-neutral-100 last:border-b-0">
+                                          <td className="text-neutral-500 py-1 pr-3 align-top whitespace-nowrap">{humanizarCampo(campo)}</td>
+                                          <td className="text-neutral-400 py-1 pr-2 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.antes)}</td>
+                                          <td className="text-neutral-400 py-1 pr-2 align-top">→</td>
+                                          <td className="text-black font-bold py-1 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.despues)}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Paginación */}
+                    {auditoriaTotal > AUDITORIA_PAGE_SIZE && (
+                      <div className="flex items-center justify-center gap-3 py-2">
+                        <button type="button" disabled={auditoriaPage <= 1} onClick={() => void fetchAuditoria(auditoriaPage - 1)} className="neo-btn p-1.5 disabled:opacity-30"><ChevronLeft size={14} /></button>
+                        <span className="font-mono text-xs text-neutral-500">
+                          Página {auditoriaPage} de {Math.max(1, Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE))}
+                        </span>
+                        <button type="button" disabled={auditoriaPage >= Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE)} onClick={() => void fetchAuditoria(auditoriaPage + 1)} className="neo-btn p-1.5 disabled:opacity-30"><ChevronRight size={14} /></button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 {/* --- CONFIGURACIÓN TAB --- */}
                 {activeTab === 'config' && (
                   <div className="flex flex-col gap-6">
@@ -7902,6 +8231,14 @@ export default function AppHome() {
                   </div>
                 </div>
 
+                {/* Historial ("footsteps") de este pedido */}
+                <div className="p-4">
+                  <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2 flex items-center gap-1.5">
+                    <Footprints size={12} /> Historial
+                  </div>
+                  <HistorialEntidad entidadTipo="pedidos" entidadId={ord.id} />
+                </div>
+
                 {/* Footer: editar y eliminar */}
                 <div className="p-4 border-t-2 border-black flex gap-3">
                   <button
@@ -7969,6 +8306,12 @@ export default function AppHome() {
               </div>
               <button type="submit" className="neo-btn bg-brand-blue text-white hover:opacity-90 mt-2 py-2.5">GUARDAR CAMBIOS</button>
             </form>
+            <div className="border-t border-black pt-3">
+              <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2 flex items-center gap-1.5">
+                <Footprints size={12} /> Historial
+              </div>
+              <HistorialEntidad entidadTipo="productos" entidadId={editingProduct.id} />
+            </div>
           </div>
         </div>
       )}
