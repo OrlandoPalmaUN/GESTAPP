@@ -804,6 +804,10 @@ export default function AppHome() {
   const [configEmpresaError, setConfigEmpresaError] = useState<string | null>(null);
   const puedeEditarConfigEmpresa = usuario?.rol === 'admin' || usuario?.rol === 'superadmin';
 
+  // Captura visual del panel de Reportes (KPIs, mapas de calor, tablas) para exportar a PDF tal como se ve en pantalla.
+  const reporteCapturaRef = useRef<HTMLDivElement>(null);
+  const [exportandoPDF, setExportandoPDF] = useState(false);
+
   useEffect(() => {
     if (!usuario?.tenantId) return;
     void (async () => {
@@ -5877,89 +5881,81 @@ export default function AppHome() {
                           {(() => {
                             const d = reportesSemanaSel ? reportesDetalleSemana : reportesDetalleMes;
                             if (!d || reportesDetalleMesCargando || reportesDetalleSemanaCargando) return null;
+                            // Captura el panel de Reportes tal como se ve en pantalla (KPIs, mapas de
+                            // calor, tablas) y lo trocea en páginas A4 dentro del PDF — en vez de
+                            // redibujar los datos como texto plano, que se veía distinto a la página.
                             const exportarPDF = async () => {
-                              const { jsPDF } = await import('jspdf');
-                              const doc = new jsPDF({ unit: 'pt', format: 'a4' });
-                              const margin = 40;
-                              const pageWidth = doc.internal.pageSize.getWidth();
-                              const pageHeight = doc.internal.pageSize.getHeight();
-                              let y = margin;
+                              const nodo = reporteCapturaRef.current;
+                              if (!nodo) return;
+                              setExportandoPDF(true);
+                              try {
+                                const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
+                                  import('html2canvas'),
+                                  import('jspdf'),
+                                ]);
 
-                              const checkPageBreak = (espacio: number) => {
-                                if (y + espacio > pageHeight - margin) { doc.addPage(); y = margin; }
-                              };
-                              const titulo = (texto: string) => {
-                                checkPageBreak(28);
-                                doc.setFontSize(13); doc.setFont('helvetica', 'bold');
-                                doc.text(texto, margin, y);
-                                y += 18;
-                                doc.setDrawColor(0); doc.setLineWidth(1);
-                                doc.line(margin, y - 10, pageWidth - margin, y - 10);
-                              };
-                              const fila = (cols: string[], anchos: number[], bold = false) => {
-                                checkPageBreak(16);
-                                doc.setFontSize(9); doc.setFont('helvetica', bold ? 'bold' : 'normal');
-                                let x = margin;
-                                cols.forEach((c, i) => { doc.text(String(c), x, y); x += anchos[i] ?? 100; });
-                                y += 14;
-                              };
+                                const canvas = await html2canvas(nodo, {
+                                  scale: 2,
+                                  backgroundColor: '#ffffff',
+                                  useCORS: true,
+                                });
 
-                              doc.setFontSize(17); doc.setFont('helvetica', 'bold');
-                              doc.text(`Reporte — ${d.periodo.label}`, margin, y); y += 16;
-                              doc.setFontSize(10); doc.setFont('helvetica', 'normal');
-                              doc.setTextColor(100);
-                              doc.text(`${d.periodo.desde} a ${d.periodo.hasta}`, margin, y); y += 24;
-                              doc.setTextColor(0);
+                                const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+                                const margin = 24;
+                                const pageWidth = doc.internal.pageSize.getWidth();
+                                const pageHeight = doc.internal.pageSize.getHeight();
+                                const contentWidth = pageWidth - margin * 2;
+                                const contentHeight = pageHeight - margin * 2;
 
-                              titulo('Resumen financiero'); y += 4;
-                              fila(['Ventas totales', `$${d.ventas.total.toLocaleString('es-CO')}`], [200, 200]);
-                              fila(['Pedidos', String(d.ventas.pedidos)], [200, 200]);
-                              fila(['Ticket promedio', `$${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}`], [200, 200]);
-                              fila(['Compras / OC', `$${d.compras.total.toLocaleString('es-CO')}`], [200, 200]);
-                              fila(['Gastos operativos', `$${d.gastos.total.toLocaleString('es-CO')}`], [200, 200]);
-                              fila(['CxC cobrada', `$${d.cxcCobrada.toLocaleString('es-CO')}`], [200, 200]);
-                              fila(['Ingresos manuales', `$${d.ingresosManuales.toLocaleString('es-CO')}`], [200, 200]);
-                              fila(['Margen bruto', `$${d.margenBruto.total.toLocaleString('es-CO')} (${d.margenBruto.porcentaje}%)`], [200, 200]);
-                              fila(['Utilidad neta', `$${d.utilidadNeta.toLocaleString('es-CO')}`], [200, 200], true);
-                              y += 14;
-
-                              if (d.topProductos.length > 0) {
-                                titulo('Top productos'); y += 4;
-                                fila(['Producto', 'Categoría', 'Unidades', 'Ventas'], [180, 120, 80, 100], true);
-                                d.topProductos.forEach(p => fila([p.nombre, p.categoria ?? '—', String(p.unidades), `$${p.ventasTotal.toLocaleString('es-CO')}`], [180, 120, 80, 100]));
-                                y += 14;
-                              }
-
-                              if ((reportesTopClientes ?? []).length > 0) {
-                                titulo('Top clientes'); y += 4;
-                                fila(['Cliente', 'Pedidos', 'Ventas', 'Saldo pendiente'], [180, 80, 120, 120], true);
-                                (reportesTopClientes ?? []).forEach(c => fila([c.nombre, String(c.pedidos), `$${c.ventas.toLocaleString('es-CO')}`, c.saldoPendiente > 0 ? `$${c.saldoPendiente.toLocaleString('es-CO')}` : '—'], [180, 80, 120, 120]));
-                                y += 14;
-                              }
-
-                              if ((reportesSemComp ?? []).length > 0) {
-                                titulo('Comparación entre semanas'); y += 4;
-                                fila(['Semana', 'Pedidos', 'Ventas', 'Gastos', 'Margen', 'Top producto'], [80, 60, 100, 100, 90, 120], true);
-                                (reportesSemComp ?? []).forEach(s => fila([s.label, String(s.pedidos), `$${s.ventas.toLocaleString('es-CO')}`, `$${s.gastos.toLocaleString('es-CO')}`, `$${s.margenBruto.toLocaleString('es-CO')}`, s.topProducto?.nombre ?? '—'], [80, 60, 100, 100, 90, 120]));
-                                y += 14;
-                              }
-
-                              if (reportesIA) {
-                                titulo('Análisis IA'); y += 4;
+                                // Encabezado con el título del período (texto real, no parte de la captura)
+                                doc.setFontSize(15); doc.setFont('helvetica', 'bold');
+                                doc.text(`Reporte — ${d.periodo.label}`, margin, margin + 4);
                                 doc.setFontSize(9); doc.setFont('helvetica', 'normal');
-                                const lineas = doc.splitTextToSize(reportesIA.replace(/^##\s*/gm, '').replace(/^-\s*/gm, '• '), pageWidth - margin * 2);
-                                lineas.forEach((linea: string) => { checkPageBreak(13); doc.text(linea, margin, y); y += 13; });
-                              }
+                                doc.setTextColor(100);
+                                doc.text(`${d.periodo.desde} a ${d.periodo.hasta}`, margin, margin + 18);
+                                doc.setTextColor(0);
+                                const offsetPrimeraPagina = 32;
 
-                              doc.save(`reporte_${d.periodo.label.replace(/\s+/g, '_')}.pdf`);
+                                // Escala: el canvas (a `scale: 2`) se ajusta al ancho de la página;
+                                // luego se corta en franjas de `contentHeight` para paginar.
+                                const escala = contentWidth / canvas.width;
+
+                                const canvasFranja = document.createElement('canvas');
+                                const ctx = canvasFranja.getContext('2d');
+                                let yaDibujado = 0; // en px del canvas original
+                                let primeraPagina = true;
+
+                                while (yaDibujado < canvas.height) {
+                                  const espacioDisponiblePt = primeraPagina ? contentHeight - offsetPrimeraPagina : contentHeight;
+                                  const franjaAlturaPx = Math.min(canvas.height - yaDibujado, espacioDisponiblePt / escala);
+
+                                  canvasFranja.width = canvas.width;
+                                  canvasFranja.height = franjaAlturaPx;
+                                  ctx?.clearRect(0, 0, canvasFranja.width, canvasFranja.height);
+                                  ctx?.drawImage(canvas, 0, yaDibujado, canvas.width, franjaAlturaPx, 0, 0, canvas.width, franjaAlturaPx);
+
+                                  const imgData = canvasFranja.toDataURL('image/png');
+                                  const yPdf = margin + (primeraPagina ? offsetPrimeraPagina : 0);
+                                  doc.addImage(imgData, 'PNG', margin, yPdf, contentWidth, franjaAlturaPx * escala);
+
+                                  yaDibujado += franjaAlturaPx;
+                                  primeraPagina = false;
+                                  if (yaDibujado < canvas.height) doc.addPage();
+                                }
+
+                                doc.save(`reporte_${d.periodo.label.replace(/\s+/g, '_')}.pdf`);
+                              } finally {
+                                setExportandoPDF(false);
+                              }
                             };
                             return (
                               <>
                                 <div className="flex justify-end mb-1">
-                                  <button type="button" onClick={() => void exportarPDF()} className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5">
-                                    <FileSpreadsheet size={12} /> Exportar PDF
+                                  <button type="button" disabled={exportandoPDF} onClick={() => void exportarPDF()} className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50">
+                                    {exportandoPDF ? <><RefreshCw size={11} className="animate-spin" /> Generando PDF…</> : <><FileSpreadsheet size={12} /> Exportar PDF</>}
                                   </button>
                                 </div>
+                                <div ref={reporteCapturaRef} className="flex flex-col gap-6 bg-white">
                                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                                   {[
                                     { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''}`, delta: d.ventas.delta, color: 'text-green-700' },
@@ -6269,6 +6265,7 @@ export default function AppHome() {
                                       })}
                                     </div>
                                   )}
+                                </div>
                                 </div>
                               </>
                             );
