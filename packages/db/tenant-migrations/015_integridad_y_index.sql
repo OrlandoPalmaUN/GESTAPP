@@ -48,7 +48,13 @@ END $$;
 -- ── 2. Índices para búsqueda global ────────────────────────────────────────
 -- ILIKE con índice GIN trigrama es mucho más rápido que sin él para
 -- búsquedas substring sobre tablas grandes.
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+-- SCHEMA public explícito: una extensión es única por base de datos — si
+-- algún tenant la crea sin search_path predecible, queda instalada en un
+-- schema arbitrario y los DEMÁS tenants pierden acceso a gin_trgm_ops
+-- (error real en producción: "operator class gin_trgm_ops does not exist").
+-- public siempre está en el search_path de cada tenant, así que es la única
+-- ubicación segura para una extensión compartida entre schemas.
+CREATE EXTENSION IF NOT EXISTS pg_trgm SCHEMA public;
 
 CREATE INDEX IF NOT EXISTS idx_clientes_nombre_trgm
   ON clientes USING GIN (nombre gin_trgm_ops)
