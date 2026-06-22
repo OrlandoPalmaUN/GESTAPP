@@ -168,30 +168,36 @@ function PostRow({
     <button
       type="button"
       onClick={() => onSelect(post.id)}
-      className="w-full grid items-center gap-3 border-b border-neutral-200 last:border-b-0 py-2 text-xs text-left hover:bg-neutral-50 transition-colors"
-      style={{ gridTemplateColumns: '3.5rem 2rem 1fr 7.5rem 4.5rem 1rem' }}
+      className="w-full grid grid-cols-1 sm:[grid-template-columns:3.5rem_2rem_1fr_7.5rem_4.5rem_1rem] items-center gap-1.5 sm:gap-3 border-b border-neutral-200 last:border-b-0 py-2 text-xs text-left hover:bg-neutral-50 transition-colors"
     >
-      {/* Tipo badge */}
-      <span className="font-mono text-[9px] border border-black px-1 justify-self-start uppercase">{post.tipo}</span>
-      {/* Thumbnail */}
-      {post.thumbnailUrl ? (
-        <img src={imgProxyUrl(post.thumbnailUrl)} alt="" className="w-8 h-8 object-cover border border-black" />
-      ) : <span />}
-      {/* Caption */}
-      <span className="text-neutral-700 truncate">{preview || <em className="text-neutral-400">Sin caption</em>}</span>
-      {/* Métricas */}
-      <div className="flex items-center gap-3 font-mono text-[10px] text-neutral-600 justify-self-end">
-        <span className="flex items-center gap-0.5"><Heart size={10} /> {n(post.likes)}</span>
-        <span className="flex items-center gap-0.5"><MessageCircle size={10} /> {n(post.comentarios)}</span>
-        {post.reproducciones != null && (
-          <span className="flex items-center gap-0.5 text-neutral-400" title="Reproducciones">
-            ▶ {n(post.reproducciones)}
-          </span>
-        )}
+      {/* En mobile: fila 1 = tipo + thumbnail + caption. Desde sm: se "disuelve" (contents) y vuelve a ser 3 columnas del grid. */}
+      <div className="flex items-center gap-2 sm:contents">
+        {/* Tipo badge */}
+        <span className="font-mono text-[9px] border border-black px-1 justify-self-start uppercase shrink-0">{post.tipo}</span>
+        {/* Thumbnail */}
+        {post.thumbnailUrl ? (
+          <img src={imgProxyUrl(post.thumbnailUrl)} alt="" className="w-8 h-8 object-cover border border-black shrink-0" />
+        ) : <span className="hidden sm:inline" />}
+        {/* Caption */}
+        <span className="text-neutral-700 truncate flex-1 sm:flex-initial">{preview || <em className="text-neutral-400">Sin caption</em>}</span>
       </div>
-      {/* Fecha */}
-      <span className="font-mono text-[10px] text-neutral-400 justify-self-end">{fmtDate(post.publicadoEn)}</span>
-      <ArrowUpRight size={12} className="text-neutral-300 justify-self-end" />
+
+      {/* En mobile: fila 2 = métricas + fecha + flecha. Desde sm: se disuelve y vuelve a ser 3 columnas del grid. */}
+      <div className="flex items-center gap-3 pl-9 sm:pl-0 sm:contents">
+        {/* Métricas */}
+        <div className="flex items-center gap-3 font-mono text-[10px] text-neutral-600 justify-self-end">
+          <span className="flex items-center gap-0.5"><Heart size={10} /> {n(post.likes)}</span>
+          <span className="flex items-center gap-0.5"><MessageCircle size={10} /> {n(post.comentarios)}</span>
+          {post.reproducciones != null && (
+            <span className="flex items-center gap-0.5 text-neutral-400" title="Reproducciones">
+              ▶ {n(post.reproducciones)}
+            </span>
+          )}
+        </div>
+        {/* Fecha */}
+        <span className="font-mono text-[10px] text-neutral-400 justify-self-end ml-auto sm:ml-0">{fmtDate(post.publicadoEn)}</span>
+        <ArrowUpRight size={12} className="text-neutral-300 justify-self-end shrink-0" />
+      </div>
     </button>
   )
 }
@@ -305,7 +311,7 @@ function PostDrawer({
                         {c.autorVerificado && <span className="text-blue-500 text-[9px]">✓</span>}
                         <span className="text-neutral-400 font-mono text-[9px] ml-auto">{fmtDate(c.publicadoEn)}</span>
                         {!c.respondido && (
-                          <span className="bg-orange-100 border border-orange-400 text-orange-700 font-mono text-[8px] px-1">sin responder</span>
+                          <span className="bg-orange-100 border border-orange-400 text-orange-700 font-mono text-[9px] px-1">sin responder</span>
                         )}
                       </div>
                       <p className="text-neutral-700 leading-snug">{c.texto}</p>
@@ -562,7 +568,7 @@ export function IgDashboard() {
       )}
 
       {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
         <KpiCard
           label="Seguidores"
           value={n(resumen?.seguidores ?? cuenta.seguidores)}
