@@ -116,6 +116,17 @@ export interface PedidoItem {
    * producto en inventario. `null` si el producto no tenía costo cargado.
    */
   precioCosto: number | null
+  /**
+   * Calculados en vivo desde `movimientos_inventario` (nunca se guardan como
+   * columna — son la prueba, no la fuente de verdad): si ya existe una
+   * `reserva` sin su `liberacion_reserva` correspondiente, y si ya existe
+   * una `salida_venta` real para este ítem en este pedido. Sirven para que
+   * el usuario VEA si el stock de esta línea ya se descontó de verdad, y
+   * también son el resguardo que usa el servidor para nunca duplicar un
+   * movimiento — ver `verificarMovimientosExistentes` en `routes/tenant/pedidos.ts`.
+   */
+  stockReservado: boolean
+  stockDescontado: boolean
 }
 
 /**

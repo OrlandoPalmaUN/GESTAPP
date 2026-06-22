@@ -44,7 +44,80 @@ function aPedidoItem(row: FilaPedidoItem): PedidoItem {
     precioUnitario: Number(row.precio_unitario),
     precioCosto: row.precio_costo === null ? null : Number(row.precio_costo),
     subtotal: Number(row.subtotal),
+    // Se completan después con datos reales del ledger — ver `adjuntarEstadoInventario`.
+    // Default conservador (false) si por algún motivo no se llega a enriquecer.
+    stockReservado: false,
+    stockDescontado: false,
   }
+}
+
+/** Clave única por línea de inventario: un producto (o variante) dentro de UN pedido puntual. */
+function claveItem(pedidoId: string, productoId: string | null, varianteId: string | null): string {
+  return `${pedidoId}|${productoId ?? ''}|${varianteId ?? ''}`
+}
+
+/**
+ * Resguardo central: en vez de confiar en el PAR de estados (origen->destino)
+ * para decidir qué movimientos crear —que es justo lo que permitía duplicar
+ * reservas/salidas si alguien transicionaba un pedido "hacia atrás" y volvía
+ * a avanzarlo, ver migración de este fix—, esta función consulta el ledger
+ * REAL (`movimientos_inventario`) y cuenta, por cada línea de pedido, cuántas
+ * `reserva`/`liberacion_reserva`/`salida_venta` existen de verdad.
+ *
+ * De acá derivan dos cosas:
+ *  1. `stockReservado`/`stockDescontado` que se le devuelven al cliente (la
+ *     "prueba" visible de que el stock ya se movió, no solo lo que el
+ *     estado del pedido sugiere).
+ *  2. El resguardo de idempotencia en el propio handler de transición: antes
+ *     de insertar una `reserva` o `salida_venta` se verifica que NO exista
+ *     ya una para esa línea+pedido (se reserva/se vende como máximo UNA vez
+ *     en la vida de un pedido, sin importar cuántas veces oscile de estado);
+ *     y una `liberacion_reserva` solo se aplica si hay una reserva
+ *     efectivamente pendiente de liberar.
+ */
+async function calcularEstadoInventarioPorItem(
+  tenantDb: FastifyRequest['tenantDb'] & {},
+  pedidoIds: string[],
+): Promise<Map<string, { reservas: number; liberaciones: number; salidas: number }>> {
+  const resultado = new Map<string, { reservas: number; liberaciones: number; salidas: number }>()
+  if (pedidoIds.length === 0) return resultado
+
+  const { rows } = await tenantDb.query<{ pedido_id: string; producto_id: string | null; variante_id: string | null; tipo: string; cnt: string }>(
+    `SELECT referencia_id AS pedido_id, producto_id, variante_id, tipo, COUNT(*)::text AS cnt
+     FROM movimientos_inventario
+     WHERE referencia_tipo = 'pedido' AND referencia_id = ANY($1::uuid[])
+       AND tipo IN ('reserva', 'liberacion_reserva', 'salida_venta')
+     GROUP BY referencia_id, producto_id, variante_id, tipo`,
+    [pedidoIds],
+  )
+
+  for (const row of rows) {
+    const clave = claveItem(row.pedido_id, row.producto_id, row.variante_id)
+    const entrada = resultado.get(clave) ?? { reservas: 0, liberaciones: 0, salidas: 0 }
+    const cnt = Number(row.cnt)
+    if (row.tipo === 'reserva') entrada.reservas = cnt
+    else if (row.tipo === 'liberacion_reserva') entrada.liberaciones = cnt
+    else if (row.tipo === 'salida_venta') entrada.salidas = cnt
+    resultado.set(clave, entrada)
+  }
+  return resultado
+}
+
+/** Enriquece los items de UN pedido con `stockReservado`/`stockDescontado` reales. */
+async function adjuntarEstadoInventario(
+  tenantDb: FastifyRequest['tenantDb'] & {},
+  pedidoId: string,
+  items: PedidoItem[],
+): Promise<PedidoItem[]> {
+  const estados = await calcularEstadoInventarioPorItem(tenantDb, [pedidoId])
+  return items.map((item) => {
+    const entrada = estados.get(claveItem(pedidoId, item.productoId, item.varianteId))
+    return {
+      ...item,
+      stockReservado: (entrada?.reservas ?? 0) > (entrada?.liberaciones ?? 0),
+      stockDescontado: (entrada?.salidas ?? 0) > 0,
+    }
+  })
 }
 
 function aPedido(row: FilaPedido, items: PedidoItem[]): Pedido {
@@ -146,10 +219,16 @@ async function cargarItemsDePedidos(
      FROM pedido_items WHERE pedido_id = ANY($1::uuid[])`,
     [pedidoIds],
   )
+  // Una sola consulta batched al ledger para TODOS los pedidos, en vez de N+1.
+  const estados = await calcularEstadoInventarioPorItem(tenantDb, pedidoIds)
   const porPedido = new Map<string, PedidoItem[]>()
   for (const row of rows) {
+    const item = aPedidoItem(row)
+    const entrada = estados.get(claveItem(row.pedido_id, item.productoId, item.varianteId))
+    item.stockReservado = (entrada?.reservas ?? 0) > (entrada?.liberaciones ?? 0)
+    item.stockDescontado = (entrada?.salidas ?? 0) > 0
     const lista = porPedido.get(row.pedido_id) ?? []
-    lista.push(aPedidoItem(row))
+    lista.push(item)
     porPedido.set(row.pedido_id, lista)
   }
   return porPedido
@@ -365,18 +444,64 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
         salida_venta: `Salida definitiva por despacho de Pedido ${pedido.numero}`,
       }
 
+      // Resguardo de idempotencia: el pedido puede llegar a este punto
+      // habiendo pasado por el mismo PAR de estados más de una vez (la
+      // máquina de estados permite ir "hacia atrás" — p.ej. de vuelta a
+      // borrador — para correcciones manuales, y luego avanzar de nuevo).
+      // Si confiáramos solo en `estadoActual->estadoDestino` para decidir
+      // qué insertar, cada vuelta duplicaría la reserva o la salida real,
+      // dejando stock "fantasma" descontado sin ningún pedido activo que lo
+      // explique. En vez de eso, consultamos el ledger real antes de cada
+      // inserción: una `reserva`/`salida_venta` se aplica COMO MÁXIMO UNA
+      // VEZ en la vida de un pedido por línea, y una `liberacion_reserva`
+      // solo si de verdad hay una reserva pendiente de liberar.
+      const estadosPrevios = await calcularEstadoInventarioPorItem(client, [pedido.id])
+      let movimientosOmitidos = 0
+
       for (const tipo of tiposMovimiento) {
         for (const item of items) {
           // Los "cargos libres" (p.ej. Envío) no son productos del catálogo
           // — no tienen stock que reservar/liberar/despachar.
           if (item.productoId === null) continue
+
+          const clave = claveItem(pedido.id, item.productoId, item.varianteId)
+          const entrada = estadosPrevios.get(clave) ?? { reservas: 0, liberaciones: 0, salidas: 0 }
+
+          if (tipo === 'reserva' && entrada.reservas > 0) {
+            movimientosOmitidos++
+            continue
+          }
+          if (tipo === 'salida_venta' && entrada.salidas > 0) {
+            movimientosOmitidos++
+            continue
+          }
+          if (tipo === 'liberacion_reserva' && entrada.reservas <= entrada.liberaciones) {
+            movimientosOmitidos++
+            continue
+          }
+
           await client.query(
             `INSERT INTO movimientos_inventario
                (producto_id, variante_id, tipo, cantidad, referencia_tipo, referencia_id, notas, usuario_id)
              VALUES ($1, $2, $3, $4, 'pedido', $5, $6, $7)`,
             [item.productoId, item.varianteId, tipo, item.cantidad, pedido.id, detallePorTipo[tipo], request.user.sub],
           )
+
+          // Actualizamos el contador en memoria — si el mismo `tipo` aparece
+          // más de una vez para la misma línea en ESTA llamada (no debería,
+          // pero por las dudas), el resguardo sigue siendo correcto.
+          if (tipo === 'reserva') entrada.reservas++
+          else if (tipo === 'liberacion_reserva') entrada.liberaciones++
+          else if (tipo === 'salida_venta') entrada.salidas++
+          estadosPrevios.set(clave, entrada)
         }
+      }
+
+      if (movimientosOmitidos > 0) {
+        fastify.log.warn(
+          { pedidoId: pedido.id, numero: pedido.numero, estadoActual, estadoDestino, movimientosOmitidos },
+          'pedidos: se omitieron movimientos de inventario duplicados (la transición ya se había aplicado antes para alguna línea)',
+        )
       }
 
       const actualizado = await client.query<FilaPedido>(
@@ -386,7 +511,8 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
       )
 
       await client.query('COMMIT')
-      return reply.send({ pedido: aPedido(actualizado.rows[0]!, items) })
+      const itemsFinales = await adjuntarEstadoInventario(client, pedido.id, items)
+      return reply.send({ pedido: aPedido(actualizado.rows[0]!, itemsFinales) })
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined)
       throw error
@@ -444,7 +570,8 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
         `SELECT id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1`,
         [request.params.id],
       )
-      return reply.send({ pedido: aPedido(rows[0]!, itemsRes.rows.map(aPedidoItem)) })
+      const itemsFinales = await adjuntarEstadoInventario(client, request.params.id, itemsRes.rows.map(aPedidoItem))
+      return reply.send({ pedido: aPedido(rows[0]!, itemsFinales) })
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined)
       throw error
@@ -469,7 +596,6 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
         await client.query('ROLLBACK')
         return reply.notFound('Pedido no encontrado.')
       }
-      const estadoActual = actual.rows[0]!.estado as EstadoPedido
       const numeroPedido = actual.rows[0]!.numero
 
       // Buscar la CxC activa asociada
@@ -494,31 +620,36 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
         await client.query('UPDATE facturas_venta SET deleted_at = NOW() WHERE id = $1', [cxc.id])
       }
 
-      // Si el pedido tenía movimientos de reserva activos (estado confirmado o en_preparacion),
-      // crearlos compensatorios para liberar el stock — de lo contrario quedarían reservados
-      // para siempre aunque el pedido ya no exista.
-      if (estadoActual === 'confirmado' || estadoActual === 'en_preparacion') {
-        const itemsRes = await client.query<FilaPedidoItem>(
-          'SELECT id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1',
-          [request.params.id],
+      // Si el pedido tenía stock reservado de verdad, liberarlo — de lo
+      // contrario quedaría reservado para siempre aunque el pedido ya no
+      // exista. OJO: en vez de confiar en `estadoActual` (que un usuario
+      // pudo haber movido manualmente hacia atrás/adelante más de una vez),
+      // consultamos el ledger real por línea — mismo resguardo que en
+      // PATCH /pedidos/:id/estado, ver `calcularEstadoInventarioPorItem`.
+      const itemsRes = await client.query<FilaPedidoItem>(
+        'SELECT id, pedido_id, producto_id, variante_id, concepto, cantidad, precio_unitario, precio_costo, subtotal FROM pedido_items WHERE pedido_id = $1',
+        [request.params.id],
+      )
+      const estadosPrevios = await calcularEstadoInventarioPorItem(client, [request.params.id])
+      for (const item of itemsRes.rows) {
+        if (item.producto_id === null) continue // cargos libres no tienen stock
+        const entrada = estadosPrevios.get(claveItem(request.params.id, item.producto_id, item.variante_id)) ?? { reservas: 0, liberaciones: 0, salidas: 0 }
+        if (entrada.reservas <= entrada.liberaciones) continue // nada pendiente de liberar para esta línea
+
+        await client.query(
+          `INSERT INTO movimientos_inventario
+             (producto_id, variante_id, tipo, cantidad, precio_unitario, referencia_tipo, referencia_id, notas, usuario_id)
+           VALUES ($1, $2, 'liberacion_reserva', $3, $4, 'pedido', $5, $6, $7)`,
+          [
+            item.producto_id,
+            item.variante_id,
+            item.cantidad,
+            item.precio_unitario,
+            request.params.id,
+            `Liberación de reserva por eliminación de Pedido ${numeroPedido}`,
+            request.user.sub,
+          ],
         )
-        for (const item of itemsRes.rows) {
-          if (item.producto_id === null) continue // cargos libres no tienen stock
-          await client.query(
-            `INSERT INTO movimientos_inventario
-               (producto_id, variante_id, tipo, cantidad, precio_unitario, referencia_tipo, referencia_id, notas, usuario_id)
-             VALUES ($1, $2, 'liberacion_reserva', $3, $4, 'pedido', $5, $6, $7)`,
-            [
-              item.producto_id,
-              item.variante_id,
-              item.cantidad,
-              item.precio_unitario,
-              request.params.id,
-              `Liberación de reserva por eliminación de Pedido ${numeroPedido}`,
-              request.user.sub,
-            ],
-          )
-        }
       }
 
       await client.query('UPDATE pedidos SET deleted_at = NOW() WHERE id = $1', [request.params.id])

@@ -195,9 +195,12 @@ function pedidoAMockOrder(p: Pedido): Order {
     notas: p.notas,
     items: p.items.map((item) => ({
       producto_id: item.productoId,
+      variante_id: item.varianteId,
       concepto: item.concepto,
       cantidad: item.cantidad,
       precio: item.precioUnitario,
+      stock_reservado: item.stockReservado,
+      stock_descontado: item.stockDescontado,
     })),
   };
 }
@@ -8320,9 +8323,22 @@ export default function AppHome() {
                       const p = item.producto_id ? products.find(pr => pr.id === item.producto_id) : null;
                       const etiqueta = item.producto_id ? (p?.nombre ?? 'Producto') : (item.concepto ?? 'Cargo');
                       return (
-                        <div key={idx} className="flex justify-between text-xs">
-                          <span>{etiqueta} × {item.cantidad}</span>
-                          <span className="font-mono font-bold">${(item.precio * item.cantidad).toLocaleString('es-CO')}</span>
+                        <div key={idx} className="flex items-center justify-between text-xs gap-2">
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span className="truncate">{etiqueta} × {item.cantidad}</span>
+                            {item.producto_id && (
+                              item.stock_descontado ? (
+                                <span title="El stock de este ítem ya fue descontado realmente del inventario (salida_venta registrada)." className="shrink-0 font-mono text-[9px] font-bold px-1 py-0.5 border border-green-700 text-green-700 bg-green-50">
+                                  ✓ descontado
+                                </span>
+                              ) : item.stock_reservado ? (
+                                <span title="Stock reservado (apartado) pero todavía no salió del inventario." className="shrink-0 font-mono text-[9px] font-bold px-1 py-0.5 border border-amber-600 text-amber-700 bg-amber-50">
+                                  reservado
+                                </span>
+                              ) : null
+                            )}
+                          </span>
+                          <span className="font-mono font-bold shrink-0">${(item.precio * item.cantidad).toLocaleString('es-CO')}</span>
                         </div>
                       );
                     })}

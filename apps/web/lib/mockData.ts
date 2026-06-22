@@ -78,10 +78,18 @@ export interface PaymentAbono {
 export interface OrderItem {
   /** `null` cuando es un "cargo libre" sin producto de catálogo (ver `concepto`) — p.ej. Envío. */
   producto_id: string | null;
+  /** Solo si `producto_id` referencia un producto con variantes. */
+  variante_id?: string | null;
   /** Solo presente en cargos libres (`producto_id === null`), p.ej. "Envío". */
   concepto?: string | null;
   cantidad: number;
   precio: number;
+  /**
+   * Calculados en vivo desde el ledger de inventario (no se guardan, son la
+   * PRUEBA de que el movimiento ya ocurrió) — ver `PedidoItem` en shared.
+   */
+  stock_reservado?: boolean;
+  stock_descontado?: boolean;
 }
 
 export interface Order {
