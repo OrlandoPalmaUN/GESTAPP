@@ -1046,6 +1046,7 @@ export default function AppHome() {
   // Captura visual del panel de Reportes (KPIs, mapas de calor, tablas) para exportar a PDF tal como se ve en pantalla.
   const reporteCapturaRef = useRef<HTMLDivElement>(null);
   const [exportandoPDF, setExportandoPDF] = useState(false);
+  const [exportarPDFError, setExportarPDFError] = useState<string | null>(null);
 
   // Historial de auditoría ("footsteps") — timeline de quién hizo qué, ver auditoria.ts en la API.
   const [auditoriaEntradas, setAuditoriaEntradas] = useState<EntradaAuditoria[]>([]);
@@ -5233,7 +5234,7 @@ export default function AppHome() {
 
                 {/* --- CRM TAB --- */}
                 {activeTab === 'crm' && (
-                  <div className="flex flex-col gap-4">
+                  <div className="flex flex-col gap-4 lg:flex-1 lg:min-h-0">
 
                     {proveedoresError && (
                       <div className="bg-red-50 border-2 border-red-600 text-red-700 p-3 text-xs font-mono flex items-center justify-between gap-3">
@@ -5248,10 +5249,10 @@ export default function AppHome() {
                       </div>
                     )}
 
-                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 lg:flex-1 lg:min-h-0">
 
                     {/* Listado Izquierdo de Clientes / Proveedores */}
-                    <div className="lg:col-span-1 flex flex-col gap-4">
+                    <div className="lg:col-span-1 flex flex-col gap-4 lg:min-h-0">
 
                       {proveedoresCargando && crmTypeFilter === 'proveedores' && (
                         <div className="bg-white border-2 border-black p-3 text-xs font-mono text-neutral-500">
@@ -5295,7 +5296,7 @@ export default function AppHome() {
                         </button>
                       </div>
 
-                      <div className="space-y-2 max-h-[500px] overflow-y-auto pr-1">
+                      <div className="space-y-2 border-2 border-black bg-neutral-50 p-2 lg:flex-1 lg:min-h-0 overflow-y-auto">
                         {crmTypeFilter === 'clientes'
                           ? customers.map((c) => (
                               <button
@@ -5346,7 +5347,7 @@ export default function AppHome() {
                     </div>
 
                     {/* Detalle Entidad & Bitácora */}
-                    <div className="lg:col-span-2 flex flex-col gap-6">
+                    <div className="lg:col-span-2 flex flex-col gap-6 lg:min-h-0 lg:overflow-y-auto">
                       
                       {(() => {
                         const client = customers.find(c => c.id === selectedCrmEntityId);
@@ -6247,6 +6248,7 @@ export default function AppHome() {
                               const nodo = reporteCapturaRef.current;
                               if (!nodo) return;
                               setExportandoPDF(true);
+                              setExportarPDFError(null);
                               try {
                                 const [{ default: html2canvas }, { jsPDF }] = await Promise.all([
                                   import('html2canvas'),
@@ -6258,6 +6260,19 @@ export default function AppHome() {
                                   backgroundColor: '#ffffff',
                                   useCORS: true,
                                 });
+
+                                // Defensivo: si html2canvas devuelve dimensiones inválidas (0, NaN,
+                                // o absurdamente grandes — vimos un caso real donde esto produjo un
+                                // PDF de una sola página con una imagen de 30+ MB), abortamos con un
+                                // mensaje claro en vez de generar un archivo roto/gigante.
+                                const LIMITE_PX = 20000;
+                                if (
+                                  !Number.isFinite(canvas.width) || !Number.isFinite(canvas.height) ||
+                                  canvas.width <= 0 || canvas.height <= 0 ||
+                                  canvas.width > LIMITE_PX || canvas.height > LIMITE_PX
+                                ) {
+                                  throw new Error('No se pudo capturar el reporte correctamente (dimensiones inválidas). Recarga la página e intenta de nuevo.');
+                                }
 
                                 const doc = new jsPDF({ unit: 'pt', format: 'a4' });
                                 const margin = 24;
@@ -6278,24 +6293,44 @@ export default function AppHome() {
                                 // Escala: el canvas (a `scale: 2`) se ajusta al ancho de la página;
                                 // luego se corta en franjas de `contentHeight` para paginar.
                                 const escala = contentWidth / canvas.width;
+                                if (!Number.isFinite(escala) || escala <= 0) {
+                                  throw new Error('No se pudo calcular la escala del reporte para el PDF.');
+                                }
 
                                 const canvasFranja = document.createElement('canvas');
                                 const ctx = canvasFranja.getContext('2d');
                                 let yaDibujado = 0; // en px del canvas original
                                 let primeraPagina = true;
 
+                                // Red de seguridad: con el contenido normal del reporte (KPIs, top
+                                // productos/clientes, mapas de calor, comparación de semanas, análisis
+                                // IA) esto nunca debería pasar de ~10 páginas. Si algo en el cálculo de
+                                // paginación se desboca, preferimos fallar con un mensaje claro a
+                                // generar un PDF de decenas de páginas/MB.
+                                const MAX_PAGINAS = 25;
+                                let paginas = 0;
+
                                 while (yaDibujado < canvas.height) {
+                                  paginas += 1;
+                                  if (paginas > MAX_PAGINAS) {
+                                    throw new Error('El reporte tiene demasiado contenido para exportar a PDF de una vez. Cierra alguna sección (mapa de calor o análisis IA) e intenta de nuevo.');
+                                  }
+
                                   const espacioDisponiblePt = primeraPagina ? contentHeight - offsetPrimeraPagina : contentHeight;
-                                  const franjaAlturaPx = Math.min(canvas.height - yaDibujado, espacioDisponiblePt / escala);
+                                  const franjaAlturaPx = Math.max(1, Math.min(canvas.height - yaDibujado, Math.floor(espacioDisponiblePt / escala)));
 
                                   canvasFranja.width = canvas.width;
                                   canvasFranja.height = franjaAlturaPx;
                                   ctx?.clearRect(0, 0, canvasFranja.width, canvasFranja.height);
                                   ctx?.drawImage(canvas, 0, yaDibujado, canvas.width, franjaAlturaPx, 0, 0, canvas.width, franjaAlturaPx);
 
-                                  const imgData = canvasFranja.toDataURL('image/png');
+                                  // JPEG en vez de PNG: el contenido es mayormente texto/tablas sobre
+                                  // fondo blanco, pero PNG (sin pérdida) puede pesar 5-10x más que un
+                                  // JPEG de buena calidad para el mismo contenido — la diferencia es
+                                  // justo lo que separó un PDF de unos pocos MB de uno de 30+ MB.
+                                  const imgData = canvasFranja.toDataURL('image/jpeg', 0.92);
                                   const yPdf = margin + (primeraPagina ? offsetPrimeraPagina : 0);
-                                  doc.addImage(imgData, 'PNG', margin, yPdf, contentWidth, franjaAlturaPx * escala);
+                                  doc.addImage(imgData, 'JPEG', margin, yPdf, contentWidth, franjaAlturaPx * escala);
 
                                   yaDibujado += franjaAlturaPx;
                                   primeraPagina = false;
@@ -6303,16 +6338,19 @@ export default function AppHome() {
                                 }
 
                                 doc.save(`reporte_${d.periodo.label.replace(/\s+/g, '_')}.pdf`);
+                              } catch (err) {
+                                setExportarPDFError(err instanceof Error ? err.message : 'No se pudo exportar el PDF.');
                               } finally {
                                 setExportandoPDF(false);
                               }
                             };
                             return (
                               <>
-                                <div className="flex justify-end mb-1">
+                                <div className="flex flex-col items-end gap-1 mb-1">
                                   <button type="button" disabled={exportandoPDF} onClick={() => void exportarPDF()} className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50">
                                     {exportandoPDF ? <><RefreshCw size={11} className="animate-spin" /> Generando PDF…</> : <><FileSpreadsheet size={12} /> Exportar PDF</>}
                                   </button>
+                                  {exportarPDFError && <p className="text-[10px] font-mono text-brand-red text-right max-w-xs">{exportarPDFError}</p>}
                                 </div>
                                 <div ref={reporteCapturaRef} className="flex flex-col gap-6 bg-white">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
