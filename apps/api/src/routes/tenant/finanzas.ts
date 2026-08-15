@@ -400,6 +400,95 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     },
   )
 
+  // GET /finanzas/cartera?tipo=cxc|cxp — cartera por edades.
+  //
+  // Es la vista con la que efectivamente se cobra: quién debe, cuánto, y hace
+  // cuánto. Distinto de `/facturas/vencidas`, que solo trae lo ya vencido —
+  // acá entra también lo que está POR vencer, porque para llamar a un cliente
+  // hay que ver su saldo completo, no solo la parte atrasada.
+  //
+  // Las cubetas 0-30 / 31-60 / 61-90 / +90 son el estándar contable: mientras
+  // más vieja la deuda, menos probable es cobrarla, y el corte de 90 días es
+  // donde normalmente se decide escalar o castigar la cartera.
+  fastify.get<{ Querystring: { tipo?: string } }>(
+    '/finanzas/cartera',
+    conSesion,
+    async (request, reply) => {
+      if (!exigirTenant(request, reply)) return
+      const tipo = request.query.tipo === 'cxp' ? 'cxp' : 'cxc'
+
+      const esCxc = tipo === 'cxc'
+      const tabla = esCxc ? 'facturas_venta' : 'facturas_compra'
+      const tablaContraparte = esCxc ? 'clientes' : 'proveedores'
+      const fkContraparte = esCxc ? 'cliente_id' : 'proveedor_id'
+      const tipoDocumento = esCxc ? 'factura_venta' : 'factura_compra'
+
+      const { rows } = await request.tenantDb.query<{
+        contraparteId: string | null; contraparte: string | null;
+        porVencer: string; d1a30: string; d31a60: string; d61a90: string; dMas90: string;
+        total: string; facturas: string; masVieja: number | null;
+      }>(`
+        WITH saldos AS (
+          SELECT
+            f.${fkContraparte}                                   AS contraparte_id,
+            (CURRENT_DATE - f.fecha_vencimiento)::int            AS dias,
+            f.total - COALESCE((
+              SELECT SUM(a.monto) FROM abonos a
+              WHERE a.tipo_documento = '${tipoDocumento}'
+                AND a.documento_id = f.id AND a.deleted_at IS NULL
+            ), 0)                                                AS saldo
+          FROM ${tabla} f
+          WHERE f.deleted_at IS NULL
+        )
+        SELECT
+          s.contraparte_id                                              AS "contraparteId",
+          cp.nombre                                                     AS contraparte,
+          COALESCE(SUM(s.saldo) FILTER (WHERE s.dias <= 0), 0)::text    AS "porVencer",
+          COALESCE(SUM(s.saldo) FILTER (WHERE s.dias BETWEEN 1 AND 30), 0)::text  AS "d1a30",
+          COALESCE(SUM(s.saldo) FILTER (WHERE s.dias BETWEEN 31 AND 60), 0)::text AS "d31a60",
+          COALESCE(SUM(s.saldo) FILTER (WHERE s.dias BETWEEN 61 AND 90), 0)::text AS "d61a90",
+          COALESCE(SUM(s.saldo) FILTER (WHERE s.dias > 90), 0)::text    AS "dMas90",
+          COALESCE(SUM(s.saldo), 0)::text                               AS total,
+          COUNT(*)::text                                                AS facturas,
+          MAX(s.dias)                                                   AS "masVieja"
+        FROM saldos s
+        LEFT JOIN ${tablaContraparte} cp ON cp.id = s.contraparte_id
+        WHERE s.saldo > 0
+        GROUP BY s.contraparte_id, cp.nombre
+        ORDER BY SUM(s.saldo) DESC
+      `)
+
+      const filas = rows.map((r) => ({
+        contraparteId: r.contraparteId,
+        contraparte: r.contraparte ?? (esCxc ? 'Sin cliente' : 'Sin proveedor'),
+        porVencer: Number(r.porVencer),
+        d1a30: Number(r.d1a30),
+        d31a60: Number(r.d31a60),
+        d61a90: Number(r.d61a90),
+        dMas90: Number(r.dMas90),
+        total: Number(r.total),
+        facturas: Number(r.facturas),
+        diasMasVieja: r.masVieja ?? 0,
+      }))
+
+      const suma = (k: 'porVencer' | 'd1a30' | 'd31a60' | 'd61a90' | 'dMas90' | 'total') =>
+        filas.reduce((acc, f) => acc + f[k], 0)
+
+      return reply.send({
+        tipo,
+        filas,
+        totales: {
+          porVencer: suma('porVencer'),
+          d1a30: suma('d1a30'),
+          d31a60: suma('d31a60'),
+          d61a90: suma('d61a90'),
+          dMas90: suma('dMas90'),
+          total: suma('total'),
+        },
+      })
+    },
+  )
+
   // POST /finanzas/facturas — registro manual (compras a proveedores, ventas de mostrador, etc.)
   fastify.post('/finanzas/facturas', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return

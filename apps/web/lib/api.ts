@@ -10,6 +10,26 @@ export interface ItemPapelera {
   eliminadoEn: string
 }
 
+/** Una fila de la cartera por edades — un cliente/proveedor con su deuda repartida por antigüedad. */
+export interface FilaCartera {
+  contraparteId: string | null
+  contraparte: string
+  porVencer: number
+  d1a30: number
+  d31a60: number
+  d61a90: number
+  dMas90: number
+  total: number
+  facturas: number
+  diasMasVieja: number
+}
+
+export interface Cartera {
+  tipo: 'cxc' | 'cxp'
+  filas: FilaCartera[]
+  totales: Omit<FilaCartera, 'contraparteId' | 'contraparte' | 'facturas' | 'diasMasVieja'>
+}
+
 /** Un resultado de la búsqueda global — ver `GET /buscar`. */
 export interface ResultadoBusqueda {
   tipo: 'cliente' | 'producto' | 'proveedor' | 'pedido' | 'compra' | 'factura_venta' | 'factura_compra'
@@ -148,6 +168,9 @@ export const api = {
    */
   buscarGlobal: (q: string) =>
     request<{ resultados: ResultadoBusqueda[]; total: number }>(`/buscar?q=${encodeURIComponent(q)}`),
+
+  /** Cartera por edades: quién debe, cuánto y hace cuánto. */
+  cartera: (tipo: 'cxc' | 'cxp') => request<Cartera>(`/finanzas/cartera?tipo=${tipo}`),
 
   crearTenant: (data: { name: string; slug: string; plan?: PlanId }) =>
     request<{ tenant: Tenant }>('/admin/tenants', {

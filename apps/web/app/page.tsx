@@ -137,6 +137,7 @@ import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type Resul
 import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
 import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
+import { CarteraPorEdades } from '../components/CarteraPorEdades';
 import { useAuth } from '../lib/auth-context';
 // Solo los tipos — los datos de ejemplo (INITIAL_*, TENANTS_GLOBAL_METRICS) ya
 // no se usan: alimentaban paneles que mostraban cifras inventadas como si
@@ -4918,6 +4919,7 @@ export default function AppHome() {
                     {/* CXC TAB */}
                     {financeSubTab === 'cxc' && (
                       <div className="flex flex-col gap-4">
+                        <CarteraPorEdades tipo="cxc" />
                         <div className="flex justify-between items-center bg-white border-2 border-black p-3">
                           <span className="font-mono text-xs text-neutral-700">Cartera y facturas de venta pendientes</span>
                           <button
@@ -5049,6 +5051,7 @@ export default function AppHome() {
                     {/* CXP TAB */}
                     {financeSubTab === 'cxp' && (
                       <div className="flex flex-col gap-4">
+                        <CarteraPorEdades tipo="cxp" />
                         <div className="flex items-center justify-between bg-white border-2 border-black p-3">
                           <span className="font-mono text-xs font-bold">CUENTAS POR PAGAR · {invoices.filter(i => i.tipo === 'cxp' && i.saldo_pendiente > 0).length} pendientes</span>
                           <div className="flex gap-2">
