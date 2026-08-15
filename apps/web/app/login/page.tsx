@@ -58,7 +58,7 @@ export default function LoginPage() {
           </div>
           <div>
             <h1 className="font-mono font-black text-base tracking-tight">INICIAR SESIÓN</h1>
-            <p className="font-mono text-[10px] text-neutral-400 font-bold">Acceso administrativo de GestAPP</p>
+            <p className="font-mono text-[11px] text-neutral-600 font-bold">Acceso administrativo de GestAPP</p>
           </div>
         </div>
 
@@ -66,7 +66,7 @@ export default function LoginPage() {
         <form onSubmit={onSubmit} className="flex flex-col gap-5 p-6">
 
           <label className="flex flex-col gap-1.5">
-            <span className="font-mono text-[10px] text-neutral-500 font-bold tracking-widest">CORREO ELECTRÓNICO</span>
+            <span className="font-mono text-[11px] text-neutral-500 font-bold tracking-widest">CORREO ELECTRÓNICO</span>
             <div className="flex items-center border-2 border-black focus-within:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">
               <div className="border-r-2 border-black p-2.5 bg-neutral-100">
                 <Mail size={16} className="text-neutral-500" />
@@ -77,14 +77,14 @@ export default function LoginPage() {
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="flex-1 px-3 py-2.5 text-sm font-mono bg-white outline-none text-black placeholder:text-neutral-400"
+                className="flex-1 px-3 py-2.5 text-sm font-mono bg-white outline-none text-black placeholder:text-neutral-600"
                 placeholder="superadmin@gestapp.co"
               />
             </div>
           </label>
 
           <label className="flex flex-col gap-1.5">
-            <span className="font-mono text-[10px] text-neutral-500 font-bold tracking-widest">CONTRASEÑA</span>
+            <span className="font-mono text-[11px] text-neutral-500 font-bold tracking-widest">CONTRASEÑA</span>
             <div className="flex items-center border-2 border-black focus-within:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all">
               <div className="border-r-2 border-black p-2.5 bg-neutral-100">
                 <Lock size={16} className="text-neutral-500" />
@@ -95,7 +95,7 @@ export default function LoginPage() {
                 autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                className="flex-1 px-3 py-2.5 text-sm font-mono bg-white outline-none text-black placeholder:text-neutral-400"
+                className="flex-1 px-3 py-2.5 text-sm font-mono bg-white outline-none text-black placeholder:text-neutral-600"
                 placeholder="••••••••"
               />
             </div>
@@ -123,12 +123,12 @@ export default function LoginPage() {
         {/* Pie de seguridad */}
         <div className="border-t-2 border-black bg-neutral-50 px-6 py-3 flex items-center gap-2">
           <div className="w-2 h-2 bg-green-600 rounded-full animate-pulse" />
-          <span className="font-mono text-[10px] text-neutral-500 font-bold">CONEXIÓN SEGURA · TLS 1.3</span>
+          <span className="font-mono text-[11px] text-neutral-500 font-bold">CONEXIÓN SEGURA · TLS 1.3</span>
         </div>
       </div>
 
       {/* Footer */}
-      <p className="font-mono text-[10px] text-neutral-400 mt-6 text-center">
+      <p className="font-mono text-[11px] text-neutral-600 mt-6 text-center">
         GESTAPP © 2026 · Powered by Antigravity · v0.1.0
       </p>
     </main>

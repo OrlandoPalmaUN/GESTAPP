@@ -127,7 +127,7 @@ export default function AdminEmpresasPage() {
             </div>
             <div className="hidden md:block">
               <h1 className="font-mono text-sm font-bold text-black">GESTIÓN DE EMPRESAS (TENANTS)</h1>
-              <p className="font-mono text-[10px] text-neutral-500">Sesión: {yo.nombre}</p>
+              <p className="font-mono text-[11px] text-neutral-500">Sesión: {yo.nombre}</p>
             </div>
           </div>
 
@@ -162,7 +162,7 @@ export default function AdminEmpresasPage() {
             { label: 'CANCELADAS', val: tenants.filter(t => t.status === 'cancelled').length, color: 'text-brand-red' },
           ].map(m => (
             <div key={m.label} className="neo-card bg-white flex flex-col p-4">
-              <span className="font-mono text-[9px] text-neutral-500 font-bold tracking-widest">{m.label}</span>
+              <span className="font-mono text-[11px] text-neutral-500 font-bold tracking-widest">{m.label}</span>
               <span className={`text-2xl font-black tracking-tight mt-1 ${m.color}`}>{m.val}</span>
             </div>
           ))}
@@ -206,7 +206,7 @@ export default function AdminEmpresasPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <label className="flex flex-col gap-1.5">
-                <span className="font-mono text-[10px] text-neutral-500 font-bold tracking-widest">NOMBRE DE LA EMPRESA</span>
+                <span className="font-mono text-[11px] text-neutral-500 font-bold tracking-widest">NOMBRE DE LA EMPRESA</span>
                 <input
                   required
                   value={name}
@@ -217,7 +217,7 @@ export default function AdminEmpresasPage() {
               </label>
 
               <label className="flex flex-col gap-1.5">
-                <span className="font-mono text-[10px] text-neutral-500 font-bold tracking-widest">SLUG (SUBDOMINIO)</span>
+                <span className="font-mono text-[11px] text-neutral-500 font-bold tracking-widest">SLUG (SUBDOMINIO)</span>
                 <input
                   required
                   value={slug}
@@ -226,14 +226,14 @@ export default function AdminEmpresasPage() {
                   placeholder="textiles-del-caribe"
                 />
                 {slug && (
-                  <span className="font-mono text-[10px] text-brand-blue font-bold">
+                  <span className="font-mono text-[11px] text-brand-blue font-bold">
                     → {slug}.antigravity.co
                   </span>
                 )}
               </label>
 
               <label className="flex flex-col gap-1.5 sm:col-span-2">
-                <span className="font-mono text-[10px] text-neutral-500 font-bold tracking-widest">PLAN DE SUSCRIPCIÓN</span>
+                <span className="font-mono text-[11px] text-neutral-500 font-bold tracking-widest">PLAN DE SUSCRIPCIÓN</span>
                 <div className="grid grid-cols-3 gap-3">
                   {PLANES.map(p => (
                     <button
@@ -247,7 +247,7 @@ export default function AdminEmpresasPage() {
                       }`}
                     >
                       <div>{p.label.toUpperCase()}</div>
-                      <div className={`text-[10px] font-normal mt-0.5 ${plan === p.value ? 'text-neutral-300' : 'text-neutral-500'}`}>
+                      <div className={`text-[11px] font-normal mt-0.5 ${plan === p.value ? 'text-neutral-300' : 'text-neutral-500'}`}>
                         {p.precio}
                       </div>
                     </button>
@@ -302,7 +302,7 @@ export default function AdminEmpresasPage() {
               <tbody>
                 {cargando ? (
                   <tr>
-                    <td colSpan={6} className="px-5 py-10 text-center font-mono text-neutral-400">
+                    <td colSpan={6} className="px-5 py-10 text-center font-mono text-neutral-600">
                       <span className="animate-pulse">Cargando empresas…</span>
                     </td>
                   </tr>
@@ -311,8 +311,8 @@ export default function AdminEmpresasPage() {
                     <td colSpan={6} className="px-5 py-10 text-center">
                       <div className="flex flex-col items-center gap-2">
                         <Building2 size={32} className="text-neutral-300" />
-                        <span className="font-mono text-neutral-400 text-xs">No hay empresas todavía.</span>
-                        <span className="font-mono text-neutral-400 text-[10px]">Crea la primera usando el botón &quot;Nueva Empresa&quot;.</span>
+                        <span className="font-mono text-neutral-600 text-xs">No hay empresas todavía.</span>
+                        <span className="font-mono text-neutral-600 text-[11px]">Crea la primera usando el botón &quot;Nueva Empresa&quot;.</span>
                       </div>
                     </td>
                   </tr>
@@ -321,21 +321,21 @@ export default function AdminEmpresasPage() {
                     <tr key={t.id} className="border-b border-neutral-200 hover:bg-neutral-50 transition-colors">
                       <td className="px-5 py-4 font-bold text-black">{t.name}</td>
                       <td className="px-5 py-4">
-                        <span className="font-mono text-[10px] bg-neutral-100 border border-neutral-300 px-1.5 py-0.5 text-neutral-600">
+                        <span className="font-mono text-[11px] bg-neutral-100 border border-neutral-300 px-1.5 py-0.5 text-neutral-600">
                           {t.slug}.antigravity.co
                         </span>
                       </td>
                       <td className="px-5 py-4">
-                        <span className="font-mono text-[10px] font-bold border border-black px-1.5 py-0.5 bg-white capitalize">
+                        <span className="font-mono text-[11px] font-bold border border-black px-1.5 py-0.5 bg-white capitalize">
                           {t.plan}
                         </span>
                       </td>
                       <td className="px-5 py-4">
-                        <span className={`font-mono text-[10px] font-bold px-1.5 py-0.5 ${ESTILO_ESTADO[t.status]}`}>
+                        <span className={`font-mono text-[11px] font-bold px-1.5 py-0.5 ${ESTILO_ESTADO[t.status]}`}>
                           {ETIQUETA_ESTADO[t.status]}
                         </span>
                       </td>
-                      <td className="px-5 py-4 font-mono text-neutral-500 text-[10px]">
+                      <td className="px-5 py-4 font-mono text-neutral-500 text-[11px]">
                         {new Date(t.createdAt).toLocaleDateString('es-CO')}
                       </td>
                       <td className="px-5 py-4 text-right">

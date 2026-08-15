@@ -15,7 +15,7 @@ async function hash(p: string) {
 }
 
 let token = ''
-async function req(path: string, init?: RequestInit) {
+async function req(path: string, init?: RequestInit): Promise<{ status: number; body: any }> {
   const res = await fetch(`${API}${path}`, {
     ...init,
     headers: { ...(init?.body ? { 'Content-Type': 'application/json' } : {}), Authorization: `Bearer ${token}` },

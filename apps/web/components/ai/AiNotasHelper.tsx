@@ -40,14 +40,14 @@ export function AiNotasHelper({ texto, onAplicar }: Props) {
     <div className="flex flex-col gap-2">
       {/* Botones de acción */}
       <div className="flex items-center gap-1 flex-wrap">
-        <Sparkles size={11} className="text-neutral-400 shrink-0" />
+        <Sparkles size={11} className="text-neutral-600 shrink-0" />
         {OPCIONES.map((op) => (
           <button
             key={op.value}
             type="button"
             onClick={() => void handleClick(op.value)}
             disabled={!!loading || !texto.trim()}
-            className="flex items-center gap-0.5 text-[10px] font-mono border border-neutral-300 px-1.5 py-0.5 hover:border-black hover:bg-neutral-50 disabled:opacity-40 transition-colors"
+            className="flex items-center gap-0.5 text-[11px] font-mono border border-neutral-300 px-1.5 py-0.5 hover:border-black hover:bg-neutral-50 disabled:opacity-40 transition-colors"
           >
             {loading === op.value
               ? <Loader2 size={9} className="animate-spin" />
@@ -61,20 +61,20 @@ export function AiNotasHelper({ texto, onAplicar }: Props) {
       {/* Preview del resultado */}
       {preview && (
         <div className="border border-black bg-neutral-50 p-2 flex flex-col gap-2">
-          <p className="text-[10px] font-mono text-neutral-500 uppercase">Sugerencia IA</p>
+          <p className="text-[11px] font-mono text-neutral-500 uppercase">Sugerencia IA</p>
           <p className="text-xs font-mono leading-relaxed whitespace-pre-wrap">{preview}</p>
           <div className="flex gap-2">
             <button
               type="button"
               onClick={() => { onAplicar(preview); setPreview(null) }}
-              className="text-[10px] font-mono border-2 border-black bg-black text-white px-2 py-0.5 hover:bg-neutral-800"
+              className="text-[11px] font-mono border-2 border-black bg-black text-white px-2 py-0.5 hover:bg-neutral-800"
             >
               Aplicar
             </button>
             <button
               type="button"
               onClick={() => setPreview(null)}
-              className="text-[10px] font-mono border border-neutral-300 px-2 py-0.5 hover:border-black"
+              className="text-[11px] font-mono border border-neutral-300 px-2 py-0.5 hover:border-black"
             >
               Descartar
             </button>

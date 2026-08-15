@@ -53,7 +53,7 @@ function ToolBadge({ tool }: { tool: string }) {
     ver_historial_cliente: '👤 Historial consultado',
   }
   return (
-    <span className="inline-flex items-center gap-1 text-[9px] font-mono bg-green-50 border border-green-400 text-green-700 px-1.5 py-0.5 rounded">
+    <span className="inline-flex items-center gap-1 text-[11px] font-mono bg-green-50 border border-green-400 text-green-700 px-1.5 py-0.5 rounded">
       {labels[tool] ?? tool}
     </span>
   )
@@ -134,7 +134,7 @@ export function AiChat({ context = 'general' }: { context?: string }) {
           <div className="flex items-center gap-2 border-b-2 border-black px-3 py-2 bg-black text-white">
             <Bot size={14} />
             <span className="font-mono font-bold text-xs uppercase flex-1">Asistente IA</span>
-            <span className="font-mono text-[9px] text-neutral-400">llama-3.3-70b</span>
+            <span className="font-mono text-[11px] text-neutral-600">llama-3.3-70b</span>
           </div>
 
           {/* Mensajes */}
@@ -149,7 +149,7 @@ export function AiChat({ context = 'general' }: { context?: string }) {
                     key={s}
                     type="button"
                     onClick={() => void send(s)}
-                    className="text-left text-[10px] font-mono border border-neutral-300 px-2 py-1.5 hover:bg-neutral-50 hover:border-black transition-colors"
+                    className="text-left text-[11px] font-mono border border-neutral-300 px-2 py-1.5 hover:bg-neutral-50 hover:border-black transition-colors"
                   >
                     {s}
                   </button>
@@ -179,7 +179,7 @@ export function AiChat({ context = 'general' }: { context?: string }) {
             ))}
 
             {loading && (
-              <div className="flex items-center gap-1.5 text-xs font-mono text-neutral-400">
+              <div className="flex items-center gap-1.5 text-xs font-mono text-neutral-600">
                 <Loader2 size={12} className="animate-spin" />
                 Pensando…
               </div>

@@ -66,12 +66,12 @@ function KpiCard({
   return (
     <div className="neo-card bg-white flex flex-col gap-1 p-3">
       <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase text-neutral-500 font-bold">{label}</span>
-        <span className="text-neutral-400">{icon}</span>
+        <span className="font-mono text-[11px] uppercase text-neutral-500 font-bold">{label}</span>
+        <span className="text-neutral-600">{icon}</span>
       </div>
       <div className="font-mono font-black text-2xl leading-tight">{value}</div>
       {delta != null && (
-        <div className={`flex items-center gap-0.5 font-mono text-[10px] ${deltaPositivo ? 'text-green-700' : 'text-red-600'}`}>
+        <div className={`flex items-center gap-0.5 font-mono text-[11px] ${deltaPositivo ? 'text-green-700' : 'text-red-600'}`}>
           {deltaPositivo ? <ChevronUp size={10} /> : <ChevronDown size={10} />}
           {deltaPositivo ? '+' : ''}{n(delta)} {deltaLabel}
         </div>
@@ -82,7 +82,7 @@ function KpiCard({
 
 function SparkLine({ serie }: { serie: IgSnapshotPerfil[] }) {
   if (serie.length < 2) return (
-    <div className="text-xs font-mono text-neutral-400 text-center py-4">Sin suficientes datos para la gráfica</div>
+    <div className="text-xs font-mono text-neutral-600 text-center py-4">Sin suficientes datos para la gráfica</div>
   )
   const vals = serie.map((s) => s.seguidores)
   const min = Math.min(...vals)
@@ -112,7 +112,7 @@ function SparkLine({ serie }: { serie: IgSnapshotPerfil[] }) {
 
 function HeatmapGrid({ data }: { data: IgHeatmapPunto[] }) {
   if (!data.length) return (
-    <div className="text-xs font-mono text-neutral-400 text-center py-4">Sin datos suficientes</div>
+    <div className="text-xs font-mono text-neutral-600 text-center py-4">Sin datos suficientes</div>
   )
 
   const maxEng = Math.max(...data.map((d) => d.engagementPromedio), 1)
@@ -121,10 +121,10 @@ function HeatmapGrid({ data }: { data: IgHeatmapPunto[] }) {
 
   return (
     <div className="overflow-x-auto">
-      <table className="text-[9px] font-mono border-collapse w-full">
+      <table className="text-[11px] font-mono border-collapse w-full">
         <thead>
           <tr>
-            <th className="pr-2 text-right text-neutral-400 font-normal w-8"></th>
+            <th className="pr-2 text-right text-neutral-600 font-normal w-8"></th>
             {horas.map((h) => (
               <th key={h} className="text-center text-neutral-500 font-normal px-0.5">{h}h</th>
             ))}
@@ -151,7 +151,7 @@ function HeatmapGrid({ data }: { data: IgHeatmapPunto[] }) {
           ))}
         </tbody>
       </table>
-      <p className="text-[9px] font-mono text-neutral-400 mt-1">Número = posts publicados · Color = engagement promedio</p>
+      <p className="text-[11px] font-mono text-neutral-600 mt-1">Número = posts publicados · Color = engagement promedio</p>
     </div>
   )
 }
@@ -173,29 +173,29 @@ function PostRow({
       {/* En mobile: fila 1 = tipo + thumbnail + caption. Desde sm: se "disuelve" (contents) y vuelve a ser 3 columnas del grid. */}
       <div className="flex items-center gap-2 sm:contents">
         {/* Tipo badge */}
-        <span className="font-mono text-[9px] border border-black px-1 justify-self-start uppercase shrink-0">{post.tipo}</span>
+        <span className="font-mono text-[11px] border border-black px-1 justify-self-start uppercase shrink-0">{post.tipo}</span>
         {/* Thumbnail */}
         {post.thumbnailUrl ? (
           <img src={imgProxyUrl(post.thumbnailUrl)} alt="" className="w-8 h-8 object-cover border border-black shrink-0" />
         ) : <span className="hidden sm:inline" />}
         {/* Caption */}
-        <span className="text-neutral-700 truncate flex-1 sm:flex-initial">{preview || <em className="text-neutral-400">Sin caption</em>}</span>
+        <span className="text-neutral-700 truncate flex-1 sm:flex-initial">{preview || <em className="text-neutral-600">Sin caption</em>}</span>
       </div>
 
       {/* En mobile: fila 2 = métricas + fecha + flecha. Desde sm: se disuelve y vuelve a ser 3 columnas del grid. */}
       <div className="flex items-center gap-3 pl-9 sm:pl-0 sm:contents">
         {/* Métricas */}
-        <div className="flex items-center gap-3 font-mono text-[10px] text-neutral-600 justify-self-end">
+        <div className="flex items-center gap-3 font-mono text-[11px] text-neutral-600 justify-self-end">
           <span className="flex items-center gap-0.5"><Heart size={10} /> {n(post.likes)}</span>
           <span className="flex items-center gap-0.5"><MessageCircle size={10} /> {n(post.comentarios)}</span>
           {post.reproducciones != null && (
-            <span className="flex items-center gap-0.5 text-neutral-400" title="Reproducciones">
+            <span className="flex items-center gap-0.5 text-neutral-600" title="Reproducciones">
               ▶ {n(post.reproducciones)}
             </span>
           )}
         </div>
         {/* Fecha */}
-        <span className="font-mono text-[10px] text-neutral-400 justify-self-end ml-auto sm:ml-0">{fmtDate(post.publicadoEn)}</span>
+        <span className="font-mono text-[11px] text-neutral-600 justify-self-end ml-auto sm:ml-0">{fmtDate(post.publicadoEn)}</span>
         <ArrowUpRight size={12} className="text-neutral-300 justify-self-end shrink-0" />
       </div>
     </button>
@@ -263,7 +263,7 @@ function PostDrawer({
                 { label: 'Reproducciones', value: n(post.reproducciones) },
               ].map(({ label, value }) => (
                 <div key={label} className="neo-card bg-white p-2 text-center">
-                  <div className="font-mono text-[9px] text-neutral-500 uppercase">{label}</div>
+                  <div className="font-mono text-[11px] text-neutral-500 uppercase">{label}</div>
                   <div className="font-mono font-black text-lg">{value}</div>
                 </div>
               ))}
@@ -271,7 +271,7 @@ function PostDrawer({
             {/* Sparkline de crecimiento */}
             {serie.length > 1 && (
               <div>
-                <h4 className="font-mono text-[10px] uppercase font-bold mb-1">Crecimiento de likes</h4>
+                <h4 className="font-mono text-[11px] uppercase font-bold mb-1">Crecimiento de likes</h4>
                 <SparkLine serie={serie.map((s) => ({ ...s, seguidores: s.likes, seguidos: 0, postsTotal: 0, fecha: s.fecha, alcance: null, impresiones: null, profileViews: null }))} />
               </div>
             )}
@@ -279,14 +279,14 @@ function PostDrawer({
             {post.hashtags.length > 0 && (
               <div className="flex flex-wrap gap-1">
                 {post.hashtags.map((h) => (
-                  <span key={h} className="border border-black font-mono text-[10px] px-1.5 py-0.5">#{h}</span>
+                  <span key={h} className="border border-black font-mono text-[11px] px-1.5 py-0.5">#{h}</span>
                 ))}
               </div>
             )}
             {/* Comentarios */}
             <div>
               <div className="flex items-center gap-2 border-b border-black pb-2 mb-2">
-                <h4 className="font-mono text-[10px] uppercase font-bold flex-1">Comentarios</h4>
+                <h4 className="font-mono text-[11px] uppercase font-bold flex-1">Comentarios</h4>
                 {/* "Preguntas" se quitó: filtraba por `ig_comentarios.es_pregunta`,
                     una columna que se lee pero nunca se escribe (la clasificación
                     por LLM quedó sin construir), así que el filtro SIEMPRE
@@ -297,7 +297,7 @@ function PostDrawer({
                       key={f}
                       type="button"
                       onClick={() => setFilterCom(f)}
-                      className={`font-mono text-[9px] px-1.5 py-0.5 border border-black ${filterCom === f ? 'bg-black text-white' : 'bg-white'}`}
+                      className={`font-mono text-[11px] px-1.5 py-0.5 border border-black ${filterCom === f ? 'bg-black text-white' : 'bg-white'}`}
                     >
                       {f === 'todos' ? 'Todos' : 'Sin responder'}
                     </button>
@@ -305,21 +305,21 @@ function PostDrawer({
                 </div>
               </div>
               {comentarios.length === 0 ? (
-                <p className="text-xs font-mono text-neutral-400 text-center py-3">Sin comentarios</p>
+                <p className="text-xs font-mono text-neutral-600 text-center py-3">Sin comentarios</p>
               ) : (
                 <div className="flex flex-col gap-2">
                   {comentarios.map((c) => (
                     <div key={c.id} className="border border-neutral-200 p-2 text-xs">
                       <div className="flex items-center gap-1 mb-0.5">
-                        <span className="font-mono font-bold text-[10px]">@{c.autorHandle}</span>
-                        {c.autorVerificado && <span className="text-blue-500 text-[9px]">✓</span>}
-                        <span className="text-neutral-400 font-mono text-[9px] ml-auto">{fmtDate(c.publicadoEn)}</span>
+                        <span className="font-mono font-bold text-[11px]">@{c.autorHandle}</span>
+                        {c.autorVerificado && <span className="text-blue-500 text-[11px]">✓</span>}
+                        <span className="text-neutral-600 font-mono text-[11px] ml-auto">{fmtDate(c.publicadoEn)}</span>
                         {!c.respondido && (
-                          <span className="bg-orange-100 border border-orange-400 text-orange-700 font-mono text-[9px] px-1">sin responder</span>
+                          <span className="bg-orange-100 border border-orange-400 text-orange-700 font-mono text-[11px] px-1">sin responder</span>
                         )}
                       </div>
                       <p className="text-neutral-700 leading-snug">{c.texto}</p>
-                      {c.likes > 0 && <span className="text-[9px] font-mono text-neutral-400">♥ {c.likes}</span>}
+                      {c.likes > 0 && <span className="text-[11px] font-mono text-neutral-600">♥ {c.likes}</span>}
                     </div>
                   ))}
                 </div>
@@ -403,7 +403,7 @@ function Onboarding({ onConectado }: { onConectado: () => void }) {
           {loading ? <Loader2 size={14} className="animate-spin" /> : <Instagram size={14} />}
           {loading ? 'Conectando…' : 'Conectar cuenta'}
         </button>
-        <p className="text-[10px] font-mono text-neutral-400 text-center">
+        <p className="text-[11px] font-mono text-neutral-600 text-center">
           Solo cuentas públicas. No se requiere contraseña.
         </p>
       </form>
@@ -551,7 +551,7 @@ export function IgDashboard() {
           <span className="font-mono font-bold text-sm">@{cuenta.handle}</span>
           {cuenta.esVerificada && <span className="text-blue-500 text-xs">✓</span>}
           {cuenta.lastScrapedAt && (
-            <span className="font-mono text-[10px] text-neutral-400">
+            <span className="font-mono text-[11px] text-neutral-600">
               · Actualizado {fmtDate(cuenta.lastScrapedAt)}
             </span>
           )}
@@ -560,7 +560,7 @@ export function IgDashboard() {
           type="button"
           onClick={() => void handleRefresh()}
           disabled={refreshing}
-          className="flex items-center gap-1 border-2 border-black font-mono text-[10px] px-2 py-1 hover:bg-black hover:text-white transition-colors disabled:opacity-50"
+          className="flex items-center gap-1 border-2 border-black font-mono text-[11px] px-2 py-1 hover:bg-black hover:text-white transition-colors disabled:opacity-50"
         >
           {refreshing ? <Loader2 size={10} className="animate-spin" /> : <RefreshCw size={10} />}
           Actualizar
@@ -604,7 +604,7 @@ export function IgDashboard() {
         </h3>
         <SparkLine serie={serie} />
         {serie.length > 0 && (
-          <div className="flex justify-between font-mono text-[9px] text-neutral-400">
+          <div className="flex justify-between font-mono text-[11px] text-neutral-600">
             <span>{serie[0] ? fmtDateShort(String(serie[0].fecha)) : ''}</span>
             <span>{serie[serie.length - 1] ? fmtDateShort(String(serie[serie.length - 1]!.fecha)) : ''}</span>
           </div>
@@ -621,7 +621,7 @@ export function IgDashboard() {
                 key={o}
                 type="button"
                 onClick={() => setOrdenPosts(o)}
-                className={`font-mono text-[9px] px-1.5 py-0.5 border border-black ${ordenPosts === o ? 'bg-black text-white' : 'bg-white'}`}
+                className={`font-mono text-[11px] px-1.5 py-0.5 border border-black ${ordenPosts === o ? 'bg-black text-white' : 'bg-white'}`}
               >
                 {o === 'fecha' ? 'Recientes' : 'Engagement'}
               </button>
@@ -629,7 +629,7 @@ export function IgDashboard() {
           </div>
         </div>
         {postsOrdenados.length === 0 ? (
-          <p className="text-xs font-mono text-neutral-400 text-center py-4">
+          <p className="text-xs font-mono text-neutral-600 text-center py-4">
             Sin posts aún — los datos llegarán en unos minutos.
           </p>
         ) : (
@@ -649,7 +649,7 @@ export function IgDashboard() {
             {hashtags.slice(0, 15).map((h) => (
               <div key={h.hashtag} className="flex items-center gap-1 border border-black px-2 py-0.5">
                 <span className="font-mono text-xs font-bold">#{h.hashtag}</span>
-                <span className="font-mono text-[9px] text-neutral-500">
+                <span className="font-mono text-[11px] text-neutral-500">
                   · {n(Math.round(h.engagementPromedio))} eng
                 </span>
               </div>
@@ -665,7 +665,7 @@ export function IgDashboard() {
         </h3>
         <HeatmapGrid data={heatmap} />
         {heatmapDisclaimer && (
-          <p className="text-[10px] font-mono text-orange-700 bg-orange-50 border border-orange-300 px-2 py-1">
+          <p className="text-[11px] font-mono text-orange-700 bg-orange-50 border border-orange-300 px-2 py-1">
             ⚠ {heatmapDisclaimer}
           </p>
         )}
@@ -673,7 +673,7 @@ export function IgDashboard() {
 
       {/* Banner Meta Graph */}
       <div className="border-2 border-dashed border-neutral-300 p-3 flex items-start gap-2 text-xs font-mono text-neutral-500">
-        <AlertCircle size={14} className="mt-0.5 shrink-0 text-neutral-400" />
+        <AlertCircle size={14} className="mt-0.5 shrink-0 text-neutral-600" />
         <span>
           <strong>Alcance, impresiones y guardados</strong> no están disponibles en modo público.
           Conecta una cuenta <strong>Instagram Business</strong> vía Meta Graph API para desbloquearlos.

@@ -134,6 +134,8 @@ const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
 };
 
 import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type VarianteProducto } from '../lib/api';
+import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
+import { MoneyInput } from '../components/MoneyInput';
 import { useAuth } from '../lib/auth-context';
 // Solo los tipos — los datos de ejemplo (INITIAL_*, TENANTS_GLOBAL_METRICS) ya
 // no se usan: alimentaban paneles que mostraban cifras inventadas como si
@@ -427,8 +429,8 @@ function HistorialEntidad({ entidadTipo, entidadId }: { entidadTipo: string; ent
     return next;
   });
 
-  if (cargando) return <div className="flex items-center gap-2 text-[11px] font-mono text-neutral-400 py-2"><RefreshCw size={11} className="animate-spin" /> Cargando historial…</div>;
-  if (!entradas || entradas.length === 0) return <p className="text-[11px] font-mono text-neutral-400 italic py-2">Sin actividad registrada.</p>;
+  if (cargando) return <div className="flex items-center gap-2 text-[11px] font-mono text-neutral-600 py-2"><RefreshCw size={11} className="animate-spin" /> Cargando historial…</div>;
+  if (!entradas || entradas.length === 0) return <p className="text-[11px] font-mono text-neutral-600 italic py-2">Sin actividad registrada.</p>;
 
   return (
     <div className="flex flex-col gap-0 border border-black">
@@ -443,22 +445,22 @@ function HistorialEntidad({ entidadTipo, entidadId }: { entidadTipo: string; ent
               onClick={() => toggle(entrada.id)}
               className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left hover:bg-neutral-100"
             >
-              <span className={`font-mono text-[9px] font-bold px-1.5 py-0.5 shrink-0 ${estilo.bg} ${estilo.text}`}>{estilo.label}</span>
+              <span className={`font-mono text-[11px] font-bold px-1.5 py-0.5 shrink-0 ${estilo.bg} ${estilo.text}`}>{estilo.label}</span>
               <span className="text-[11px] flex-1 truncate">
                 <span className="font-bold">{entrada.usuarioNombre ?? 'Sistema'}</span>
               </span>
-              <span className="font-mono text-[9px] text-neutral-400 shrink-0">{tiempoRelativo(entrada.creadoEn)}</span>
-              {campos.length > 0 && <ChevronDown size={12} className={`text-neutral-400 shrink-0 transition-transform ${abierta ? 'rotate-180' : ''}`} />}
+              <span className="font-mono text-[11px] text-neutral-600 shrink-0">{tiempoRelativo(entrada.creadoEn)}</span>
+              {campos.length > 0 && <ChevronDown size={12} className={`text-neutral-600 shrink-0 transition-transform ${abierta ? 'rotate-180' : ''}`} />}
             </button>
             {abierta && campos.length > 0 && (
               <div className="px-2.5 pb-2 pl-7">
-                <table className="w-full text-[10px] font-mono">
+                <table className="w-full text-[11px] font-mono">
                   <tbody>
                     {campos.map((campo) => (
                       <tr key={campo}>
                         <td className="text-neutral-500 py-0.5 pr-2 align-top whitespace-nowrap">{humanizarCampo(campo)}</td>
-                        <td className="text-neutral-400 py-0.5 pr-2 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.antes)}</td>
-                        <td className="text-neutral-400 py-0.5 pr-1 align-top">→</td>
+                        <td className="text-neutral-600 py-0.5 pr-2 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.antes)}</td>
+                        <td className="text-neutral-600 py-0.5 pr-1 align-top">→</td>
                         <td className="text-black font-bold py-0.5 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.despues)}</td>
                       </tr>
                     ))}
@@ -3020,7 +3022,7 @@ export default function AppHome() {
                   {configEmpresa?.nombreDisplay || tenant.name}
                 </span>
                 {configEmpresa?.slogan && (
-                  <span className="font-mono text-[10px] text-neutral-500 italic hidden sm:block truncate">{configEmpresa.slogan}</span>
+                  <span className="font-mono text-[11px] text-neutral-500 italic hidden sm:block truncate">{configEmpresa.slogan}</span>
                 )}
               </div>
             ) : (
@@ -3108,13 +3110,27 @@ export default function AppHome() {
               >
                 <ClipboardList size={18} />
                 <span>Pedidos</span>
-                <span className={`text-[10px] px-1.5 py-0.5 rounded font-sans ml-auto ${
+                <span className={`text-[11px] px-1.5 py-0.5 rounded font-sans ml-auto ${
                   activeTab === 'pedidos' && !superAdminMode
                     ? 'bg-white text-brand-blue'
                     : 'bg-brand-blue text-white'
                 }`}>
                   {orders.filter(o => ['confirmado', 'en_preparacion', 'despachado'].includes(o.estado)).length}
                 </span>
+              </button>
+
+              {/* Compras/OC vive en el mismo panel que Finanzas, pero se entra
+                  desde acá: el dueño piensa "pedidos que me hacen" (Pedidos) y
+                  "pedidos que yo hago" (Compras). Tenerlo tres clics adentro de
+                  contabilidad no correspondía a cómo se usa. */}
+              <button
+                onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('compras'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                  activeTab === 'finanzas' && financeSubTab === 'compras' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                }`}
+              >
+                <PackagePlus size={18} />
+                <span>Compras / OC</span>
               </button>
 
               <button
@@ -3126,20 +3142,20 @@ export default function AppHome() {
                 <Boxes size={18} />
                 <span>Inventario</span>
                 {criticalProducts.length > 0 && (
-                  <span className="bg-brand-red text-white text-[10px] px-1.5 py-0.5 rounded font-sans ml-auto">
+                  <span className="bg-brand-red text-white text-[11px] px-1.5 py-0.5 rounded font-sans ml-auto">
                     {criticalProducts.length}
                   </span>
                 )}
               </button>
 
               <button
-                onClick={() => { setActiveTab('finanzas'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('resumen'); setSuperAdminMode(false); setSidebarOpen(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'finanzas' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  activeTab === 'finanzas' && financeSubTab !== 'compras' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
                 }`}
               >
                 <DollarSign size={18} />
-                <span>Finanzas y Concil.</span>
+                <span>Finanzas</span>
               </button>
 
               <button
@@ -3152,10 +3168,23 @@ export default function AppHome() {
                 <span>Clientes (CRM)</span>
               </button>
 
+              {/* Calendario y Notas estaban escondidos como sub-pestañas dentro
+                  de "Redes Sociales": nadie busca un calendario compartido bajo
+                  un ícono de Instagram. Ahora cada uno tiene su entrada. */}
               <button
-                onClick={() => { setActiveTab('comunicaciones'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('calendario'); setSuperAdminMode(false); setSidebarOpen(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'comunicaciones' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  activeTab === 'comunicaciones' && comunicacionesSubTab !== 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                }`}
+              >
+                <CalendarDays size={18} />
+                <span>Calendario y Notas</span>
+              </button>
+
+              <button
+                onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('redes'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                  activeTab === 'comunicaciones' && comunicacionesSubTab === 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
                 }`}
               >
                 <Instagram size={18} />
@@ -3196,7 +3225,7 @@ export default function AppHome() {
                 }`}
               >
                 <Settings size={18} />
-                <span>Suscripción</span>
+                <span>Configuración</span>
               </button>
             </nav>
 
@@ -3214,7 +3243,7 @@ export default function AppHome() {
               </div>
             )}
 
-            <div className="mt-auto p-4 border-t border-black flex flex-col gap-2 font-mono text-[10px]">
+            <div className="mt-auto p-4 border-t border-black flex flex-col gap-2 font-mono text-[11px]">
               <div className="flex justify-between">
                 <span className="text-neutral-500 font-bold">MONEDA:</span>
                 <span className="text-black font-extrabold">COP ($)</span>
@@ -3257,16 +3286,16 @@ export default function AppHome() {
                   <>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                       <div className="neo-card flex flex-col bg-white">
-                        <span className="font-mono text-[10px] text-neutral-500 font-bold">EMPRESAS TOTALES</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">EMPRESAS TOTALES</span>
                         <span className="text-2xl font-black text-black tracking-tight">{superAdminTenants.length}</span>
-                        <span className="text-[10px] text-green-600 mt-1 font-bold">
+                        <span className="text-[11px] text-green-600 mt-1 font-bold">
                           ✓ {superAdminTenants.filter((t) => t.status === 'active').length} activas
                         </span>
                       </div>
                       <div className="neo-card flex flex-col bg-white">
-                        <span className="font-mono text-[10px] text-neutral-500 font-bold">FACTURACIÓN</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">FACTURACIÓN</span>
                         <span className="text-sm font-bold text-neutral-600 tracking-tight mt-1">Sin cobro automatizado</span>
-                        <span className="text-[10px] text-neutral-500 mt-1">
+                        <span className="text-[11px] text-neutral-500 mt-1">
                           Los planes aún no se cobran ni se aplican límites. El MRR aparecerá cuando exista billing real.
                         </span>
                       </div>
@@ -3331,33 +3360,33 @@ export default function AppHome() {
                     <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
                       
                       <div className="neo-card bg-white relative overflow-hidden">
-                        <span className="font-mono text-[10px] text-neutral-500 font-bold">VENTAS DEL DÍA</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">VENTAS DEL DÍA</span>
                         {dashboardCargando ? (
                           <div className="h-8 w-36 bg-neutral-100 border border-neutral-300 mt-2 animate-pulse" />
                         ) : (
                           <span className="text-2xl font-black text-black tracking-tight mt-2 block">${ventasMetrics.totalDia.toLocaleString('es-CO')} COP</span>
                         )}
-                        <div className="flex items-center gap-1 text-[10px] text-green-600 font-bold mt-1">
+                        <div className="flex items-center gap-1 text-[11px] text-green-600 font-bold mt-1">
                           <TrendingUp size={12} />
                           {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : <span>{ventasMetrics.countDia} {ventasMetrics.countDia === 1 ? 'pedido' : 'pedidos'} hoy</span>}
                         </div>
                       </div>
 
                       <div className="neo-card bg-white">
-                        <span className="font-mono text-[10px] text-neutral-500 font-bold">VENTAS DEL MES</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">VENTAS DEL MES</span>
                         {dashboardCargando ? (
                           <div className="h-8 w-36 bg-neutral-100 border border-neutral-300 mt-2 animate-pulse" />
                         ) : (
                           <span className="text-2xl font-black text-black tracking-tight mt-2 block">${ventasMetrics.totalMes.toLocaleString('es-CO')} COP</span>
                         )}
-                        <div className="flex items-center gap-1 text-[10px] text-green-600 font-bold mt-1">
+                        <div className="flex items-center gap-1 text-[11px] text-green-600 font-bold mt-1">
                           <TrendingUp size={12} />
                           {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : <span>{ventasMetrics.countMes} {ventasMetrics.countMes === 1 ? 'pedido' : 'pedidos'} este mes</span>}
                         </div>
                       </div>
 
                       <div className="neo-card bg-white">
-                        <span className="font-mono text-[10px] text-neutral-500 font-bold">CUENTAS POR COBRAR (CxC)</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">CUENTAS POR COBRAR (CxC)</span>
                         {dashboardCargando ? (
                           <div className="h-8 w-36 bg-neutral-100 border border-neutral-300 mt-2 animate-pulse" />
                         ) : (
@@ -3365,13 +3394,13 @@ export default function AppHome() {
                             ${financialMetrics.totalCxC.toLocaleString('es-CO')} COP
                           </span>
                         )}
-                        <div className="text-[10px] text-brand-red font-bold mt-1">
+                        <div className="text-[11px] text-brand-red font-bold mt-1">
                           {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : <span>${financialMetrics.vencidoCxC.toLocaleString('es-CO')} vencido</span>}
                         </div>
                       </div>
 
                       <div className="neo-card bg-white">
-                        <span className="font-mono text-[10px] text-neutral-500 font-bold">EFECTIVO EN BANCOS</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">EFECTIVO EN BANCOS</span>
                         {dashboardCargando ? (
                           <div className="h-8 w-36 bg-neutral-100 border border-neutral-300 mt-2 animate-pulse" />
                         ) : (
@@ -3379,7 +3408,7 @@ export default function AppHome() {
                             ${totalEnBancos.toLocaleString('es-CO')} COP
                           </span>
                         )}
-                        <div className="text-[10px] text-neutral-500 font-bold mt-1">
+                        <div className="text-[11px] text-neutral-500 font-bold mt-1">
                           {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : <span>{bankAccounts.length} {bankAccounts.length === 1 ? 'cuenta vinculada' : 'cuentas vinculadas'}</span>}
                         </div>
                       </div>
@@ -3446,7 +3475,7 @@ export default function AppHome() {
                               <button
                                 type="button"
                                 onClick={() => setDashboardWeekOffset(0)}
-                                className="font-mono text-[10px] font-bold border-[1.5px] border-black px-2 py-1 hover:bg-neutral-100"
+                                className="font-mono text-[11px] font-bold border-[1.5px] border-black px-2 py-1 hover:bg-neutral-100"
                                 title="Volver a hoy"
                               >
                                 HOY
@@ -3485,17 +3514,17 @@ export default function AppHome() {
                                 return (
                                   <div key={dia.toISOString()} className={`border border-black flex flex-col sm:flex-row sm:items-center gap-2 p-2.5 ${esHoy ? 'bg-brand-yellow/15' : 'bg-neutral-50'}`}>
                                     <div className="font-mono text-[11px] font-bold text-black sm:w-32 shrink-0 flex items-center gap-1.5">
-                                      {esHoy && <span className="bg-brand-yellow/40 border border-black px-1 text-[9px]">HOY</span>}
+                                      {esHoy && <span className="bg-brand-yellow/40 border border-black px-1 text-[11px]">HOY</span>}
                                       <span className="capitalize">{dia.toLocaleDateString('es-CO', { weekday: 'short', day: '2-digit', month: 'short' })}</span>
                                     </div>
                                     <div className="flex-1 flex flex-wrap gap-1.5">
                                       {eventosDelDia.length === 0 ? (
-                                        <span className="text-[10px] text-neutral-400 italic font-mono">Sin eventos</span>
+                                        <span className="text-[11px] text-neutral-600 italic font-mono">Sin eventos</span>
                                       ) : (
                                         eventosDelDia.map((ev) => (
                                           <span
                                             key={ev.id}
-                                            className={`inline-flex items-center gap-1 border-[1.5px] border-black text-[9px] font-mono font-bold px-1.5 py-0.5 ${
+                                            className={`inline-flex items-center gap-1 border-[1.5px] border-black text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                               ev.tipo === 'nota' ? 'bg-brand-yellow/30' :
                                               ev.tipo === 'recordatorio' ? 'bg-brand-blue/20' :
                                               'bg-brand-red/15'
@@ -3505,7 +3534,7 @@ export default function AppHome() {
                                             {ev.tipo === 'post' && ev.canal === 'facebook' && <Facebook size={10} />}
                                             {ev.tipo === 'post' && ev.canal === 'tiktok' && <TikTokIcon size={10} />}
                                             <span>{ev.titulo}</span>
-                                            <span className={`text-[9px] font-mono opacity-70 ${
+                                            <span className={`text-[11px] font-mono opacity-70 ${
                                               ev.estado === 'subido' ? 'text-green-700' :
                                               ev.estado === 'editado' ? 'text-amber-700' :
                                               ev.estado === 'grabado' ? 'text-orange-600' : ''
@@ -3573,7 +3602,7 @@ export default function AppHome() {
                             {/* Slide 0: Alertas */}
                             <div className={`flex flex-col gap-2 px-4 py-3 transition-all duration-300 ${dashboardSlide === 0 ? 'block' : 'hidden'}`}>
                               {criticalProducts.length === 0 && facturasVencidas.length === 0 ? (
-                                <p className="text-xs text-neutral-400 italic font-mono py-4 text-center">✓ Sin alertas activas — todo en orden.</p>
+                                <p className="text-xs text-neutral-600 italic font-mono py-4 text-center">✓ Sin alertas activas — todo en orden.</p>
                               ) : (
                                 <div className="flex flex-col gap-2 max-h-72 overflow-y-auto pr-1">
                                   {criticalProducts.map((p) => {
@@ -3603,7 +3632,7 @@ export default function AppHome() {
                                   })}
                                 </div>
                               )}
-                              <div className="text-[9px] font-mono text-neutral-400 text-right mt-1">
+                              <div className="text-[11px] font-mono text-neutral-600 text-right mt-1">
                                 {criticalProducts.length + facturasVencidas.length} alerta{criticalProducts.length + facturasVencidas.length !== 1 ? 's' : ''}
                               </div>
                             </div>
@@ -3611,7 +3640,7 @@ export default function AppHome() {
                             {/* Slide 1: Pedidos por entregar */}
                             <div className={`flex flex-col gap-2 px-4 py-3 transition-all duration-300 ${dashboardSlide === 1 ? 'block' : 'hidden'}`}>
                               {pedidosPorEntregar.length === 0 ? (
-                                <p className="text-xs text-neutral-400 italic font-mono py-4 text-center">Sin pedidos pendientes de entrega.</p>
+                                <p className="text-xs text-neutral-600 italic font-mono py-4 text-center">Sin pedidos pendientes de entrega.</p>
                               ) : (
                                 <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
                                   {pedidosPorEntregar
@@ -3631,7 +3660,7 @@ export default function AppHome() {
                                           </div>
                                           <div className="flex flex-col items-end gap-0.5 shrink-0">
                                             <span className="font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
-                                            <span className={`text-[9px] font-mono font-bold px-1.5 py-0.5 rounded-sm border border-black ${estadoColorPedido[ord.estado] ?? ''}`}>
+                                            <span className={`text-[11px] font-mono font-bold px-1.5 py-0.5 rounded-sm border border-black ${estadoColorPedido[ord.estado] ?? ''}`}>
                                               {ord.estado.replace('_', ' ').toUpperCase()}
                                             </span>
                                           </div>
@@ -3640,7 +3669,7 @@ export default function AppHome() {
                                     })}
                                 </div>
                               )}
-                              <div className="text-[9px] font-mono text-neutral-400 text-right mt-1">
+                              <div className="text-[11px] font-mono text-neutral-600 text-right mt-1">
                                 {pedidosPorEntregar.length} pedido{pedidosPorEntregar.length !== 1 ? 's' : ''} activo{pedidosPorEntregar.length !== 1 ? 's' : ''}
                               </div>
                             </div>
@@ -3648,7 +3677,7 @@ export default function AppHome() {
                             {/* Slide 2: Cuentas por cobrar */}
                             <div className={`flex flex-col gap-2 px-4 py-3 transition-all duration-300 ${dashboardSlide === 2 ? 'block' : 'hidden'}`}>
                               {cxcPendientes.length === 0 ? (
-                                <p className="text-xs text-neutral-400 italic font-mono py-4 text-center">Sin cuentas por cobrar pendientes.</p>
+                                <p className="text-xs text-neutral-600 italic font-mono py-4 text-center">Sin cuentas por cobrar pendientes.</p>
                               ) : (
                                 <div className="flex flex-col gap-1.5 max-h-72 overflow-y-auto pr-1">
                                   {cxcPendientes.map((inv) => {
@@ -3669,14 +3698,14 @@ export default function AppHome() {
                                           <span className={`font-bold ${vencida ? 'text-brand-red' : 'text-black'}`}>
                                             ${inv.saldo_pendiente.toLocaleString('es-CO')}
                                           </span>
-                                          {vencida && <span className="text-[9px] font-mono text-brand-red font-bold">VENCIDA</span>}
+                                          {vencida && <span className="text-[11px] font-mono text-brand-red font-bold">VENCIDA</span>}
                                         </div>
                                       </button>
                                     );
                                   })}
                                 </div>
                               )}
-                              <div className="text-[9px] font-mono text-neutral-400 text-right mt-1">
+                              <div className="text-[11px] font-mono text-neutral-600 text-right mt-1">
                                 Total: ${cxcPendientes.reduce((s, i) => s + i.saldo_pendiente, 0).toLocaleString('es-CO')} COP
                               </div>
                             </div>
@@ -3714,7 +3743,7 @@ export default function AppHome() {
                       
                       <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto">
                         <div className="relative flex-1 sm:flex-initial">
-                          <Search size={16} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-400" />
+                          <Search size={16} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-600" />
                           <input
                             type="text"
                             placeholder="Buscar por nombre..."
@@ -3766,7 +3795,7 @@ export default function AppHome() {
                     </div>
 
                     {/* Tabla de Productos */}
-                    <p className="sm:hidden text-[9px] font-mono text-neutral-400 text-center">← desliza para ver más →</p>
+                    <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
                     <div className="neo-card bg-white p-0 overflow-x-auto">
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
@@ -3816,7 +3845,7 @@ export default function AppHome() {
                             return (
                               <tbody>
                                 <tr>
-                                  <td colSpan={7} className="p-6 text-center text-neutral-400 font-mono text-xs">
+                                  <td colSpan={7} className="p-6 text-center text-neutral-600 font-mono text-xs">
                                     No hay productos que coincidan con los filtros actuales.
                                   </td>
                                 </tr>
@@ -3841,14 +3870,14 @@ export default function AppHome() {
                                   <tr key={p.id} className="border-b border-neutral-200 hover:bg-neutral-50/50">
                                     <td className="p-3 font-semibold text-black">
                                       <div>{p.nombre}</div>
-                                      <div className="text-[10px] text-neutral-500 font-normal mt-0.5">{p.descripcion}</div>
+                                      <div className="text-[11px] text-neutral-500 font-normal mt-0.5">{p.descripcion}</div>
                                     </td>
                                     <td className="p-3 text-right font-mono text-neutral-600">${p.precio_costo.toLocaleString('es-CO')}</td>
                                     <td className="p-3 text-right font-mono text-black font-semibold">${p.precio_venta.toLocaleString('es-CO')}</td>
                                     <td className="p-3 text-center font-mono text-neutral-600">{p.stock_minimo}</td>
                                     <td className="p-3 text-center font-mono font-extrabold text-black">{stock}</td>
                                     <td className="p-3 text-center">
-                                      <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
+                                      <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                         isCrit
                                           ? 'bg-brand-red text-white border-black'
                                           : 'bg-green-100 text-green-800 border-green-400'
@@ -3899,10 +3928,10 @@ export default function AppHome() {
                                 </span>
                                 <div>
                                   <div className="font-bold text-black">{prod?.nombre}</div>
-                                  <div className="text-[10px] text-neutral-600 mt-0.5">{mov.detalle}</div>
+                                  <div className="text-[11px] text-neutral-600 mt-0.5">{mov.detalle}</div>
                                 </div>
                               </div>
-                              <span className="font-mono text-[10px] text-neutral-500">
+                              <span className="font-mono text-[11px] text-neutral-500">
                                 {new Date(mov.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
                               </span>
                             </div>
@@ -3953,7 +3982,7 @@ export default function AppHome() {
                               <AlertTriangle size={14} className="text-brand-yellow" />
                               PEDIDOS SIN ENVIAR — MÁXIMA PRIORIDAD ({sinEnviar.length})
                             </h3>
-                            <span className="text-[10px] font-mono text-neutral-600">Ordenados del más antiguo al más reciente</span>
+                            <span className="text-[11px] font-mono text-neutral-600">Ordenados del más antiguo al más reciente</span>
                           </div>
                           <div className="space-y-2">
                             {sinEnviar.map((ord) => {
@@ -3966,14 +3995,14 @@ export default function AppHome() {
                                   {/* Col 1: nombre + número */}
                                   <div className="flex flex-col min-w-0">
                                     <span className="font-bold text-black truncate leading-tight">{getOrderDisplayName(ord)}</span>
-                                    <span className="font-mono text-[9px] text-neutral-400 leading-tight">{ord.numero}</span>
+                                    <span className="font-mono text-[11px] text-neutral-600 leading-tight">{ord.numero}</span>
                                   </div>
 
                                   {/* Cols 2-4: en mobile son una fila flex que envuelve; desde sm: "desaparecen" (contents) y vuelven a ser columnas 2/3/4 del grid de arriba. */}
                                   <div className="flex items-center gap-2 flex-wrap sm:contents">
                                     {/* Col 2: estado con color */}
                                     <div>
-                                      <span className={`inline-block border border-black text-[9px] font-mono font-bold px-1.5 py-0.5 sm:w-full text-center ${
+                                      <span className={`inline-block border border-black text-[11px] font-mono font-bold px-1.5 py-0.5 sm:w-full text-center ${
                                         ord.estado === 'borrador' ? 'bg-neutral-200 text-neutral-700' :
                                         ord.estado === 'confirmado' ? 'bg-blue-200 text-blue-800' :
                                         ord.estado === 'en_preparacion' ? 'bg-yellow-200 text-yellow-800' :
@@ -3987,17 +4016,17 @@ export default function AppHome() {
 
                                     {/* Col 3: tiempo esperando */}
                                     <div className="flex flex-col sm:items-end">
-                                      <span className={`font-mono text-[9px] font-bold ${dias >= 3 ? 'text-brand-red' : 'text-neutral-500'}`}>
+                                      <span className={`font-mono text-[11px] font-bold ${dias >= 3 ? 'text-brand-red' : 'text-neutral-500'}`}>
                                         {dias === 0 ? 'Hoy' : dias === 1 ? 'Hace 1 día' : `Hace ${dias} días`}
                                       </span>
-                                      <span className="font-mono text-[9px] text-neutral-400">esperando envío</span>
+                                      <span className="font-mono text-[11px] text-neutral-600">esperando envío</span>
                                     </div>
 
                                     {/* Col 4: acción */}
                                     <button
                                       type="button"
                                       onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
-                                      className="neo-btn px-2 py-1 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white ml-auto sm:ml-0"
+                                      className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-blue hover:text-white ml-auto sm:ml-0"
                                     >Gestionar</button>
                                   </div>
                                 </div>
@@ -4075,7 +4104,7 @@ export default function AppHome() {
 
                               {/* Agrupación */}
                               <div className="flex flex-col gap-1">
-                                <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Agrupar por</span>
+                                <span className="font-mono text-[11px] text-neutral-600 uppercase font-bold">Agrupar por</span>
                                 <div className="flex border border-black overflow-hidden">
                                   {(['dia', 'semana', 'mes'] as const).map((u) => (
                                     <button
@@ -4087,7 +4116,7 @@ export default function AppHome() {
                                         else if (u === 'semana') { setPedidosRangoA(Math.max(1, currentWeek - 4)); setPedidosRangoB(currentWeek); }
                                         else { setPedidosRangoA(1); setPedidosRangoB(currentMonth); }
                                       }}
-                                      className={`font-mono text-[9px] font-bold px-2.5 py-1 border-r border-black last:border-r-0 ${pedidosAgrupacion === u ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                                      className={`font-mono text-[11px] font-bold px-2.5 py-1 border-r border-black last:border-r-0 ${pedidosAgrupacion === u ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
                                     >
                                       {u === 'dia' ? 'DÍA' : u === 'semana' ? 'SEMANA' : 'MES'}
                                     </button>
@@ -4098,8 +4127,8 @@ export default function AppHome() {
                               {/* Dual-range slider */}
                               <div className="flex flex-col gap-1 min-w-[180px]">
                                 <div className="flex justify-between">
-                                  <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Rango</span>
-                                  <span className="font-mono text-[9px] font-bold text-black">
+                                  <span className="font-mono text-[11px] text-neutral-600 uppercase font-bold">Rango</span>
+                                  <span className="font-mono text-[11px] font-bold text-black">
                                     {labelRango(pedidosRangoA)} → {labelRango(pedidosRangoB)}
                                   </span>
                                 </div>
@@ -4149,7 +4178,7 @@ export default function AppHome() {
 
                               {/* Ordenar */}
                               <div className="flex flex-col gap-1">
-                                <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Ordenar</span>
+                                <span className="font-mono text-[11px] text-neutral-600 uppercase font-bold">Ordenar</span>
                                 <select
                                   value={pedidosOrden}
                                   onChange={(e) => setPedidosOrden(e.target.value as typeof pedidosOrden)}
@@ -4166,13 +4195,13 @@ export default function AppHome() {
 
                               {/* Toggle Lista / Kanban */}
                               <div className="flex flex-col gap-1">
-                                <span className="font-mono text-[9px] text-neutral-400 uppercase font-bold">Vista</span>
+                                <span className="font-mono text-[11px] text-neutral-600 uppercase font-bold">Vista</span>
                                 <div className="flex border-2 border-black overflow-hidden">
                                   <button type="button" onClick={() => setPedidosVista('lista')}
-                                    className={`font-mono text-[10px] font-bold px-3 py-1 ${pedidosVista === 'lista' ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                                    className={`font-mono text-[11px] font-bold px-3 py-1 ${pedidosVista === 'lista' ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
                                   >Lista</button>
                                   <button type="button" onClick={() => setPedidosVista('kanban')}
-                                    className={`font-mono text-[10px] font-bold px-3 py-1 border-l-2 border-black ${pedidosVista === 'kanban' ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                                    className={`font-mono text-[11px] font-bold px-3 py-1 border-l-2 border-black ${pedidosVista === 'kanban' ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
                                   >Kanban</button>
                                 </div>
                               </div>
@@ -4198,7 +4227,7 @@ export default function AppHome() {
                                   key={val}
                                   type="button"
                                   onClick={() => setOrderStatusFilter(val)}
-                                  className={`font-mono text-[9px] font-bold px-2.5 py-1 border-2 transition-colors ${
+                                  className={`font-mono text-[11px] font-bold px-2.5 py-1 border-2 transition-colors ${
                                     isActive ? activeCls : inactiveCls
                                   }`}
                                 >
@@ -4306,7 +4335,7 @@ export default function AppHome() {
                       };
 
                       if (pedidosFiltrados.length === 0) return (
-                        <div className="neo-card bg-white text-center py-12 text-xs text-neutral-400 font-mono italic">
+                        <div className="neo-card bg-white text-center py-12 text-xs text-neutral-600 font-mono italic">
                           No hay pedidos con los filtros actuales.
                         </div>
                       );
@@ -4320,10 +4349,10 @@ export default function AppHome() {
                             <div className="bg-blue-500 border-2 border-black flex items-center gap-4 px-4 py-2 overflow-hidden">
                               <TruckSprite scale={2} />
                               <div className="flex flex-col">
-                                <span className="font-mono text-[10px] font-black text-white uppercase tracking-widest drop-shadow">
+                                <span className="font-mono text-[11px] font-black text-white uppercase tracking-widest drop-shadow">
                                   {pedidosFiltrados.length} pedido{pedidosFiltrados.length !== 1 ? 's' : ''} en camino
                                 </span>
-                                <span className="font-mono text-[9px] text-blue-200">
+                                <span className="font-mono text-[11px] text-blue-200">
                                   Filtrando por estado: DESPACHADO
                                 </span>
                               </div>
@@ -4333,7 +4362,7 @@ export default function AppHome() {
                             <div key={llave}>
                               {/* Separador de grupo */}
                               {agruparPorFecha && llave !== '__all__' && (
-                                <div className="font-mono text-[10px] font-bold text-neutral-400 uppercase tracking-widest px-2 py-1.5 border-b border-neutral-200 bg-neutral-50">
+                                <div className="font-mono text-[11px] font-bold text-neutral-600 uppercase tracking-widest px-2 py-1.5 border-b border-neutral-200 bg-neutral-50">
                                   {labelGrupo(llave)}
                                 </div>
                               )}
@@ -4350,14 +4379,14 @@ export default function AppHome() {
                                       {/* Col 1: nombre + número */}
                                       <div className="flex flex-col min-w-0">
                                         <span className="font-bold text-black truncate leading-tight">{getOrderDisplayName(ord)}</span>
-                                        <span className="font-mono text-[9px] text-neutral-400 leading-tight">{ord.numero}</span>
+                                        <span className="font-mono text-[11px] text-neutral-600 leading-tight">{ord.numero}</span>
                                       </div>
 
                                       {/* Cols 2-4: fila flex que envuelve en mobile; sm:contents las restaura como columnas 2/3/4. */}
                                       <div className="flex items-center gap-2 flex-wrap sm:contents">
                                         {/* Col 2: estado (ancho fijo, siempre alineado) */}
                                         <div>
-                                          <span className={`inline-block border border-black text-[9px] font-mono font-bold px-1.5 py-0.5 sm:w-full text-center ${
+                                          <span className={`inline-block border border-black text-[11px] font-mono font-bold px-1.5 py-0.5 sm:w-full text-center ${
                                             ord.estado === 'borrador' ? 'bg-neutral-200 text-neutral-700' :
                                             ord.estado === 'confirmado' ? 'bg-blue-200 text-blue-800' :
                                             ord.estado === 'en_preparacion' ? 'bg-yellow-200 text-yellow-800' :
@@ -4371,9 +4400,9 @@ export default function AppHome() {
                                         <div className="flex flex-col sm:items-end min-w-0">
                                           <span className="font-mono font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
                                           {cxcRow && cxcRow.saldo_pendiente > 0 ? (
-                                            <span className="font-mono text-[9px] font-bold text-brand-red">Debe ${cxcRow.saldo_pendiente.toLocaleString('es-CO')}</span>
+                                            <span className="font-mono text-[11px] font-bold text-brand-red">Debe ${cxcRow.saldo_pendiente.toLocaleString('es-CO')}</span>
                                           ) : cxcRow && cxcRow.saldo_pendiente === 0 ? (
-                                            <span className="font-mono text-[9px] font-bold text-green-700">Pagado ✓</span>
+                                            <span className="font-mono text-[11px] font-bold text-green-700">Pagado ✓</span>
                                           ) : null}
                                         </div>
 
@@ -4382,12 +4411,12 @@ export default function AppHome() {
                                           <button
                                             type="button"
                                             onClick={() => setPedidoExpandido(isExpanded ? null : ord.id)}
-                                            className="font-mono text-[9px] font-bold border border-black bg-white px-2 py-1 hover:bg-neutral-100"
+                                            className="font-mono text-[11px] font-bold border border-black bg-white px-2 py-1 hover:bg-neutral-100"
                                           >{isExpanded ? 'Ocultar' : 'Ver detalle'}</button>
                                           <button
                                             type="button"
                                             onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
-                                            className="neo-btn px-2 py-1 text-[9px] font-mono font-bold hover:bg-brand-blue hover:text-white"
+                                            className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-blue hover:text-white"
                                           >Gestionar</button>
                                         </div>
                                       </div>
@@ -4398,12 +4427,12 @@ export default function AppHome() {
                                       <div className="border-t border-black/20 bg-white/70 px-3 py-3 flex flex-col gap-3">
                                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs">
                                           <div>
-                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">CLIENTE</div>
+                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[11px] mb-1">CLIENTE</div>
                                             <div className="font-semibold text-black">{client?.nombre ?? '—'}</div>
                                             {client?.nit && <div className="text-neutral-600 mt-0.5 font-mono">{client.nit}</div>}
                                           </div>
                                           <div>
-                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">PRODUCTOS</div>
+                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[11px] mb-1">PRODUCTOS</div>
                                             <div className="space-y-1">
                                               {ord.items.map((item, idx) => {
                                                 const p = item.producto_id ? products.find(prod => prod.id === item.producto_id) : null;
@@ -4418,15 +4447,15 @@ export default function AppHome() {
                                             </div>
                                           </div>
                                           <div>
-                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[9px] mb-1">ENVÍO / DESPACHO</div>
+                                            <div className="font-bold text-neutral-500 uppercase font-mono text-[11px] mb-1">ENVÍO / DESPACHO</div>
                                             <div className="font-mono text-neutral-700 text-xs">
                                               {ord.guia_despacho ? (
                                                 <div className="flex flex-col gap-1">
                                                   <div className="font-bold text-green-700">Guía de Seguimiento:</div>
-                                                  <div className="bg-neutral-100 p-1 border border-black inline-block text-[10px]">{ord.guia_despacho}</div>
+                                                  <div className="bg-neutral-100 p-1 border border-black inline-block text-[11px]">{ord.guia_despacho}</div>
                                                 </div>
                                               ) : (
-                                                <span className="italic text-neutral-400">Guía pendiente de despacho</span>
+                                                <span className="italic text-neutral-600">Guía pendiente de despacho</span>
                                               )}
                                             </div>
                                           </div>
@@ -4434,14 +4463,14 @@ export default function AppHome() {
 
                                         {/* Cambiar estado */}
                                         <div className="border-t border-dashed border-neutral-300 pt-3">
-                                          <div className="text-[9px] font-mono font-bold text-neutral-400 uppercase mb-2">Cambiar estado</div>
+                                          <div className="text-[11px] font-mono font-bold text-neutral-600 uppercase mb-2">Cambiar estado</div>
                                           <div className="flex flex-wrap gap-1.5">
                                             {todosLosEstados.filter(e => e !== ord.estado).map((next) => (
                                               <button
                                                 key={next}
                                                 type="button"
                                                 onClick={() => handleTransitionOrder(ord.id, next)}
-                                                className={`font-mono text-[9px] font-bold px-2.5 py-1 border border-black active:translate-y-px transition-all ${
+                                                className={`font-mono text-[11px] font-bold px-2.5 py-1 border border-black active:translate-y-px transition-all ${
                                                   next === 'cancelado' ? 'bg-white text-brand-red hover:bg-red-50 border-red-300' :
                                                   next === 'entregado' ? 'bg-green-100 text-green-800 hover:bg-green-200 border-green-400' :
                                                   next === 'despachado' ? 'bg-brand-yellow/70 text-black hover:bg-brand-yellow' :
@@ -4460,14 +4489,14 @@ export default function AppHome() {
                                           <button
                                             type="button"
                                             onClick={() => { openEditOrder(ord); setPedidoExpandido(null); }}
-                                            className="neo-btn flex items-center gap-1.5 px-3 py-1.5 text-[9px] font-mono font-bold hover:bg-neutral-100"
+                                            className="neo-btn flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-bold hover:bg-neutral-100"
                                           >
                                             <Pencil size={11} /> Editar pedido
                                           </button>
                                           <button
                                             type="button"
                                             onClick={() => void handleDeleteOrder(ord)}
-                                            className="neo-btn flex items-center gap-1.5 px-3 py-1.5 text-[9px] font-mono font-bold hover:bg-red-50 hover:text-brand-red"
+                                            className="neo-btn flex items-center gap-1.5 px-3 py-1.5 text-[11px] font-mono font-bold hover:bg-red-50 hover:text-brand-red"
                                           >
                                             <Trash2 size={11} /> Eliminar
                                           </button>
@@ -4509,12 +4538,12 @@ export default function AppHome() {
                             return (
                               <div key={estado} className={`w-56 shrink-0 border-2 ${estadoColores[estado] ?? 'bg-white border-black'} flex flex-col`}>
                                 <div className="px-3 py-2 border-b-2 border-black bg-white/80">
-                                  <div className="font-mono text-[10px] font-bold uppercase">{estado.replace('_', ' ')}</div>
+                                  <div className="font-mono text-[11px] font-bold uppercase">{estado.replace('_', ' ')}</div>
                                   <div className="font-mono text-xs text-neutral-500">{columna.length} pedido{columna.length !== 1 ? 's' : ''}</div>
                                 </div>
                                 <div className="flex flex-col gap-2 p-2 flex-1 overflow-y-auto max-h-96">
                                   {columna.length === 0 && (
-                                    <p className="text-[10px] text-neutral-400 font-mono italic text-center py-4">Vacío</p>
+                                    <p className="text-[11px] text-neutral-600 font-mono italic text-center py-4">Vacío</p>
                                   )}
                                   {columna.map(ord => {
                                     const client = customers.find(c => c.id === ord.cliente_id);
@@ -4524,14 +4553,14 @@ export default function AppHome() {
                                       entregado: 'Entregado', cancelado: 'Cancelado',
                                     };
                                     return (
-                                      <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[10px]">
+                                      <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[11px]">
                                         <div className="font-bold text-black leading-tight">{client?.nombre ?? 'Sin cliente'}</div>
-                                        <div className="font-mono text-neutral-400">{ord.numero}</div>
+                                        <div className="font-mono text-neutral-600">{ord.numero}</div>
                                         <div className="font-mono font-bold">${ord.total.toLocaleString('es-CO')}</div>
                                         <select
                                           defaultValue=""
                                           onChange={(e) => { if (e.target.value) { handleTransitionOrder(ord.id, e.target.value as Order['estado']); e.target.value = ''; } }}
-                                          className="mt-1 w-full border border-black bg-white font-mono text-[9px] py-0.5 px-1 cursor-pointer hover:bg-neutral-50"
+                                          className="mt-1 w-full border border-black bg-white font-mono text-[11px] py-0.5 px-1 cursor-pointer hover:bg-neutral-50"
                                         >
                                           <option value="" disabled>Mover a…</option>
                                           {(Object.keys(estadoLabel) as Order['estado'][]).filter(e => e !== ord.estado).map(e => (
@@ -4558,7 +4587,7 @@ export default function AppHome() {
                     
                     {/* Tabs de Finanzas */}
                     <div className="flex flex-wrap border-b-2 border-black bg-white">
-                      {(['resumen', 'cxc', 'cxp', 'compras', 'gastos', 'ingresos'] as const).map((tab) => (
+                      {(['resumen', 'cxc', 'cxp', 'gastos', 'ingresos'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setFinanceSubTab(tab)}
@@ -4571,7 +4600,6 @@ export default function AppHome() {
                           {tab === 'resumen' && 'Resumen Financiero'}
                           {tab === 'cxc' && 'CxC · Por Cobrar'}
                           {tab === 'cxp' && 'CxP · Por Pagar'}
-                          {tab === 'compras' && 'Compras / OC'}
                           {tab === 'gastos' && 'Gastos Op.'}
                           {tab === 'ingresos' && 'Ingresos'}
                         </button>
@@ -4606,70 +4634,70 @@ export default function AppHome() {
                             {/* Fila principal: flujo neto + saldo en cuentas */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className={`neo-card ${resumenFinanciero.flujoNeto >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">FLUJO NETO DEL PERÍODO</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">FLUJO NETO DEL PERÍODO</span>
                                 <span className={`text-2xl font-black block mt-1 ${resumenFinanciero.flujoNeto >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
-                                  {resumenFinanciero.flujoNeto >= 0 ? '+' : ''}{resumenFinanciero.flujoNeto.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  {moneySigned(resumenFinanciero.flujoNeto)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">
-                                  {resumenFinanciero.periodo.desde} → {resumenFinanciero.periodo.hasta}
+                                <span className="text-[11px] text-neutral-500 font-mono">
+                                  {rangoFechas(resumenFinanciero.periodo.desde, resumenFinanciero.periodo.hasta)}
                                 </span>
                               </div>
                               <div className="neo-card bg-white">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">SALDO TOTAL EN CUENTAS</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">SALDO TOTAL EN CUENTAS</span>
                                 <span className="text-2xl font-black text-black block mt-1">
-                                  {resumenFinanciero.saldoCuentas.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  {money(resumenFinanciero.saldoCuentas)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">Suma de todas las cuentas bancarias activas</span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Suma de todas las cuentas bancarias activas</span>
                               </div>
                             </div>
 
                             {/* Ingresos vs Egresos */}
                             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                               <div className="neo-card bg-white">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">COBROS CxC</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">COBROS CxC</span>
                                 <span className="text-lg font-black text-green-700 block mt-1">
-                                  +{resumenFinanciero.ingresosCxC.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  +{money(resumenFinanciero.ingresosCxC)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">Abonos de clientes</span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Abonos de clientes</span>
                               </div>
                               <div className="neo-card bg-white">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUAL.</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS MANUAL.</span>
                                 <span className="text-lg font-black text-green-700 block mt-1">
-                                  +{resumenFinanciero.ingresosManuales.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  +{money(resumenFinanciero.ingresosManuales)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">Capital, préstamos, etc.</span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Capital, préstamos, etc.</span>
                               </div>
                               <div className="neo-card bg-white">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">PAGOS CxP</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">PAGOS CxP</span>
                                 <span className="text-lg font-black text-brand-red block mt-1">
-                                  -{resumenFinanciero.egresosCxP.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  -{money(resumenFinanciero.egresosCxP)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">Abonos a proveedores</span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Abonos a proveedores</span>
                               </div>
                               <div className="neo-card bg-white">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">GASTOS OP.</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">GASTOS OP.</span>
                                 <span className="text-lg font-black text-brand-red block mt-1">
-                                  -{resumenFinanciero.egresosGastos.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  -{money(resumenFinanciero.egresosGastos)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">Arriendo, nómina, etc.</span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Arriendo, nómina, etc.</span>
                               </div>
                             </div>
 
                             {/* Cartera pendiente */}
                             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                               <div className="neo-card bg-white">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">CARTERA POR COBRAR (CxC)</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">CARTERA POR COBRAR (CxC)</span>
                                 <span className="text-xl font-black text-black block mt-1">
-                                  {resumenFinanciero.cxcPendiente.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  {money(resumenFinanciero.cxcPendiente)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">Saldo pendiente de clientes</span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Saldo pendiente de clientes</span>
                               </div>
                               <div className="neo-card bg-white">
-                                <span className="font-mono text-[10px] text-neutral-500 font-bold">DEUDA CON PROVEEDORES (CxP)</span>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">DEUDA CON PROVEEDORES (CxP)</span>
                                 <span className="text-xl font-black text-brand-red block mt-1">
-                                  {resumenFinanciero.cxpPendiente.toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}
+                                  {money(resumenFinanciero.cxpPendiente)}
                                 </span>
-                                <span className="text-[10px] text-neutral-500 font-mono">Saldo pendiente de facturas de compra</span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Saldo pendiente de facturas de compra</span>
                               </div>
                             </div>
                           </>
@@ -4695,28 +4723,28 @@ export default function AppHome() {
                           )}
                           {bankAccountsCargando && <p className="text-xs text-neutral-500 font-mono py-2">Cargando cuentas…</p>}
                           {!bankAccountsCargando && bankAccounts.length === 0 && (
-                            <p className="text-xs text-neutral-400 italic text-center py-4">Sin cuentas bancarias registradas. Crea la primera con &quot;Nueva cuenta&quot;.</p>
+                            <p className="text-xs text-neutral-600 italic text-center py-4">Sin cuentas bancarias registradas. Crea la primera con &quot;Nueva cuenta&quot;.</p>
                           )}
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                             {bankAccounts.map((ac) => (
                               <div key={ac.id} className="border-2 border-black p-3 flex justify-between items-center gap-3">
                                 <div className="min-w-0">
                                   <div className="font-bold text-black truncate">{ac.banco}</div>
-                                  <div className="text-[10px] text-neutral-500 font-mono mt-0.5">{ac.numero} · {ac.tipo.toUpperCase()}</div>
+                                  <div className="text-[11px] text-neutral-500 font-mono mt-0.5">{ac.numero} · {ac.tipo.toUpperCase()}</div>
                                   <div className="font-mono font-black text-sm text-black mt-1">${ac.saldo.toLocaleString('es-CO')} COP</div>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                   <button
                                     type="button"
                                     onClick={() => { setTransferenciaForm(f => ({ ...f, cuentaOrigenId: ac.id })); setShowTransferenciaModal(true); }}
-                                    className="neo-btn px-2 py-1 text-[10px] font-mono font-bold hover:bg-brand-sage/40"
+                                    className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-sage/40"
                                     title="Transferir desde esta cuenta"
                                   >⇌ Transferir</button>
                                   <button type="button" onClick={() => openEditBankAccountModal(ac)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar"><Pencil size={13} /></button>
                                   {confirmDeleteBankAccountId === ac.id ? (
                                     <div className="flex items-center gap-1">
-                                      <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn py-0.5 px-2 bg-brand-red text-white text-[10px] font-mono font-bold">Eliminar</button>
-                                      <button type="button" onClick={() => setConfirmDeleteBankAccountId(null)} className="neo-btn py-0.5 px-2 text-[10px] font-mono">No</button>
+                                      <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn py-0.5 px-2 bg-brand-red text-white text-[11px] font-mono font-bold">Eliminar</button>
+                                      <button type="button" onClick={() => setConfirmDeleteBankAccountId(null)} className="neo-btn py-0.5 px-2 text-[11px] font-mono">No</button>
                                     </div>
                                   ) : (
                                     <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar"><Trash2 size={13} /></button>
@@ -4781,10 +4809,10 @@ export default function AppHome() {
                                     <span className="text-black font-semibold">
                                       Factura {inv?.numero} ({client?.nombre ?? supp?.nombre})
                                     </span>
-                                    <div className="text-[10px] text-neutral-500 font-mono mt-0.5">Ref: {ab.referencia}</div>
+                                    <div className="text-[11px] text-neutral-500 font-mono mt-0.5">Ref: {ab.referencia}</div>
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">
-                                    <span className="font-mono text-[10px] text-neutral-500">{ab.fecha}</span>
+                                    <span className="font-mono text-[11px] text-neutral-500">{fechaCorta(ab.fecha)}</span>
                                     <button type="button" onClick={() => openEditAbono(ab)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar abono"><Pencil size={12} /></button>
                                     <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
                                   </div>
@@ -4849,7 +4877,7 @@ export default function AppHome() {
                                         </td>
                                         <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
                                         <td className="p-3 text-center">
-                                          <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
+                                          <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                             inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
                                             inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
                                             'bg-brand-yellow/20 text-neutral-700 border-neutral-400'
@@ -4860,7 +4888,7 @@ export default function AppHome() {
                                         <td className="p-3 text-center">
                                           <div className="flex items-center justify-center gap-1.5">
                                             {abonosInv.length > 0 && (
-                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[10px]" title="Ver abonos">
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver abonos">
                                                 {expanded ? '▲' : `▼ ${abonosInv.length}`}
                                               </button>
                                             )}
@@ -4873,10 +4901,10 @@ export default function AppHome() {
                                         <tr key={`${inv.id}-abonos`} className="bg-neutral-50 border-b border-neutral-200">
                                           <td colSpan={7} className="px-6 py-2">
                                             <div className="flex flex-col gap-1">
-                                              <span className="font-mono text-[9px] font-bold text-neutral-400 uppercase mb-1">Abonos / Pagos registrados</span>
+                                              <span className="font-mono text-[11px] font-bold text-neutral-600 uppercase mb-1">Abonos / Pagos registrados</span>
                                               {abonosInv.map(ab => (
-                                                <div key={ab.id} className="flex items-center gap-3 text-[10px] font-mono">
-                                                  <span className="text-neutral-500 w-24">{ab.fecha}</span>
+                                                <div key={ab.id} className="flex items-center gap-3 text-[11px] font-mono">
+                                                  <span className="text-neutral-500 w-24">{fechaCorta(ab.fecha)}</span>
                                                   <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
                                                   <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
                                                   <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
@@ -4891,7 +4919,7 @@ export default function AppHome() {
                                 })}
                               {invoices.filter(i => i.tipo === 'cxc' && (showAllCxC || i.saldo_pendiente > 0)).length === 0 && (
                                 <tr>
-                                  <td colSpan={7} className="p-6 text-center font-mono text-xs text-neutral-400">
+                                  <td colSpan={7} className="p-6 text-center font-mono text-xs text-neutral-600">
                                     {showAllCxC ? 'No hay facturas de venta registradas.' : 'No hay facturas con saldo pendiente. '}
                                     {!showAllCxC && (
                                       <button type="button" onClick={() => setShowAllCxC(true)} className="underline text-brand-blue ml-1">Ver todas</button>
@@ -4967,7 +4995,7 @@ export default function AppHome() {
                                         </td>
                                         <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
                                         <td className="p-3 text-center">
-                                          <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
+                                          <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                             inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
                                             inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
                                             'bg-brand-yellow/20 text-neutral-700 border-neutral-400'
@@ -4978,7 +5006,7 @@ export default function AppHome() {
                                         <td className="p-3 text-center">
                                           <div className="flex items-center justify-center gap-1.5">
                                             {abonosInv.length > 0 && (
-                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[10px]" title="Ver pagos">
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver pagos">
                                                 {expanded ? '▲' : `▼ ${abonosInv.length}`}
                                               </button>
                                             )}
@@ -4986,7 +5014,7 @@ export default function AppHome() {
                                               <button
                                                 type="button"
                                                 onClick={() => openCxpAbono({ id: inv.id, numero: inv.numero, total: inv.total, saldo: inv.saldo_pendiente })}
-                                                className="border-2 border-black bg-brand-blue text-white font-mono text-[10px] font-bold px-2 py-1 hover:opacity-90"
+                                                className="border-2 border-black bg-brand-blue text-white font-mono text-[11px] font-bold px-2 py-1 hover:opacity-90"
                                                 title="Registrar pago"
                                               >
                                                 $ Pagar
@@ -5001,10 +5029,10 @@ export default function AppHome() {
                                         <tr key={`${inv.id}-abonos`} className="bg-neutral-50 border-b border-neutral-200">
                                           <td colSpan={7} className="px-6 py-2">
                                             <div className="flex flex-col gap-1">
-                                              <span className="font-mono text-[9px] font-bold text-neutral-400 uppercase mb-1">Pagos registrados</span>
+                                              <span className="font-mono text-[11px] font-bold text-neutral-600 uppercase mb-1">Pagos registrados</span>
                                               {abonosInv.map(ab => (
-                                                <div key={ab.id} className="flex items-center gap-3 text-[10px] font-mono">
-                                                  <span className="text-neutral-500 w-24">{ab.fecha}</span>
+                                                <div key={ab.id} className="flex items-center gap-3 text-[11px] font-mono">
+                                                  <span className="text-neutral-500 w-24">{fechaCorta(ab.fecha)}</span>
                                                   <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
                                                   <span className="font-bold text-brand-red">-${ab.monto.toLocaleString('es-CO')}</span>
                                                   <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar pago"><Trash2 size={12} /></button>
@@ -5076,11 +5104,11 @@ export default function AppHome() {
                                     <td className="p-3 font-mono font-bold text-black">
                                       <button type="button" onClick={() => setSelectedCompra(oc)} className="hover:underline text-brand-blue">{oc.numero}</button>
                                     </td>
-                                    <td className="p-3 font-semibold text-black">{prov?.nombre ?? <span className="text-neutral-400 italic">Sin proveedor</span>}</td>
+                                    <td className="p-3 font-semibold text-black">{prov?.nombre ?? <span className="text-neutral-600 italic">Sin proveedor</span>}</td>
                                     <td className="p-3 text-right font-mono text-neutral-700">${oc.total.toLocaleString('es-CO')}</td>
                                     <td className="p-3 text-center font-mono text-neutral-500">{oc.fechaEsperada ?? '—'}</td>
                                     <td className="p-3 text-center">
-                                      <span className={`inline-block border text-[10px] font-mono font-bold px-1.5 py-0.5 ${
+                                      <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                         oc.estado === 'recibido' ? 'bg-green-100 text-green-800 border-green-400' :
                                         oc.estado === 'cancelado' ? 'bg-neutral-100 text-neutral-500 border-neutral-400' :
                                         oc.estado === 'enviado' ? 'bg-brand-blue/10 text-brand-blue border-brand-blue' :
@@ -5092,11 +5120,11 @@ export default function AppHome() {
                                     </td>
                                     <td className="p-3 text-center font-mono text-xs">
                                       {cxpFactura ? (
-                                        <span className={`text-[10px] font-bold ${cxpFactura.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
+                                        <span className={`text-[11px] font-bold ${cxpFactura.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
                                           {cxpFactura.numero}
                                         </span>
                                       ) : (
-                                        <span className="text-neutral-400 text-[10px]">—</span>
+                                        <span className="text-neutral-600 text-[11px]">—</span>
                                       )}
                                     </td>
                                     <td className="p-3 text-center">
@@ -5107,7 +5135,7 @@ export default function AppHome() {
                                             type="button"
                                             disabled={transicionandoCompra}
                                             onClick={() => void handleTransicionarCompra(oc, est)}
-                                            className="neo-btn px-1.5 py-1 text-[10px] font-mono hover:bg-brand-blue/10 disabled:opacity-50"
+                                            className="neo-btn px-1.5 py-1 text-[11px] font-mono hover:bg-brand-blue/10 disabled:opacity-50"
                                             title={`Pasar a ${est}`}
                                           >
                                             {est === 'enviado' ? '→ Enviado' :
@@ -5124,7 +5152,7 @@ export default function AppHome() {
                               })}
                               {compras.length === 0 && !comprasCargando && (
                                 <tr>
-                                  <td colSpan={7} className="p-6 text-center font-mono text-xs text-neutral-400">
+                                  <td colSpan={7} className="p-6 text-center font-mono text-xs text-neutral-600">
                                     No hay órdenes de compra registradas.
                                     <button type="button" onClick={() => setShowCreateCompra(true)} className="ml-1 underline text-brand-blue">Crear la primera</button>
                                   </td>
@@ -5157,7 +5185,7 @@ export default function AppHome() {
                         {gastosCargando && <p className="text-xs text-neutral-500 font-mono p-4">Cargando gastos…</p>}
                         {gastosError && <p className="text-xs text-brand-red font-mono p-4">{gastosError}</p>}
 
-                        <p className="sm:hidden text-[9px] font-mono text-neutral-400 text-center">← desliza para ver más →</p>
+                        <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
                         <div className="neo-card bg-white p-0 overflow-x-auto">
                           <table className="w-full min-w-[700px] text-left border-collapse text-xs">
                             <thead>
@@ -5178,14 +5206,14 @@ export default function AppHome() {
                                   <tr key={g.id} className="border-b border-neutral-200 hover:bg-neutral-50">
                                     <td className="p-3 font-semibold text-black">{g.descripcion}</td>
                                     <td className="p-3">
-                                      <span className="inline-block border border-neutral-300 text-[10px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
+                                      <span className="inline-block border border-neutral-300 text-[11px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
                                         {LABEL_CATEGORIA_GASTO[g.categoria]}
                                       </span>
                                     </td>
                                     <td className="p-3 text-right font-mono font-bold text-brand-red">
                                       -${g.monto.toLocaleString('es-CO')}
                                     </td>
-                                    <td className="p-3 text-center font-mono text-neutral-600">{g.fecha}</td>
+                                    <td className="p-3 text-center font-mono text-neutral-600">{fechaCorta(g.fecha)}</td>
                                     <td className="p-3 text-neutral-600">{g.medioPago ?? '—'}</td>
                                     <td className="p-3 text-neutral-600">{cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—'}</td>
                                     <td className="p-3 text-center">
@@ -5233,7 +5261,7 @@ export default function AppHome() {
                         {ingresosCargando && <p className="text-xs text-neutral-500 font-mono p-4">Cargando ingresos…</p>}
                         {ingresosError && <p className="text-xs text-brand-red font-mono p-4">{ingresosError}</p>}
 
-                        <p className="sm:hidden text-[9px] font-mono text-neutral-400 text-center">← desliza para ver más →</p>
+                        <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
                         <div className="neo-card bg-white p-0 overflow-x-auto">
                           <table className="w-full min-w-[700px] text-left border-collapse text-xs">
                             <thead>
@@ -5254,7 +5282,7 @@ export default function AppHome() {
                                   <tr key={ing.id} className="border-b border-neutral-200 hover:bg-neutral-50">
                                     <td className="p-3 font-semibold text-black">{ing.descripcion}</td>
                                     <td className="p-3">
-                                      <span className="inline-block border border-neutral-300 text-[10px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
+                                      <span className="inline-block border border-neutral-300 text-[11px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
                                         {ing.categoria.replace('_', ' ').toUpperCase()}
                                       </span>
                                     </td>
@@ -5365,7 +5393,7 @@ export default function AppHome() {
                                 }`}
                               >
                                 <div className="font-bold text-black text-xs">{c.nombre}</div>
-                                {c.nit && <div className="text-[10px] text-neutral-500 font-mono mt-1">{c.nit}</div>}
+                                {c.nit && <div className="text-[11px] text-neutral-500 font-mono mt-1">{c.nit}</div>}
                                 {(() => {
                                   const pedidosCliente = orders.filter(o => o.cliente_id === c.id);
                                   const saldoCliente = invoices
@@ -5373,10 +5401,10 @@ export default function AppHome() {
                                     .reduce((a, b) => a + b.saldo_pendiente, 0);
                                   return (
                                     <div className="flex justify-between items-center mt-3">
-                                      <span className="text-[10px] text-neutral-600 font-mono">
+                                      <span className="text-[11px] text-neutral-600 font-mono">
                                         Pedidos: {pedidosCliente.length}
                                       </span>
-                                      <span className={`text-[10px] font-mono font-bold ${saldoCliente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
+                                      <span className={`text-[11px] font-mono font-bold ${saldoCliente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
                                         Saldo: ${saldoCliente.toLocaleString('es-CO')}
                                       </span>
                                     </div>
@@ -5394,8 +5422,8 @@ export default function AppHome() {
                                 }`}
                               >
                                 <div className="font-bold text-black text-xs">{s.nombre}</div>
-                                <div className="text-[10px] text-neutral-500 font-mono mt-1">NIT: {s.nit}</div>
-                                <div className="text-[10px] text-neutral-700 mt-2">Contacto: {s.contacto}</div>
+                                <div className="text-[11px] text-neutral-500 font-mono mt-1">NIT: {s.nit}</div>
+                                <div className="text-[11px] text-neutral-700 mt-2">Contacto: {s.contacto}</div>
                               </button>
                             ))
                         }
@@ -5412,7 +5440,7 @@ export default function AppHome() {
                         
                         if (!client && !supp) {
                           return (
-                            <div className="neo-card bg-white h-full flex items-center justify-center text-xs text-neutral-400 italic">
+                            <div className="neo-card bg-white h-full flex items-center justify-center text-xs text-neutral-600 italic">
                               Selecciona un contacto del panel izquierdo
                             </div>
                           );
@@ -5425,11 +5453,11 @@ export default function AppHome() {
                             <div className="border-b border-black pb-4 flex items-start justify-between gap-3">
                               <div>
                                 <h3 className="text-base font-bold text-black">{client?.nombre ?? supp?.nombre}</h3>
-                                <span className="font-mono text-[10px] text-neutral-500 block mt-1">
+                                <span className="font-mono text-[11px] text-neutral-500 block mt-1">
                                   {client ? (client.nit ? `${client.nit} · ` : '') : supp?.nit ? `NIT: ${supp.nit} · ` : ''}
                                   Email: {client?.email ?? supp?.email} · Teléfono: {client?.telefono ?? supp?.telefono}
                                 </span>
-                                <span className="font-mono text-[10px] text-neutral-500 block">
+                                <span className="font-mono text-[11px] text-neutral-500 block">
                                   Dirección: {client?.direccion ?? supp?.direccion}
                                 </span>
                               </div>
@@ -5466,11 +5494,11 @@ export default function AppHome() {
                                   <div className="border-2 border-black p-4 bg-neutral-50 flex items-center gap-4">
                                     <DollarSign className="text-brand-red shrink-0" size={28} />
                                     <div>
-                                      <div className="font-mono text-[10px] text-neutral-500 font-bold">SALDO PENDIENTE (CxC)</div>
+                                      <div className="font-mono text-[11px] text-neutral-500 font-bold">SALDO PENDIENTE (CxC)</div>
                                       <div className={`font-mono text-sm font-black mt-0.5 ${saldoCliente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
                                         ${saldoCliente.toLocaleString('es-CO')} COP
                                       </div>
-                                      <div className="text-[10px] text-neutral-500 mt-1">
+                                      <div className="text-[11px] text-neutral-500 mt-1">
                                         De {facturasCliente.length} {facturasCliente.length === 1 ? 'factura emitida' : 'facturas emitidas'}
                                       </div>
                                     </div>
@@ -5481,16 +5509,16 @@ export default function AppHome() {
                                       PEDIDOS DEL CLIENTE ({pedidosCliente.length})
                                     </h4>
                                     {pedidosCliente.length === 0 ? (
-                                      <p className="text-xs text-neutral-400 italic font-mono py-1">Este cliente todavía no tiene pedidos.</p>
+                                      <p className="text-xs text-neutral-600 italic font-mono py-1">Este cliente todavía no tiene pedidos.</p>
                                     ) : (
                                       <div className="flex flex-col gap-1.5 max-h-64 overflow-y-auto pr-1">
                                         {pedidosCliente.map((ord) => (
                                           <div key={ord.id} className="flex items-center justify-between border border-black/15 bg-white px-2.5 py-1.5 text-[11px] font-mono">
                                             <div className="flex flex-col min-w-0 flex-1 mr-2">
                                               <span className="font-bold text-black truncate">{getOrderDisplayName(ord)}</span>
-                                              <span className="text-neutral-500 text-[10px]">{ord.numero} · {new Date(ord.fecha).toLocaleDateString('es-CO')}</span>
+                                              <span className="text-neutral-500 text-[11px]">{ord.numero} · {new Date(ord.fecha).toLocaleDateString('es-CO')}</span>
                                             </div>
-                                            <span className="border border-black/20 bg-neutral-50 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-neutral-700">
+                                            <span className="border border-black/20 bg-neutral-50 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-neutral-700">
                                               {ord.estado.replace('_', ' ')}
                                             </span>
                                             <span className="font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
@@ -5527,7 +5555,7 @@ export default function AppHome() {
                                   <button
                                     type="button"
                                     onClick={() => void fetchCrmNotas()}
-                                    className="neo-btn text-[10px] px-2 py-1"
+                                    className="neo-btn text-[11px] px-2 py-1"
                                   >
                                     Reintentar
                                   </button>
@@ -5537,7 +5565,7 @@ export default function AppHome() {
                               {/* Timeline list */}
                               <div className="space-y-3 max-h-60 overflow-y-auto pr-1">
                                 {crmNotasCargando && (
-                                  <div className="text-xs text-neutral-400 italic text-center py-4 font-mono">
+                                  <div className="text-xs text-neutral-600 italic text-center py-4 font-mono">
                                     Cargando bitácora...
                                   </div>
                                 )}
@@ -5545,15 +5573,15 @@ export default function AppHome() {
                                 {!crmNotasCargando && crmNotas.map((note, idx) => (
                                   <div key={idx} className="border border-neutral-300 p-2.5 bg-neutral-50 flex flex-col gap-1 text-xs">
                                     <div className="flex justify-between items-center">
-                                      <span className="font-bold text-neutral-500 font-mono text-[9px]">INTERACCIÓN #{idx+1}</span>
-                                      <span className="font-mono text-[10px] text-neutral-500">{note.fecha}</span>
+                                      <span className="font-bold text-neutral-500 font-mono text-[11px]">INTERACCIÓN #{idx+1}</span>
+                                      <span className="font-mono text-[11px] text-neutral-500">{note.fecha}</span>
                                     </div>
                                     <p className="text-black text-xs leading-relaxed">{note.nota}</p>
                                   </div>
                                 ))}
 
                                 {!crmNotasCargando && crmNotas.length === 0 && (
-                                  <div className="text-xs text-neutral-400 italic text-center py-4">
+                                  <div className="text-xs text-neutral-600 italic text-center py-4">
                                     No hay interacciones registradas para este contacto
                                   </div>
                                 )}
@@ -5670,7 +5698,7 @@ export default function AppHome() {
                               const key = d.toISOString().slice(0, 10);
                               const esHoy = key === hoyStr;
                               return (
-                                <div key={key} className={`font-mono text-[10px] font-bold text-center py-2 border-r border-black last:border-r-0 ${esHoy ? 'bg-brand-blue text-white' : 'text-neutral-500'}`}>
+                                <div key={key} className={`font-mono text-[11px] font-bold text-center py-2 border-r border-black last:border-r-0 ${esHoy ? 'bg-brand-blue text-white' : 'text-neutral-500'}`}>
                                   {diasSemana[d.getDay()]} {d.getDate()}/{d.getMonth() + 1}
                                 </div>
                               );
@@ -5693,7 +5721,7 @@ export default function AppHome() {
                                         type="button"
                                         onClick={() => { setEventoPopup(evento); setEventoPopupDesc(evento.descripcion ?? ''); }}
                                         title="Click para ver detalle y cambiar estado"
-                                        className={`text-left text-[9px] font-mono font-bold px-1.5 py-1 border-[1.5px] border-black truncate flex items-center gap-1 ${
+                                        className={`text-left text-[11px] font-mono font-bold px-1.5 py-1 border-[1.5px] border-black truncate flex items-center gap-1 ${
                                           evento.tipo === 'nota' ? 'bg-brand-yellow/30' :
                                           evento.tipo === 'recordatorio' ? 'bg-brand-blue/20' :
                                           'bg-brand-red/15'
@@ -5706,7 +5734,7 @@ export default function AppHome() {
                                       </button>
                                     ))}
                                     {eventos.length === 0 && (
-                                      <span className="text-[9px] font-mono text-neutral-300 italic">—</span>
+                                      <span className="text-[11px] font-mono text-neutral-300 italic">—</span>
                                     )}
                                   </div>
                                 </div>
@@ -5724,14 +5752,14 @@ export default function AppHome() {
                             .map((evento) => (
                               <div key={evento.id} className="flex items-center justify-between gap-3 border-b border-neutral-200 last:border-b-0 py-2 text-xs">
                                 <div className="flex items-center gap-2 min-w-0">
-                                  <span className={`inline-block border-[1.5px] border-black text-[9px] font-mono font-bold px-1.5 py-0.5 shrink-0 ${
+                                  <span className={`inline-block border-[1.5px] border-black text-[11px] font-mono font-bold px-1.5 py-0.5 shrink-0 ${
                                     evento.tipo === 'nota' ? 'bg-brand-yellow/30' :
                                     evento.tipo === 'recordatorio' ? 'bg-brand-blue/20' :
                                     'bg-brand-red/15'
                                   }`}>
                                     {evento.tipo.toUpperCase()}
                                   </span>
-                                  <span className="font-mono text-neutral-500 text-[10px] shrink-0">{new Date(evento.fecha).toLocaleDateString('es-CO')}</span>
+                                  <span className="font-mono text-neutral-500 text-[11px] shrink-0">{new Date(evento.fecha).toLocaleDateString('es-CO')}</span>
                                   <span className="font-semibold text-black truncate">{evento.titulo}</span>
                                   {evento.canal && (
                                     <span className="text-neutral-500 shrink-0">
@@ -5746,9 +5774,9 @@ export default function AppHome() {
                                   <div className="flex items-center gap-1">
                                     {ESTADO_ANTERIOR_LOCAL[evento.estado] !== null && (
                                       <button type="button" onClick={() => void handleRetrocederEventEstado(evento)}
-                                        className="text-neutral-400 hover:text-black font-bold text-xs" title="Retroceder estado">‹</button>
+                                        className="text-neutral-600 hover:text-black font-bold text-xs" title="Retroceder estado">‹</button>
                                     )}
-                                    <span className={`font-mono text-[9px] font-bold border-[1.5px] border-black px-2 py-1 ${
+                                    <span className={`font-mono text-[11px] font-bold border-[1.5px] border-black px-2 py-1 ${
                                       evento.estado === 'idea' ? 'bg-neutral-100 text-neutral-600' :
                                       evento.estado === 'grabado' ? 'bg-orange-100 text-orange-700 border-orange-400' :
                                       evento.estado === 'editado' ? 'bg-brand-yellow/30 text-neutral-700' :
@@ -5760,13 +5788,13 @@ export default function AppHome() {
                                     </span>
                                     {TRANSICIONES_EVENTO_LOCAL[evento.estado] !== null && (
                                       <button type="button" onClick={() => void handleAvanzarEventEstado(evento)}
-                                        className="text-neutral-400 hover:text-black font-bold text-xs" title={`Avanzar a ${TRANSICIONES_EVENTO_LOCAL[evento.estado]}`}>›</button>
+                                        className="text-neutral-600 hover:text-black font-bold text-xs" title={`Avanzar a ${TRANSICIONES_EVENTO_LOCAL[evento.estado]}`}>›</button>
                                     )}
                                   </div>
                                   <button
                                     type="button"
                                     onClick={() => void handleDeleteCalendarEvent(evento.id)}
-                                    className="text-neutral-400 hover:text-brand-red"
+                                    className="text-neutral-600 hover:text-brand-red"
                                     title="Eliminar"
                                   >
                                     <Trash2 size={14} />
@@ -5802,9 +5830,9 @@ export default function AppHome() {
 
                         {/* Lista de notas */}
                         {notasCargando ? (
-                          <p className="text-xs text-neutral-400 font-mono italic">Cargando notas...</p>
+                          <p className="text-xs text-neutral-600 font-mono italic">Cargando notas...</p>
                         ) : notasInternas.length === 0 ? (
-                          <div className="neo-card bg-white text-center py-12 text-xs text-neutral-400 font-mono italic">
+                          <div className="neo-card bg-white text-center py-12 text-xs text-neutral-600 font-mono italic">
                             Todavía no hay notas. Crea la primera con el botón de arriba.
                           </div>
                         ) : (
@@ -5819,7 +5847,7 @@ export default function AppHome() {
                               if (notasGrupo.length === 0) return null;
                               return (
                                 <div key={grupo} className="flex flex-col gap-1.5">
-                                  <div className="font-mono text-[10px] font-bold text-neutral-400 uppercase tracking-widest px-1 pt-2">
+                                  <div className="font-mono text-[11px] font-bold text-neutral-600 uppercase tracking-widest px-1 pt-2">
                                     {grupo === 'pendientes' ? '● Pendientes' : grupo === 'sin_checkbox' ? '○ Notas' : '✓ Completadas'}
                                   </div>
                                   {notasGrupo.map((nota) => (
@@ -5842,7 +5870,7 @@ export default function AppHome() {
                                           onClick={() => void handleToggleNotaCompletada(nota)}
                                           className={`mt-0.5 shrink-0 w-4 h-4 border-2 border-black flex items-center justify-center hover:opacity-70 ${nota.completada ? 'bg-black' : 'bg-white'}`}
                                         >
-                                          {nota.completada && <span className="text-white text-[9px] font-black leading-none">✓</span>}
+                                          {nota.completada && <span className="text-white text-[11px] font-black leading-none">✓</span>}
                                         </button>
                                       )}
 
@@ -5851,21 +5879,21 @@ export default function AppHome() {
                                         {nota.tipoContenido === 'lista' && nota.contenido ? (
                                           <div className="mt-1.5 flex flex-col gap-0.5">
                                             {sortChecklist(parsearChecklist(nota.contenido)).slice(0, 4).map(item => (
-                                              <div key={item.id} className={`flex items-center gap-1.5 text-[11px] ${item.checked ? 'text-neutral-400 line-through' : 'text-neutral-700'}`}>
+                                              <div key={item.id} className={`flex items-center gap-1.5 text-[11px] ${item.checked ? 'text-neutral-600 line-through' : 'text-neutral-700'}`}>
                                                 <span className={`w-3 h-3 border shrink-0 flex items-center justify-center ${item.checked ? 'bg-black border-black' : 'border-black/40 bg-white'}`}>
-                                                  {item.checked && <span className="text-white text-[7px] font-black">✓</span>}
+                                                  {item.checked && <span className="text-white text-[11px] font-black">✓</span>}
                                                 </span>
                                                 {item.texto || <span className="italic text-neutral-300">sin texto</span>}
                                               </div>
                                             ))}
                                             {parsearChecklist(nota.contenido).length > 4 && (
-                                              <div className="text-[10px] text-neutral-400">+{parsearChecklist(nota.contenido).length - 4} más</div>
+                                              <div className="text-[11px] text-neutral-600">+{parsearChecklist(nota.contenido).length - 4} más</div>
                                             )}
                                           </div>
                                         ) : nota.contenido ? (
                                           <div className={`text-[11px] text-neutral-600 mt-1 line-clamp-2 ${nota.completada ? 'opacity-50' : ''}`} dangerouslySetInnerHTML={{ __html: nota.contenido }} />
                                         ) : null}
-                                        <div className="text-[10px] text-neutral-400 font-mono mt-1.5">
+                                        <div className="text-[11px] text-neutral-600 font-mono mt-1.5">
                                           {new Date(nota.createdAt).toLocaleDateString('es-CO', { day: '2-digit', month: 'short', year: 'numeric' })}
                                           {nota.tipoContenido === 'lista' && <span className="ml-2 border border-black/20 px-1">☑ lista</span>}
                                           {nota.tieneCheckbox && <span className="ml-2 border border-black/20 px-1">global ✓</span>}
@@ -5965,11 +5993,11 @@ export default function AppHome() {
                                         className="w-4 h-4 border-2 border-black accent-black shrink-0" />
                                       <input type="text" value={item.texto} placeholder="Elemento de la lista..."
                                         onChange={(e) => updateItem(item.id, { texto: e.target.value })}
-                                        className={`flex-1 bg-transparent border-none outline-none text-sm ${item.checked ? 'line-through text-neutral-400' : ''}`} />
-                                      <button type="button" onClick={() => removeItem(item.id)} className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-brand-red transition-opacity">×</button>
+                                        className={`flex-1 bg-transparent border-none outline-none text-sm ${item.checked ? 'line-through text-neutral-600' : ''}`} />
+                                      <button type="button" onClick={() => removeItem(item.id)} className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-brand-red transition-opacity">×</button>
                                     </div>
                                   ))}
-                                  <button type="button" onClick={addItem} className="text-left text-xs text-neutral-400 hover:text-black flex items-center gap-1.5 py-1 px-2">
+                                  <button type="button" onClick={addItem} className="text-left text-xs text-neutral-600 hover:text-black flex items-center gap-1.5 py-1 px-2">
                                     <Plus size={12} /> Añadir elemento
                                   </button>
                                 </div>
@@ -6064,11 +6092,11 @@ export default function AppHome() {
                                         className="w-4 h-4 border-2 border-black accent-black shrink-0" />
                                       <input type="text" value={item.texto} placeholder="Elemento..."
                                         onChange={(e) => updateItem(item.id, { texto: e.target.value })}
-                                        className={`flex-1 bg-transparent border-none outline-none text-sm ${item.checked ? 'line-through text-neutral-400' : ''}`} />
-                                      <button type="button" onClick={() => removeItem(item.id)} className="opacity-0 group-hover:opacity-100 text-neutral-400 hover:text-brand-red transition-opacity">×</button>
+                                        className={`flex-1 bg-transparent border-none outline-none text-sm ${item.checked ? 'line-through text-neutral-600' : ''}`} />
+                                      <button type="button" onClick={() => removeItem(item.id)} className="opacity-0 group-hover:opacity-100 text-neutral-600 hover:text-brand-red transition-opacity">×</button>
                                     </div>
                                   ))}
-                                  <button type="button" onClick={addItem} className="text-left text-xs text-neutral-400 hover:text-black flex items-center gap-1.5 py-1 px-2">
+                                  <button type="button" onClick={addItem} className="text-left text-xs text-neutral-600 hover:text-black flex items-center gap-1.5 py-1 px-2">
                                     <Plus size={12} /> Añadir elemento
                                   </button>
                                 </div>
@@ -6132,7 +6160,7 @@ export default function AppHome() {
                             <div className="bg-white border-2 border-black p-3 flex flex-col gap-3">
                               <h3 className="font-mono font-bold text-xs uppercase border-b border-black pb-2">Planner de Contenido — 4 semanas</h3>
                               {postsSemana.length === 0 ? (
-                                <p className="text-xs font-mono text-neutral-400 text-center py-4">
+                                <p className="text-xs font-mono text-neutral-600 text-center py-4">
                                   Sin posts planeados — crea uno desde el Calendario con tipo &ldquo;Post planeado&rdquo;.
                                 </p>
                               ) : (
@@ -6144,22 +6172,22 @@ export default function AppHome() {
                                     return (
                                       <div key={estado} className={`w-44 shrink-0 border-2 ${estadoColores[estado] ?? 'bg-white border-black'} flex flex-col`}>
                                         <div className="px-2 py-1.5 border-b border-black bg-white/70">
-                                          <div className="font-mono text-[10px] font-bold uppercase">{estado}</div>
-                                          <div className="font-mono text-[10px] text-neutral-500">{columna.length} posts</div>
+                                          <div className="font-mono text-[11px] font-bold uppercase">{estado}</div>
+                                          <div className="font-mono text-[11px] text-neutral-500">{columna.length} posts</div>
                                         </div>
                                         <div className="flex flex-col gap-1.5 p-1.5 max-h-60 overflow-y-auto">
                                           {columna.length === 0 && (
-                                            <p className="text-[9px] text-neutral-400 font-mono italic text-center py-3">Vacío</p>
+                                            <p className="text-[11px] text-neutral-600 font-mono italic text-center py-3">Vacío</p>
                                           )}
                                           {columna.map(ev => (
-                                            <div key={ev.id} className="bg-white border border-black p-1.5 flex flex-col gap-1 text-[9px]">
+                                            <div key={ev.id} className="bg-white border border-black p-1.5 flex flex-col gap-1 text-[11px]">
                                               <div className="flex items-center gap-1">
                                                 {ev.canal === 'instagram' && <Instagram size={10} />}
                                                 {ev.canal === 'facebook' && <Facebook size={10} />}
                                                 {ev.canal === 'tiktok' && <TikTokIcon size={10} />}
                                                 <span className="font-bold text-black truncate leading-tight">{ev.titulo}</span>
                                               </div>
-                                              <div className="font-mono text-neutral-400">{new Date(ev.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}</div>
+                                              <div className="font-mono text-neutral-600">{new Date(ev.fecha).toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}</div>
                                               <div className="flex gap-1">
                                                 {anterior && (
                                                   <button type="button" onClick={() => void handlePopupCambiarEstado(ev, anterior)}
@@ -6230,21 +6258,21 @@ export default function AppHome() {
                               {periodo.tieneDatos ? (
                                 <>
                                   <div className="mt-0.5">
-                                    <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Ventas</span>
+                                    <span className={`font-mono text-[11px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-600'}`}>Ventas</span>
                                     <span className={`font-black text-sm block leading-tight ${isSelected ? 'text-white' : 'text-green-700'}`}>${periodo.ventas.toLocaleString('es-CO')}</span>
                                   </div>
                                   <div>
-                                    <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Pedidos</span>
+                                    <span className={`font-mono text-[11px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-600'}`}>Pedidos</span>
                                     <span className={`font-bold text-xs block ${isSelected ? 'text-white' : 'text-black'}`}>{periodo.pedidos}</span>
                                   </div>
                                   <div>
-                                    <span className={`font-mono text-[9px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-400'}`}>Ganancia aprox.</span>
+                                    <span className={`font-mono text-[11px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-600'}`}>Ganancia aprox.</span>
                                     <span className={`font-bold text-xs block ${isSelected ? 'text-white' : periodo.gananciaAprox >= 0 ? 'text-green-700' : 'text-red-600'}`}>${periodo.gananciaAprox.toLocaleString('es-CO')}</span>
                                   </div>
-                                  <span className={`font-mono text-[9px] mt-0.5 ${isSelected ? 'text-neutral-400' : 'text-neutral-400'}`}>{isSelected ? '▲ cerrar' : '▼ ver detalle'}</span>
+                                  <span className={`font-mono text-[11px] mt-0.5 ${isSelected ? 'text-neutral-600' : 'text-neutral-600'}`}>{isSelected ? '▲ cerrar' : '▼ ver detalle'}</span>
                                 </>
                               ) : (
-                                <span className={`font-mono text-[10px] italic mt-1 ${isSelected ? 'text-neutral-400' : 'text-neutral-300'}`}>Sin datos</span>
+                                <span className={`font-mono text-[11px] italic mt-1 ${isSelected ? 'text-neutral-600' : 'text-neutral-300'}`}>Sin datos</span>
                               )}
                             </button>
                           );
@@ -6269,7 +6297,7 @@ export default function AppHome() {
                           <button
                             type="button"
                             onClick={() => { setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); }}
-                            className={`font-mono text-[10px] font-bold px-3 py-1 border ${!reportesSemanaSel ? 'bg-black text-white border-black' : 'bg-white border-black hover:bg-neutral-100'}`}
+                            className={`font-mono text-[11px] font-bold px-3 py-1 border ${!reportesSemanaSel ? 'bg-black text-white border-black' : 'bg-white border-black hover:bg-neutral-100'}`}
                           >
                             Todo el mes
                           </button>
@@ -6278,7 +6306,7 @@ export default function AppHome() {
                               key={sem.num}
                               type="button"
                               onClick={() => { setReportesSemanaSel(sem); void fetchReportesDetalleSemana(sem); setReportesIA(null); }}
-                              className={`font-mono text-[10px] font-bold px-3 py-1 border ${reportesSemanaSel?.num === sem.num ? 'bg-black text-white border-black' : 'bg-white border-black hover:bg-neutral-100'}`}
+                              className={`font-mono text-[11px] font-bold px-3 py-1 border ${reportesSemanaSel?.num === sem.num ? 'bg-black text-white border-black' : 'bg-white border-black hover:bg-neutral-100'}`}
                             >
                               {sem.label}
                             </button>
@@ -6407,7 +6435,7 @@ export default function AppHome() {
                                   <button type="button" disabled={exportandoPDF} onClick={() => void exportarPDF()} className="neo-btn text-[11px] px-3 py-1.5 flex items-center gap-1.5 disabled:opacity-50">
                                     {exportandoPDF ? <><RefreshCw size={11} className="animate-spin" /> Generando PDF…</> : <><FileSpreadsheet size={12} /> Exportar PDF</>}
                                   </button>
-                                  {exportarPDFError && <p className="text-[10px] font-mono text-brand-red text-right max-w-xs">{exportarPDFError}</p>}
+                                  {exportarPDFError && <p className="text-[11px] font-mono text-brand-red text-right max-w-xs">{exportarPDFError}</p>}
                                 </div>
                                 <div ref={reporteCapturaRef} className="flex flex-col gap-6 bg-white">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
@@ -6421,30 +6449,30 @@ export default function AppHome() {
                                     { label: 'UTILIDAD NETA', value: `$${d.utilidadNeta.toLocaleString('es-CO')}`, sub: `Gastos: $${d.gastos.total.toLocaleString('es-CO')}`, delta: null, color: d.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red', warn: null },
                                   ] as { label: string; value: string; sub: string; delta: number | null; color: string; warn: string | null }[]).map((kpi) => (
                                     <div key={kpi.label} className="border border-black p-3 flex flex-col gap-1 bg-neutral-50">
-                                      <span className="font-mono text-[10px] text-neutral-500 font-bold">{kpi.label}</span>
+                                      <span className="font-mono text-[11px] text-neutral-500 font-bold">{kpi.label}</span>
                                       <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
-                                      <span className="text-[10px] font-mono text-neutral-500">{kpi.sub}</span>
-                                      {kpi.delta !== null && <span className={`text-[10px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs anterior</span>}
-                                      {kpi.warn && <span className="text-[10px] font-mono font-bold text-amber-700 leading-tight">⚠ {kpi.warn}</span>}
+                                      <span className="text-[11px] font-mono text-neutral-500">{kpi.sub}</span>
+                                      {kpi.delta !== null && <span className={`text-[11px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs anterior</span>}
+                                      {kpi.warn && <span className="text-[11px] font-mono font-bold text-amber-700 leading-tight">⚠ {kpi.warn}</span>}
                                     </div>
                                   ))}
                                 </div>
 
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
                                   <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[10px] text-neutral-500 font-bold">CxC COBRADA</span>
+                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">CxC COBRADA</span>
                                     <span className="text-lg font-black text-green-700 block mt-1">${d.cxcCobrada.toLocaleString('es-CO')}</span>
-                                    <span className="text-[10px] font-mono text-neutral-400">Abonos de clientes</span>
+                                    <span className="text-[11px] font-mono text-neutral-600">Abonos de clientes</span>
                                   </div>
                                   <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[10px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
+                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
                                     <span className="text-lg font-black text-black block mt-1">${d.ingresosManuales.toLocaleString('es-CO')}</span>
-                                    <span className="text-[10px] font-mono text-neutral-400">Capital, préstamos, etc.</span>
+                                    <span className="text-[11px] font-mono text-neutral-600">Capital, préstamos, etc.</span>
                                   </div>
                                   <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[10px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
+                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
                                     <span className="text-lg font-black text-black block mt-1">${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
-                                    <span className="text-[10px] font-mono text-neutral-400">Por pedido</span>
+                                    <span className="text-[11px] font-mono text-neutral-600">Por pedido</span>
                                   </div>
                                 </div>
 
@@ -6454,10 +6482,10 @@ export default function AppHome() {
                                     <div className="space-y-2">
                                       {d.topProductos.map((p, i) => (
                                         <div key={p.nombre} className="flex items-center gap-3 text-xs">
-                                          <span className="font-mono font-black text-neutral-400 w-4">{i + 1}</span>
+                                          <span className="font-mono font-black text-neutral-600 w-4">{i + 1}</span>
                                           <div className="flex-1 min-w-0">
                                             <span className="font-bold text-black truncate block">{p.nombre}</span>
-                                            {p.categoria && <span className="text-[10px] text-neutral-400 font-mono">{p.categoria}</span>}
+                                            {p.categoria && <span className="text-[11px] text-neutral-600 font-mono">{p.categoria}</span>}
                                           </div>
                                           <span className="font-mono text-neutral-500 shrink-0">{p.unidades} uds</span>
                                           <span className="font-mono font-bold text-black shrink-0">${p.ventasTotal.toLocaleString('es-CO')}</span>
@@ -6482,18 +6510,18 @@ export default function AppHome() {
                                         return (
                                           <div key={c.clienteId} className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-2 text-xs border-b border-neutral-100 sm:border-0 pb-1.5 sm:pb-0 last:border-0">
                                             <div className="flex items-center gap-2 min-w-0">
-                                              <span className="font-mono text-[10px] text-neutral-400 w-4 shrink-0">{i+1}</span>
+                                              <span className="font-mono text-[11px] text-neutral-600 w-4 shrink-0">{i+1}</span>
                                               <span className="font-bold text-black truncate flex-1 sm:flex-initial">{c.nombre}</span>
                                               <span className="font-mono font-bold text-black shrink-0 sm:hidden">${c.ventas.toLocaleString('es-CO')}</span>
                                             </div>
                                             <div className="flex items-center gap-2 pl-6 sm:pl-0 sm:flex-1">
-                                              <span className="font-mono text-[10px] text-neutral-500 shrink-0">{c.pedidos} ped.</span>
+                                              <span className="font-mono text-[11px] text-neutral-500 shrink-0">{c.pedidos} ped.</span>
                                               <div className="hidden sm:block w-20 bg-neutral-100 h-1.5 border border-black shrink-0">
                                                 <div className="bg-black h-full" style={{ width: `${Math.round((c.ventas / maxVentas) * 100)}%` }} />
                                               </div>
                                               <span className="hidden sm:inline font-mono font-bold text-black shrink-0 w-24 text-right">${c.ventas.toLocaleString('es-CO')}</span>
                                               {c.saldoPendiente > 0 && (
-                                                <span className="font-mono text-[9px] font-bold text-brand-red shrink-0">Debe ${c.saldoPendiente.toLocaleString('es-CO')}</span>
+                                                <span className="font-mono text-[11px] font-bold text-brand-red shrink-0">Debe ${c.saldoPendiente.toLocaleString('es-CO')}</span>
                                               )}
                                             </div>
                                           </div>
@@ -6503,7 +6531,7 @@ export default function AppHome() {
                                   </div>
                                 )}
                                 {reportesTopClientesCargando && (
-                                  <div className="border-t border-black pt-4 text-xs font-mono text-neutral-400 flex items-center gap-2">
+                                  <div className="border-t border-black pt-4 text-xs font-mono text-neutral-600 flex items-center gap-2">
                                     <RefreshCw size={11} className="animate-spin" /> Cargando top clientes…
                                   </div>
                                 )}
@@ -6537,15 +6565,15 @@ export default function AppHome() {
                                       </h4>
                                       {hayPedidos && (
                                         <div className="mb-4">
-                                          <div className="font-mono text-[9px] text-neutral-400 uppercase mb-1">Pedidos por día / hora</div>
-                                          <p className="sm:hidden text-[9px] font-mono text-neutral-400 text-center">← desliza para ver más →</p>
+                                          <div className="font-mono text-[11px] text-neutral-600 uppercase mb-1">Pedidos por día / hora</div>
+                                          <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
                                           <div className="overflow-x-auto">
-                                            <table className="border-collapse text-[9px] font-mono">
+                                            <table className="border-collapse text-[11px] font-mono">
                                               <thead>
                                                 <tr>
-                                                  <th className="w-8 text-neutral-400 font-normal" />
+                                                  <th className="w-8 text-neutral-600 font-normal" />
                                                   {horas.map(h => (
-                                                    <th key={h} className="w-5 text-center text-neutral-400 font-normal pb-0.5">
+                                                    <th key={h} className="w-5 text-center text-neutral-600 font-normal pb-0.5">
                                                       {h % 6 === 0 ? `${h}h` : ''}
                                                     </th>
                                                   ))}
@@ -6584,15 +6612,15 @@ export default function AppHome() {
                                         const label = tipo === 'IMAGE' ? 'Foto' : tipo === 'VIDEO' ? 'Video' : tipo === 'CAROUSEL_ALBUM' ? 'Carrusel' : tipo === 'REEL' ? 'Reel' : tipo;
                                         return (
                                           <div key={tipo} className="mb-3">
-                                            <div className="font-mono text-[9px] text-neutral-400 uppercase mb-1">Instagram · {label}</div>
-                                            <p className="sm:hidden text-[9px] font-mono text-neutral-400 text-center">← desliza para ver más →</p>
+                                            <div className="font-mono text-[11px] text-neutral-600 uppercase mb-1">Instagram · {label}</div>
+                                            <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
                                             <div className="overflow-x-auto">
-                                              <table className="border-collapse text-[9px] font-mono">
+                                              <table className="border-collapse text-[11px] font-mono">
                                                 <thead>
                                                   <tr>
-                                                    <th className="w-8 text-neutral-400 font-normal" />
+                                                    <th className="w-8 text-neutral-600 font-normal" />
                                                     {horas.map(h => (
-                                                      <th key={h} className="w-5 text-center text-neutral-400 font-normal pb-0.5">
+                                                      <th key={h} className="w-5 text-center text-neutral-600 font-normal pb-0.5">
                                                         {h % 6 === 0 ? `${h}h` : ''}
                                                       </th>
                                                     ))}
@@ -6635,7 +6663,7 @@ export default function AppHome() {
                                     <h4 className="font-mono text-xs font-bold mb-3 flex items-center gap-2">
                                       <BarChart2 size={13} /> COMPARACIÓN SEMANAS
                                     </h4>
-                                    <p className="sm:hidden text-[9px] font-mono text-neutral-400 text-center mb-1">← desliza para ver más →</p>
+                                    <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center mb-1">← desliza para ver más →</p>
                                     <div className="overflow-x-auto">
                                       <table className="w-full text-[11px] font-mono border-collapse">
                                         <thead>
@@ -6657,7 +6685,7 @@ export default function AppHome() {
                                               <tr key={s.semana} className={`border-b border-neutral-200 ${i === 0 ? 'bg-yellow-50' : ''}`}>
                                                 <td className="py-1 pr-2">
                                                   <div className="font-bold">S{s.semana}</div>
-                                                  <div className="text-[9px] text-neutral-400">{s.label}</div>
+                                                  <div className="text-[11px] text-neutral-600">{s.label}</div>
                                                 </td>
                                                 <td className="text-right py-1 px-2 text-neutral-600">{s.pedidos}</td>
                                                 <td className="text-right py-1 px-2">
@@ -6672,7 +6700,7 @@ export default function AppHome() {
                                                 <td className={`text-right py-1 px-2 font-bold ${margenPos ? 'text-green-700' : 'text-red-600'}`}>
                                                   {margenPos ? '+' : ''}{(s.margenBruto/1000).toFixed(0)}k
                                                 </td>
-                                                <td className="pl-2 py-1 text-[10px] text-neutral-500 truncate max-w-[90px]">
+                                                <td className="pl-2 py-1 text-[11px] text-neutral-500 truncate max-w-[90px]">
                                                   {s.topProducto ? <><span className="text-black font-bold">{s.topProducto.nombre}</span> ${(s.topProducto.ventas/1000).toFixed(0)}k</> : '—'}
                                                 </td>
                                               </tr>
@@ -6684,7 +6712,7 @@ export default function AppHome() {
                                   </div>
                                 )}
                                 {reportesSemCompCargando && (
-                                  <div className="border-t border-black pt-4 text-xs font-mono text-neutral-400 flex items-center gap-2">
+                                  <div className="border-t border-black pt-4 text-xs font-mono text-neutral-600 flex items-center gap-2">
                                     <RefreshCw size={11} className="animate-spin" /> Cargando comparación de semanas…
                                   </div>
                                 )}
@@ -6695,7 +6723,7 @@ export default function AppHome() {
                                     <div>
                                       <h4 className="font-mono text-xs font-bold flex items-center gap-2"><Sparkles size={13} /> ANÁLISIS IA</h4>
                                       {reportesIAGeneradoEn && (
-                                        <span className="font-mono text-[9px] text-neutral-400">
+                                        <span className="font-mono text-[11px] text-neutral-600">
                                           {reportesIAGuardado ? '💾 Guardado' : '✨ Nuevo'} · {new Date(reportesIAGeneradoEn).toLocaleString('es-CO', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' })}
                                         </span>
                                       )}
@@ -6712,7 +6740,7 @@ export default function AppHome() {
                                     </button>
                                   </div>
                                   {!reportesIA && !reportesIACargando && (
-                                    <p className="text-xs font-mono text-neutral-400 italic text-center py-3">
+                                    <p className="text-xs font-mono text-neutral-600 italic text-center py-3">
                                       Aún no hay análisis para este período. Se genera automáticamente cuando el mes cierra — o haz clic en &quot;Generar análisis&quot; para verlo ahora.
                                     </p>
                                   )}
@@ -6754,7 +6782,7 @@ export default function AppHome() {
                     {/* Filtros */}
                     <div className="bg-white border-2 border-black p-3 flex flex-wrap items-end gap-3">
                       <label className="flex flex-col gap-1">
-                        <span className="font-mono text-[10px] font-bold text-neutral-500">USUARIO</span>
+                        <span className="font-mono text-[11px] font-bold text-neutral-500">USUARIO</span>
                         <select value={auditoriaFiltroUsuario} onChange={(e) => setAuditoriaFiltroUsuario(e.target.value)} className="neo-input text-xs py-1.5">
                           <option value="">Todos</option>
                           {auditoriaUsuarios.map((u) => (
@@ -6763,7 +6791,7 @@ export default function AppHome() {
                         </select>
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="font-mono text-[10px] font-bold text-neutral-500">TIPO</span>
+                        <span className="font-mono text-[11px] font-bold text-neutral-500">TIPO</span>
                         <select value={auditoriaFiltroEntidad} onChange={(e) => setAuditoriaFiltroEntidad(e.target.value)} className="neo-input text-xs py-1.5">
                           <option value="">Todos</option>
                           {Object.entries(ENTIDAD_LABELS).map(([tipo, label]) => (
@@ -6772,7 +6800,7 @@ export default function AppHome() {
                         </select>
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="font-mono text-[10px] font-bold text-neutral-500">ACCIÓN</span>
+                        <span className="font-mono text-[11px] font-bold text-neutral-500">ACCIÓN</span>
                         <select value={auditoriaFiltroAccion} onChange={(e) => setAuditoriaFiltroAccion(e.target.value)} className="neo-input text-xs py-1.5">
                           <option value="">Todas</option>
                           <option value="crear">Crear</option>
@@ -6782,11 +6810,11 @@ export default function AppHome() {
                         </select>
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="font-mono text-[10px] font-bold text-neutral-500">DESDE</span>
+                        <span className="font-mono text-[11px] font-bold text-neutral-500">DESDE</span>
                         <input type="date" value={auditoriaFiltroDesde} onChange={(e) => setAuditoriaFiltroDesde(e.target.value)} className="neo-input text-xs py-1.5" />
                       </label>
                       <label className="flex flex-col gap-1">
-                        <span className="font-mono text-[10px] font-bold text-neutral-500">HASTA</span>
+                        <span className="font-mono text-[11px] font-bold text-neutral-500">HASTA</span>
                         <input type="date" value={auditoriaFiltroHasta} onChange={(e) => setAuditoriaFiltroHasta(e.target.value)} className="neo-input text-xs py-1.5" />
                       </label>
                       <button type="button" onClick={() => void fetchAuditoria(1)} className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-4 py-2">
@@ -6811,7 +6839,7 @@ export default function AppHome() {
                     {auditoriaCargando && <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 p-2"><RefreshCw size={13} className="animate-spin" /> Cargando actividad…</div>}
 
                     {!auditoriaCargando && auditoriaEntradas.length === 0 && (
-                      <p className="text-xs font-mono text-neutral-400 italic text-center py-8 bg-white border-2 border-black">
+                      <p className="text-xs font-mono text-neutral-600 italic text-center py-8 bg-white border-2 border-black">
                         No hay actividad registrada con estos filtros.
                       </p>
                     )}
@@ -6830,7 +6858,7 @@ export default function AppHome() {
                                 onClick={() => toggleAuditoriaExpandida(entrada.id)}
                                 className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-neutral-100 transition-colors"
                               >
-                                <span className={`font-mono text-[10px] font-bold px-2 py-1 shrink-0 ${estilo.bg} ${estilo.text}`}>
+                                <span className={`font-mono text-[11px] font-bold px-2 py-1 shrink-0 ${estilo.bg} ${estilo.text}`}>
                                   {estilo.label}
                                 </span>
                                 <span className="text-xs flex-1 truncate">
@@ -6838,9 +6866,9 @@ export default function AppHome() {
                                   <span className="text-neutral-500"> · {humanizarEntidad(entrada.entidadTipo)}</span>
                                   {entrada.etiqueta && <span className="text-neutral-700"> — {entrada.etiqueta}</span>}
                                 </span>
-                                <span className="font-mono text-[10px] text-neutral-400 shrink-0">{tiempoRelativo(entrada.creadoEn)}</span>
+                                <span className="font-mono text-[11px] text-neutral-600 shrink-0">{tiempoRelativo(entrada.creadoEn)}</span>
                                 {camposCambiados.length > 0 && (
-                                  <ChevronDown size={14} className={`text-neutral-400 shrink-0 transition-transform ${expandida ? 'rotate-180' : ''}`} />
+                                  <ChevronDown size={14} className={`text-neutral-600 shrink-0 transition-transform ${expandida ? 'rotate-180' : ''}`} />
                                 )}
                               </button>
                               {expandida && camposCambiados.length > 0 && (
@@ -6850,8 +6878,8 @@ export default function AppHome() {
                                       {camposCambiados.map((campo) => (
                                         <tr key={campo} className="border-b border-neutral-100 last:border-b-0">
                                           <td className="text-neutral-500 py-1 pr-3 align-top whitespace-nowrap">{humanizarCampo(campo)}</td>
-                                          <td className="text-neutral-400 py-1 pr-2 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.antes)}</td>
-                                          <td className="text-neutral-400 py-1 pr-2 align-top">→</td>
+                                          <td className="text-neutral-600 py-1 pr-2 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.antes)}</td>
+                                          <td className="text-neutral-600 py-1 pr-2 align-top">→</td>
                                           <td className="text-black font-bold py-1 align-top">{formatearValorAuditoria(entrada.cambios[campo]!.despues)}</td>
                                         </tr>
                                       ))}
@@ -6892,7 +6920,7 @@ export default function AppHome() {
 
                       <div className="flex flex-col gap-3 max-w-md">
                         <label className="flex flex-col gap-1">
-                          <span className="font-mono text-[10px] font-bold text-neutral-500">NOMBRE A MOSTRAR</span>
+                          <span className="font-mono text-[11px] font-bold text-neutral-500">NOMBRE A MOSTRAR</span>
                           <input
                             type="text"
                             value={nombreDisplayInput}
@@ -6900,11 +6928,11 @@ export default function AppHome() {
                             placeholder={tenant?.name ?? 'Nombre de la empresa'}
                             maxLength={80}
                             disabled={!puedeEditarConfigEmpresa}
-                            className="neo-input text-sm disabled:bg-neutral-100 disabled:text-neutral-400"
+                            className="neo-input text-sm disabled:bg-neutral-100 disabled:text-neutral-600"
                           />
                         </label>
                         <label className="flex flex-col gap-1">
-                          <span className="font-mono text-[10px] font-bold text-neutral-500">SLOGAN (OPCIONAL)</span>
+                          <span className="font-mono text-[11px] font-bold text-neutral-500">SLOGAN (OPCIONAL)</span>
                           <input
                             type="text"
                             value={sloganInput}
@@ -6912,7 +6940,7 @@ export default function AppHome() {
                             placeholder="Ej: Moda con propósito"
                             maxLength={140}
                             disabled={!puedeEditarConfigEmpresa}
-                            className="neo-input text-sm disabled:bg-neutral-100 disabled:text-neutral-400"
+                            className="neo-input text-sm disabled:bg-neutral-100 disabled:text-neutral-600"
                           />
                         </label>
                         {puedeEditarConfigEmpresa && (
@@ -6925,14 +6953,14 @@ export default function AppHome() {
                             {guardandoConfigEmpresa ? 'Guardando...' : 'Guardar'}
                           </button>
                         )}
-                        {configEmpresaError && <p className="text-brand-red font-mono text-[10px]">{configEmpresaError}</p>}
+                        {configEmpresaError && <p className="text-brand-red font-mono text-[11px]">{configEmpresaError}</p>}
                       </div>
 
                       <div className="flex items-center gap-3 text-xs border-t border-neutral-200 pt-3">
                         <span className="font-mono text-neutral-500">VISTA PREVIA:</span>
                         <div className="flex flex-col leading-tight">
                           <span className="font-mono font-black text-base text-black">{nombreDisplayInput || tenant?.name}</span>
-                          {sloganInput && <span className="font-mono text-[10px] text-neutral-500 italic">{sloganInput}</span>}
+                          {sloganInput && <span className="font-mono text-[11px] text-neutral-500 italic">{sloganInput}</span>}
                         </div>
                       </div>
                     </div>
@@ -6976,7 +7004,7 @@ export default function AppHome() {
                         </button>
                       </div>
 
-                      {colorError && <p className="text-brand-red font-mono text-[10px]">{colorError}</p>}
+                      {colorError && <p className="text-brand-red font-mono text-[11px]">{colorError}</p>}
 
                       <div className="flex items-center gap-3 text-xs">
                         <span className="font-mono text-neutral-500">VISTA PREVIA:</span>
@@ -7070,7 +7098,7 @@ export default function AppHome() {
                         ×
                       </button>
                     </div>
-                    {newCategoryError && <p className="text-brand-red font-mono text-[10px]">{newCategoryError}</p>}
+                    {newCategoryError && <p className="text-brand-red font-mono text-[11px]">{newCategoryError}</p>}
                   </div>
                 )}
               </div>
@@ -7135,14 +7163,14 @@ export default function AppHome() {
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className={`font-mono font-bold ${newProduct.tiene_variantes ? 'text-neutral-400' : ''}`}>STOCK COMPRA INICIAL</label>
+                  <label className={`font-mono font-bold ${newProduct.tiene_variantes ? 'text-neutral-600' : ''}`}>STOCK COMPRA INICIAL</label>
                   <input
                     type="number"
                     required={!newProduct.tiene_variantes}
                     disabled={newProduct.tiene_variantes}
                     value={newProduct.stock_inicial}
                     onChange={(e) => setNewProduct({ ...newProduct, stock_inicial: e.target.value })}
-                    className="neo-input font-mono disabled:bg-neutral-100 disabled:text-neutral-400"
+                    className="neo-input font-mono disabled:bg-neutral-100 disabled:text-neutral-600"
                   />
                 </div>
               </div>
@@ -7156,7 +7184,7 @@ export default function AppHome() {
                 />
                 <span>
                   <span className="font-mono font-bold block">Este producto tiene variantes</span>
-                  <span className="text-[10px] text-neutral-500">Ej: tallas, colores u otro atributo. Después de crearlo podrás definir los atributos y generar las combinaciones desde &quot;Gestionar variantes&quot;.</span>
+                  <span className="text-[11px] text-neutral-500">Ej: tallas, colores u otro atributo. Después de crearlo podrás definir los atributos y generar las combinaciones desde &quot;Gestionar variantes&quot;.</span>
                 </span>
               </label>
 
@@ -7186,7 +7214,7 @@ export default function AppHome() {
                   <button
                     type="button"
                     onClick={() => { setShowInlineNewClient(v => !v); setInlineClientError(null); }}
-                    className="font-mono text-[10px] text-brand-blue hover:underline font-bold flex items-center gap-0.5"
+                    className="font-mono text-[11px] text-brand-blue hover:underline font-bold flex items-center gap-0.5"
                   >
                     {showInlineNewClient ? '✕ Cancelar' : '+ Nuevo cliente'}
                   </button>
@@ -7205,7 +7233,7 @@ export default function AppHome() {
                   </select>
                 ) : (
                   <div className="border border-black/20 bg-neutral-50 p-3 flex flex-col gap-2">
-                    <p className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Nuevo cliente</p>
+                    <p className="font-mono text-[11px] font-bold text-neutral-500 uppercase">Nuevo cliente</p>
                     <div
                       className="flex flex-col gap-2"
                       onKeyDown={(e) => {
@@ -7238,7 +7266,7 @@ export default function AppHome() {
                         className="neo-input text-xs"
                       />
                       {inlineClientError && (
-                        <p className="text-brand-red font-mono text-[10px]">{inlineClientError}</p>
+                        <p className="text-brand-red font-mono text-[11px]">{inlineClientError}</p>
                       )}
                       <button
                         type="button"
@@ -7262,7 +7290,7 @@ export default function AppHome() {
                     onClick={() => {
                       setOrderItems([...orderItems, { producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null }]);
                     }}
-                    className="text-brand-blue hover:underline font-bold flex items-center gap-0.5 text-[10px]"
+                    className="text-brand-blue hover:underline font-bold flex items-center gap-0.5 text-[11px]"
                   >
                     + Agregar Ítem
                   </button>
@@ -7357,7 +7385,7 @@ export default function AppHome() {
                               ))}
                             </select>
                             {!variantesPorItem[activeProd.id] && (
-                              <span className="text-[10px] font-mono text-neutral-400">Cargando variantes…</span>
+                              <span className="text-[11px] font-mono text-neutral-600">Cargando variantes…</span>
                             )}
                           </div>
                         )}
@@ -7366,7 +7394,7 @@ export default function AppHome() {
                             catálogo (p.ej. un descuento puntual) y ver de inmediato cuánto
                             margen queda con ese precio, comparado contra el costo del producto. */}
                         <div className="flex gap-2 items-center pl-0.5">
-                          <label className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-neutral-600 whitespace-nowrap">
+                          <label className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-neutral-600 whitespace-nowrap">
                             <input
                               type="checkbox"
                               checked={esExcepcional}
@@ -7402,21 +7430,21 @@ export default function AppHome() {
                                   setOrderItems(updated);
                                 }
                               }}
-                              className={`neo-input py-1 px-1.5 text-right font-mono text-[11px] ${esExcepcional ? 'border-brand-blue' : 'opacity-50 cursor-not-allowed placeholder:text-[9px]'}`}
+                              className={`neo-input py-1 px-1.5 text-right font-mono text-[11px] ${esExcepcional ? 'border-brand-blue' : 'opacity-50 cursor-not-allowed placeholder:text-[11px]'}`}
                             />
                           </div>
 
-                          <span className="text-[10px] font-mono text-neutral-400">
+                          <span className="text-[11px] font-mono text-neutral-600">
                             (catálogo: ${precioCatalogo.toLocaleString('es-CO')})
                           </span>
 
                           {margenUnitario !== null ? (
-                            <span className={`ml-auto text-[10px] font-mono font-bold ${margenUnitario < 0 ? 'text-brand-red' : 'text-emerald-700'}`}>
+                            <span className={`ml-auto text-[11px] font-mono font-bold ${margenUnitario < 0 ? 'text-brand-red' : 'text-emerald-700'}`}>
                               Margen: ${margenUnitario.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                               {margenPorcentaje !== null && ` (${margenPorcentaje.toFixed(1)}%)`}
                             </span>
                           ) : (
-                            <span className="ml-auto text-[10px] font-mono text-neutral-400">Sin costo cargado — no se puede calcular margen</span>
+                            <span className="ml-auto text-[11px] font-mono text-neutral-600">Sin costo cargado — no se puede calcular margen</span>
                           )}
                         </div>
                       </div>
@@ -7453,7 +7481,7 @@ export default function AppHome() {
                         className="neo-input py-1 px-1.5 text-right font-mono text-[11px] border-brand-blue"
                       />
                     </div>
-                    <span className="text-[10px] font-mono text-neutral-400">
+                    <span className="text-[11px] font-mono text-neutral-600">
                       Se cobra a costo — no deja margen, pero igual lo paga el cliente.
                     </span>
                   </div>
@@ -7494,7 +7522,7 @@ export default function AppHome() {
                     margenTotal += (precio - p.precio_costo) * item.cantidad;
                   }
                   return (
-                    <div className="flex justify-between items-center text-[10px] text-neutral-500 font-normal">
+                    <div className="flex justify-between items-center text-[11px] text-neutral-500 font-normal">
                       <span>MARGEN ESTIMADO{hayCostoFaltante ? ' (parcial — faltan costos)' : ''}:</span>
                       <span className={margenTotal < 0 ? 'text-brand-red font-bold' : 'text-emerald-700 font-bold'}>
                         ${margenTotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })} COP
@@ -7552,13 +7580,13 @@ export default function AppHome() {
 
               <div className="flex flex-col gap-1">
                 <label className="font-mono font-bold">MONTO DEL ABONO (COP)</label>
-                <input
-                  type="number"
+                <MoneyInput
                   required
                   placeholder="Monto"
-                  value={abonoMonto}
-                  onChange={(e) => setAbonoMonto(e.target.value)}
-                  className="neo-input font-mono"
+                  aria-label="Monto del abono"
+                  value={abonoMonto === '' ? '' : Number(abonoMonto)}
+                  onChange={(v) => setAbonoMonto(v === '' ? '' : String(v))}
+                  className="neo-input font-mono w-full"
                 />
               </div>
 
@@ -7631,7 +7659,7 @@ export default function AppHome() {
                     <option value="facebook">Facebook</option>
                     <option value="tiktok">TikTok</option>
                   </select>
-                  <p className="text-[10px] text-neutral-500 leading-snug mt-0.5">
+                  <p className="text-[11px] text-neutral-500 leading-snug mt-0.5">
                     Esto es solo organización visual — no publica nada automáticamente en la red social.
                   </p>
                 </div>
@@ -7745,7 +7773,7 @@ export default function AppHome() {
                   className="neo-input font-mono"
                   placeholder="Deja vacío para calcular automáticamente desde los ítems"
                 />
-                <span className="font-mono text-[10px] text-neutral-400">Si el costo real difiere del precio de catálogo, ponlo aquí. Sobreescribe el total calculado.</span>
+                <span className="font-mono text-[11px] text-neutral-600">Si el costo real difiere del precio de catálogo, ponlo aquí. Sobreescribe el total calculado.</span>
               </div>
 
               {/* Ítems */}
@@ -7755,7 +7783,7 @@ export default function AppHome() {
                   <button
                     type="button"
                     onClick={() => setCompraForm({ ...compraForm, items: [...compraForm.items, { productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] })}
-                    className="neo-btn text-[10px] px-2 py-1 flex items-center gap-1"
+                    className="neo-btn text-[11px] px-2 py-1 flex items-center gap-1"
                   >
                     <Plus size={10} /> Añadir ítem
                   </button>
@@ -7817,7 +7845,7 @@ export default function AppHome() {
 
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[10px] font-bold">CANTIDAD</label>
+                        <label className="font-mono text-[11px] font-bold">CANTIDAD</label>
                         <input
                           type="number" min="0.001" step="0.001" required
                           value={item.cantidad}
@@ -7830,7 +7858,7 @@ export default function AppHome() {
                         />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[10px] font-bold">PRECIO UNITARIO (COP)</label>
+                        <label className="font-mono text-[11px] font-bold">PRECIO UNITARIO (COP)</label>
                         <input
                           type="number" min="0" step="1" required
                           value={item.precioUnitario}
@@ -7868,7 +7896,7 @@ export default function AppHome() {
             <div className="flex justify-between items-center border-b border-black pb-2">
               <div>
                 <h3 className="font-mono text-sm font-bold">{selectedCompra.numero}</h3>
-                <span className={`text-[10px] font-mono font-bold px-2 py-0.5 border ${
+                <span className={`text-[11px] font-mono font-bold px-2 py-0.5 border ${
                   selectedCompra.estado === 'recibido' ? 'bg-green-100 text-green-800 border-green-400' :
                   selectedCompra.estado === 'cancelado' ? 'bg-neutral-100 text-neutral-500 border-neutral-300' :
                   'bg-brand-yellow/20 text-neutral-700 border-brand-yellow'
@@ -7901,7 +7929,7 @@ export default function AppHome() {
               <h4 className="font-mono font-bold text-xs border-b border-black pb-1">ÍTEMS</h4>
               <table className="w-full text-xs border-collapse">
                 <thead>
-                  <tr className="bg-neutral-100 font-mono font-bold text-[10px]">
+                  <tr className="bg-neutral-100 font-mono font-bold text-[11px]">
                     <th className="p-2 text-left">PRODUCTO / CONCEPTO</th>
                     <th className="p-2 text-right">PEDIDO</th>
                     <th className="p-2 text-right">RECIBIDO</th>
@@ -7919,11 +7947,11 @@ export default function AppHome() {
                         <td className="p-2">{prod?.nombre ?? item.concepto ?? '—'}</td>
                         <td className="p-2 text-right font-mono">{item.cantidad}</td>
                         <td className="p-2 text-right font-mono">
-                          <span className={recibido >= item.cantidad ? 'text-green-700 font-bold' : recibido > 0 ? 'text-brand-yellow font-bold' : 'text-neutral-400'}>
+                          <span className={recibido >= item.cantidad ? 'text-green-700 font-bold' : recibido > 0 ? 'text-brand-yellow font-bold' : 'text-neutral-600'}>
                             {recibido}
                           </span>
                           {pendiente > 0 && (
-                            <span className="text-[10px] text-neutral-400 ml-1">({pendiente} pend.)</span>
+                            <span className="text-[11px] text-neutral-600 ml-1">({pendiente} pend.)</span>
                           )}
                         </td>
                         <td className="p-2 text-right font-mono">${item.precioUnitario.toLocaleString('es-CO')}</td>
@@ -8021,7 +8049,7 @@ export default function AppHome() {
                   <label className="font-mono font-bold">ÍTEMS</label>
                   <button type="button"
                     onClick={() => setEditCompraForm({ ...editCompraForm, items: [...editCompraForm.items, { productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] })}
-                    className="neo-btn text-[10px] px-2 py-1 flex items-center gap-1">
+                    className="neo-btn text-[11px] px-2 py-1 flex items-center gap-1">
                     <Plus size={10} /> Añadir
                   </button>
                 </div>
@@ -8055,13 +8083,13 @@ export default function AppHome() {
                     )}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[10px] font-bold">CANTIDAD</label>
+                        <label className="font-mono text-[11px] font-bold">CANTIDAD</label>
                         <input type="number" min="0.001" step="0.001" required value={item.cantidad}
                           onChange={(e) => { const u = [...editCompraForm.items]; u[idx] = { ...item, cantidad: e.target.value }; setEditCompraForm({ ...editCompraForm, items: u }); }}
                           className="neo-input font-mono text-xs" />
                       </div>
                       <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[10px] font-bold">PRECIO UNITARIO</label>
+                        <label className="font-mono text-[11px] font-bold">PRECIO UNITARIO</label>
                         <input type="number" min="0" step="1" required value={item.precioUnitario}
                           onChange={(e) => { const u = [...editCompraForm.items]; u[idx] = { ...item, precioUnitario: e.target.value }; setEditCompraForm({ ...editCompraForm, items: u }); }}
                           className="neo-input font-mono text-xs" />
@@ -8176,8 +8204,8 @@ export default function AppHome() {
                 <div>
                   <h2 className="font-mono font-black text-base text-black">{getOrderDisplayName(ord)}</h2>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="font-mono text-[10px] text-neutral-500">{ord.numero}</span>
-                    <span className={`text-[10px] font-mono font-bold border-[1.5px] border-black px-1.5 py-0.5 ${
+                    <span className="font-mono text-[11px] text-neutral-500">{ord.numero}</span>
+                    <span className={`text-[11px] font-mono font-bold border-[1.5px] border-black px-1.5 py-0.5 ${
                       ord.estado === 'borrador' ? 'bg-neutral-100 text-neutral-700' :
                       ord.estado === 'confirmado' ? 'bg-brand-blue/20 text-brand-blue' :
                       ord.estado === 'en_preparacion' ? 'bg-brand-yellow/20 text-neutral-700' :
@@ -8185,7 +8213,7 @@ export default function AppHome() {
                       ord.estado === 'entregado' ? 'bg-green-100 text-green-800' :
                       'bg-brand-red text-white'
                     }`}>{ord.estado.replace('_', ' ').toUpperCase()}</span>
-                    {client && <span className="text-[10px] text-neutral-500 font-mono">{client.nombre}</span>}
+                    {client && <span className="text-[11px] text-neutral-500 font-mono">{client.nombre}</span>}
                   </div>
                 </div>
                 <button onClick={() => setOrderManager(null)} className="neo-btn p-1.5 hover:bg-neutral-50 shrink-0 ml-4" aria-label="Cerrar"><X size={16} /></button>
@@ -8195,7 +8223,7 @@ export default function AppHome() {
 
                 {/* Items del pedido */}
                 <div className="p-4">
-                  <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2">Productos / Cargos</div>
+                  <div className="font-mono text-[11px] font-bold text-neutral-500 uppercase mb-2">Productos / Cargos</div>
                   <div className="flex flex-col gap-1">
                     {ord.items.map((item, idx) => {
                       const p = item.producto_id ? products.find(pr => pr.id === item.producto_id) : null;
@@ -8206,11 +8234,11 @@ export default function AppHome() {
                             <span className="truncate">{etiqueta} × {item.cantidad}</span>
                             {item.producto_id && (
                               item.stock_descontado ? (
-                                <span title="El stock de este ítem ya fue descontado realmente del inventario (salida_venta registrada)." className="shrink-0 font-mono text-[9px] font-bold px-1 py-0.5 border border-green-700 text-green-700 bg-green-50">
+                                <span title="El stock de este ítem ya fue descontado realmente del inventario (salida_venta registrada)." className="shrink-0 font-mono text-[11px] font-bold px-1 py-0.5 border border-green-700 text-green-700 bg-green-50">
                                   ✓ descontado
                                 </span>
                               ) : item.stock_reservado ? (
-                                <span title="Stock reservado (apartado) pero todavía no salió del inventario." className="shrink-0 font-mono text-[9px] font-bold px-1 py-0.5 border border-amber-600 text-amber-700 bg-amber-50">
+                                <span title="Stock reservado (apartado) pero todavía no salió del inventario." className="shrink-0 font-mono text-[11px] font-bold px-1 py-0.5 border border-amber-600 text-amber-700 bg-amber-50">
                                   reservado
                                 </span>
                               ) : null
@@ -8229,9 +8257,9 @@ export default function AppHome() {
 
                 {/* Cuenta por cobrar */}
                 <div className="p-4 bg-neutral-50">
-                  <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2">Cuenta por Cobrar (CxC)</div>
+                  <div className="font-mono text-[11px] font-bold text-neutral-500 uppercase mb-2">Cuenta por Cobrar (CxC)</div>
                   {!cxc ? (
-                    <p className="text-xs text-neutral-400 italic font-mono">
+                    <p className="text-xs text-neutral-600 italic font-mono">
                       {ord.cliente_id ? 'No se encontró CxC asociada a este pedido.' : 'Sin cliente asignado — sin CxC.'}
                     </p>
                   ) : (
@@ -8239,22 +8267,22 @@ export default function AppHome() {
                       <div className="flex items-center justify-between text-xs">
                         <div className="flex flex-col gap-0.5">
                           <span className="font-mono font-bold text-black">{cxc.numero}</span>
-                          <span className="text-neutral-500 font-mono text-[10px]">Vence: {new Date(cxc.fecha_vencimiento).toLocaleDateString('es-CO')}</span>
+                          <span className="text-neutral-500 font-mono text-[11px]">Vence: {new Date(cxc.fecha_vencimiento).toLocaleDateString('es-CO')}</span>
                         </div>
                         <div className="text-right">
                           <div className={`font-mono font-black text-base ${cxc.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
                             ${cxc.saldo_pendiente.toLocaleString('es-CO')}
                           </div>
-                          <div className="text-[10px] text-neutral-500 font-mono">saldo pendiente</div>
+                          <div className="text-[11px] text-neutral-500 font-mono">saldo pendiente</div>
                         </div>
                       </div>
 
                       {/* Historial de abonos */}
                       {abonosCxc.length > 0 && (
                         <div className="flex flex-col gap-1 border border-black/10 p-2 bg-white">
-                          <span className="font-mono text-[9px] font-bold text-neutral-400 uppercase">Abonos registrados</span>
+                          <span className="font-mono text-[11px] font-bold text-neutral-600 uppercase">Abonos registrados</span>
                           {abonosCxc.map(ab => (
-                            <div key={ab.id} className="flex items-center justify-between text-[10px] font-mono gap-2">
+                            <div key={ab.id} className="flex items-center justify-between text-[11px] font-mono gap-2">
                               <span className="text-neutral-600">{new Date(ab.fecha).toLocaleDateString('es-CO')}</span>
                               <span className="flex-1 text-neutral-500 truncate">{ab.referencia || '—'}</span>
                               <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
@@ -8267,11 +8295,11 @@ export default function AppHome() {
                       {/* Sección de pagos */}
                       {cxc.saldo_pendiente > 0 && (
                         <div className="flex flex-col gap-2 border border-black/15 p-3 bg-white">
-                          <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Registrar pago</span>
+                          <span className="font-mono text-[11px] font-bold text-neutral-500 uppercase">Registrar pago</span>
 
                           {/* Cuenta destino — compartida por "Pagar completo" y abono parcial */}
                           <div className="flex flex-col gap-1">
-                            <label className="font-mono text-[10px] font-bold">CUENTA DESTINO</label>
+                            <label className="font-mono text-[11px] font-bold">CUENTA DESTINO</label>
                             <select value={abonoForm.cuentaBancariaId} onChange={e => setAbonoForm({...abonoForm, cuentaBancariaId: e.target.value})} className="neo-input text-xs font-mono py-1.5">
                               <option value="">— Sin vincular a cuenta bancaria —</option>
                               {bankAccounts.map(b => (
@@ -8291,10 +8319,10 @@ export default function AppHome() {
                           </button>
 
                           <div className="border-t border-black/10 pt-2 flex flex-col gap-2">
-                            <span className="font-mono text-[10px] text-neutral-400 uppercase">O abono parcial</span>
+                            <span className="font-mono text-[11px] text-neutral-600 uppercase">O abono parcial</span>
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                               <div className="flex flex-col gap-1">
-                                <label className="font-mono text-[10px] font-bold">MONTO</label>
+                                <label className="font-mono text-[11px] font-bold">MONTO</label>
                                 <input
                                   type="number" min="1" step="any"
                                   placeholder={`Máx $${cxc.saldo_pendiente.toLocaleString('es-CO')}`}
@@ -8304,7 +8332,7 @@ export default function AppHome() {
                                 />
                               </div>
                               <div className="flex flex-col gap-1">
-                                <label className="font-mono text-[10px] font-bold">MEDIO DE PAGO</label>
+                                <label className="font-mono text-[11px] font-bold">MEDIO DE PAGO</label>
                                 <select value={abonoForm.medioPago} onChange={e => setAbonoForm({...abonoForm, medioPago: e.target.value})} className="neo-input text-xs font-mono py-1.5">
                                   <option value="efectivo">Efectivo</option>
                                   <option value="transferencia">Transferencia</option>
@@ -8316,7 +8344,7 @@ export default function AppHome() {
                               </div>
                             </div>
                           <div className="flex flex-col gap-1">
-                            <label className="font-mono text-[10px] font-bold">REFERENCIA (opcional)</label>
+                            <label className="font-mono text-[11px] font-bold">REFERENCIA (opcional)</label>
                             <input
                               type="text" placeholder="Nº comprobante, transferencia, etc."
                               value={abonoForm.referencia}
@@ -8324,7 +8352,7 @@ export default function AppHome() {
                               className="neo-input text-xs py-1.5"
                             />
                           </div>
-                          {abonoError && <p className="text-[10px] text-brand-red font-mono">{abonoError}</p>}
+                          {abonoError && <p className="text-[11px] text-brand-red font-mono">{abonoError}</p>}
                           <button
                             type="button"
                             disabled={guardandoAbono || !abonoForm.monto}
@@ -8342,7 +8370,7 @@ export default function AppHome() {
 
                 {/* Notas del pedido */}
                 <div className="p-4">
-                  <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2">Notas del pedido</div>
+                  <div className="font-mono text-[11px] font-bold text-neutral-500 uppercase mb-2">Notas del pedido</div>
                   <textarea
                     rows={3}
                     placeholder="Observaciones, instrucciones de entrega, acuerdos con el cliente..."
@@ -8362,7 +8390,7 @@ export default function AppHome() {
 
                 {/* Cambiar estado */}
                 <div className="p-4 bg-neutral-50">
-                  <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2">Cambiar estado</div>
+                  <div className="font-mono text-[11px] font-bold text-neutral-500 uppercase mb-2">Cambiar estado</div>
                   {/* CANCELADO va aparte, no en la misma fila que ENTREGADO:
                       con flex-wrap en móvil el salto de línea es impredecible y
                       quedaban pegados, así que un toque mal dado cancelaba el
@@ -8372,7 +8400,7 @@ export default function AppHome() {
                       <button
                         key={next}
                         onClick={() => { handleTransitionOrder(ord.id, next); setOrderManager(null); }}
-                        className={`font-mono text-[10px] font-bold px-3 py-2 border-2 border-black ${
+                        className={`font-mono text-[11px] font-bold px-3 py-2 border-2 border-black ${
                           next === 'entregado' ? 'bg-green-600 text-white hover:bg-green-700'
                           : next === 'despachado' ? 'bg-brand-blue text-white hover:opacity-90'
                           : next === 'en_preparacion' ? 'bg-yellow-400 text-black hover:bg-yellow-500'
@@ -8388,7 +8416,7 @@ export default function AppHome() {
                     <div className="mt-3 pt-3 border-t border-neutral-300">
                       <button
                         onClick={() => { handleTransitionOrder(ord.id, 'cancelado'); setOrderManager(null); }}
-                        className="font-mono text-[10px] font-bold px-3 py-2 border-2 border-brand-red bg-white text-brand-red hover:bg-red-50"
+                        className="font-mono text-[11px] font-bold px-3 py-2 border-2 border-brand-red bg-white text-brand-red hover:bg-red-50"
                       >
                         → CANCELAR PEDIDO
                       </button>
@@ -8398,7 +8426,7 @@ export default function AppHome() {
 
                 {/* Historial ("footsteps") de este pedido */}
                 <div className="p-4">
-                  <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2 flex items-center gap-1.5">
+                  <div className="font-mono text-[11px] font-bold text-neutral-500 uppercase mb-2 flex items-center gap-1.5">
                     <Footprints size={12} /> Historial
                   </div>
                   <HistorialEntidad entidadTipo="pedidos" entidadId={ord.id} />
@@ -8490,7 +8518,7 @@ export default function AppHome() {
               <button type="submit" className="neo-btn bg-brand-blue text-white hover:opacity-90 mt-2 py-2.5">GUARDAR CAMBIOS</button>
             </form>
             <div className="border-t border-black pt-3">
-              <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2 flex items-center gap-1.5">
+              <div className="font-mono text-[11px] font-bold text-neutral-500 uppercase mb-2 flex items-center gap-1.5">
                 <Footprints size={12} /> Historial
               </div>
               <HistorialEntidad entidadTipo="productos" entidadId={editingProduct.id} />
@@ -8510,12 +8538,12 @@ export default function AppHome() {
               <button onClick={() => setVariantesProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
-            {variantesError && <p className="text-brand-red font-mono text-[10px] border border-brand-red p-2">{variantesError}</p>}
+            {variantesError && <p className="text-brand-red font-mono text-[11px] border border-brand-red p-2">{variantesError}</p>}
             {variantesCargando && <div className="flex items-center gap-2 text-xs font-mono text-neutral-500"><RefreshCw size={13} className="animate-spin" /> Cargando…</div>}
 
             {/* Atributos (ejes) */}
             <div className="flex flex-col gap-2">
-              <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Atributos (ej: Talla, Color)</span>
+              <span className="font-mono text-[11px] font-bold text-neutral-500 uppercase">Atributos (ej: Talla, Color)</span>
               {atributosInput.map((valor, idx) => (
                 <div key={idx} className="flex gap-2">
                   <input
@@ -8550,12 +8578,12 @@ export default function AppHome() {
             {/* Generar variantes a partir de los atributos guardados */}
             {variantesAtributos.length > 0 && (
               <div className="flex flex-col gap-2 border-t border-black pt-3">
-                <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">
+                <span className="font-mono text-[11px] font-bold text-neutral-500 uppercase">
                   Generar variantes — valores separados por coma
                 </span>
                 {variantesAtributos.map((atrib) => (
                   <label key={atrib.id} className="flex flex-col gap-1">
-                    <span className="font-mono text-[10px] font-bold">{atrib.nombre}</span>
+                    <span className="font-mono text-[11px] font-bold">{atrib.nombre}</span>
                     <input
                       type="text"
                       placeholder={atrib.nombre === 'Talla' ? 'S, M, L, XL' : 'Negro, Blanco, Azul'}
@@ -8566,7 +8594,7 @@ export default function AppHome() {
                   </label>
                 ))}
                 <label className="flex flex-col gap-1 max-w-[160px]">
-                  <span className="font-mono text-[10px] font-bold">Stock inicial (cada una)</span>
+                  <span className="font-mono text-[11px] font-bold">Stock inicial (cada una)</span>
                   <input
                     type="number"
                     min="0"
@@ -8589,7 +8617,7 @@ export default function AppHome() {
             {/* Lista de variantes existentes con stock */}
             {variantesLista.length > 0 && (
               <div className="flex flex-col gap-1.5 border-t border-black pt-3">
-                <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-1">
+                <span className="font-mono text-[11px] font-bold text-neutral-500 uppercase mb-1">
                   Variantes ({variantesLista.length})
                 </span>
                 {variantesLista.map((v) => {
@@ -8600,9 +8628,9 @@ export default function AppHome() {
                       <span className="flex-1 font-bold truncate">
                         {Object.entries(v.valores).map(([k, val]) => `${k}: ${val}`).join(' · ')}
                       </span>
-                      {v.sku && <span className="font-mono text-[10px] text-neutral-400 shrink-0">{v.sku}</span>}
-                      <span className={`font-mono text-[10px] font-bold px-2 py-1 shrink-0 ${colores}`}>{v.stockDisponible} disp.</span>
-                      <span className="font-mono text-[10px] text-neutral-500 shrink-0">
+                      {v.sku && <span className="font-mono text-[11px] text-neutral-600 shrink-0">{v.sku}</span>}
+                      <span className={`font-mono text-[11px] font-bold px-2 py-1 shrink-0 ${colores}`}>{v.stockDisponible} disp.</span>
+                      <span className="font-mono text-[11px] text-neutral-500 shrink-0">
                         ${(v.precioVenta ?? variantesProduct.precio_venta).toLocaleString('es-CO')}
                       </span>
                       <button
@@ -8667,7 +8695,7 @@ export default function AppHome() {
                   className="neo-input"
                 />
               </div>
-              {stockEntryError && <p className="text-brand-red font-mono text-[10px]">{stockEntryError}</p>}
+              {stockEntryError && <p className="text-brand-red font-mono text-[11px]">{stockEntryError}</p>}
               <button type="submit" disabled={registrandoEntrada} className="neo-btn bg-emerald-600 text-white hover:opacity-90 mt-2 py-2.5 disabled:opacity-50">
                 {registrandoEntrada ? 'REGISTRANDO...' : 'REGISTRAR ENTRADA'}
               </button>
@@ -8726,7 +8754,7 @@ export default function AppHome() {
                   className="neo-input"
                 />
               </div>
-              {stockAdjustError && <p className="text-brand-red font-mono text-[10px]">{stockAdjustError}</p>}
+              {stockAdjustError && <p className="text-brand-red font-mono text-[11px]">{stockAdjustError}</p>}
               <button type="submit" disabled={registrandoAjuste} className="neo-btn bg-orange-600 text-white hover:opacity-90 mt-2 py-2.5 disabled:opacity-50">
                 {registrandoAjuste ? 'REGISTRANDO...' : 'REGISTRAR BAJA'}
               </button>
@@ -8767,7 +8795,7 @@ export default function AppHome() {
                   {creandoCategoriaAdmin ? 'Creando...' : 'Crear'}
                 </button>
               </div>
-              {categoryAdminError && <p className="text-brand-red font-mono text-[10px]">{categoryAdminError}</p>}
+              {categoryAdminError && <p className="text-brand-red font-mono text-[11px]">{categoryAdminError}</p>}
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -8794,7 +8822,7 @@ export default function AppHome() {
                       ) : (
                         <>
                           <span className="text-black font-semibold flex-1">{c.nombre}</span>
-                          <span className="text-[10px] text-neutral-400 font-mono">
+                          <span className="text-[11px] text-neutral-600 font-mono">
                             {products.filter((p) => p.categoria_id === c.id).length} prod.
                           </span>
                           <button type="button" onClick={() => openEditCategory(c)} className="hover:text-brand-blue px-1" title="Renombrar categoría">
@@ -9195,15 +9223,13 @@ export default function AppHome() {
               </div>
               <div className="flex flex-col gap-1">
                 <label className="font-mono text-xs font-bold">MONTO *</label>
-                <input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
-                  value={transferenciaForm.monto}
-                  onChange={e => setTransferenciaForm(f => ({ ...f, monto: e.target.value }))}
-                  className="neo-input font-mono"
+                <MoneyInput
+                  aria-label="Monto a transferir"
+                  value={transferenciaForm.monto === '' ? '' : Number(transferenciaForm.monto)}
+                  onChange={(v) => setTransferenciaForm(f => ({ ...f, monto: v === '' ? '' : String(v) }))}
+                  className="neo-input font-mono w-full"
                   required
-                  placeholder="0.00"
+                  placeholder="0"
                 />
               </div>
               <div className="flex flex-col gap-1">
@@ -9259,15 +9285,13 @@ export default function AppHome() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="font-mono text-xs font-bold">MONTO *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    value={gastoForm.monto}
-                    onChange={e => setGastoForm(f => ({ ...f, monto: e.target.value }))}
-                    className="neo-input font-mono"
+                  <MoneyInput
+                    aria-label="Monto del gasto"
+                    value={gastoForm.monto === '' ? '' : Number(gastoForm.monto)}
+                    onChange={(v) => setGastoForm(f => ({ ...f, monto: v === '' ? '' : String(v) }))}
+                    className="neo-input font-mono w-full"
                     required
-                    placeholder="0.00"
+                    placeholder="0"
                   />
                 </div>
               </div>
@@ -9343,15 +9367,13 @@ export default function AppHome() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="font-mono text-xs font-bold">MONTO *</label>
-                  <input
-                    type="number"
-                    step="0.01"
-                    min="0.01"
-                    value={ingresoForm.monto}
-                    onChange={e => setIngresoForm(f => ({ ...f, monto: e.target.value }))}
-                    className="neo-input font-mono"
+                  <MoneyInput
+                    aria-label="Monto del ingreso"
+                    value={ingresoForm.monto === '' ? '' : Number(ingresoForm.monto)}
+                    onChange={(v) => setIngresoForm(f => ({ ...f, monto: v === '' ? '' : String(v) }))}
+                    className="neo-input font-mono w-full"
                     required
-                    placeholder="0.00"
+                    placeholder="0"
                   />
                 </div>
               </div>
@@ -9403,7 +9425,7 @@ export default function AppHome() {
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <div>
                 <h3 className="font-mono text-sm font-bold">RECEPCIÓN {recepcionTarget.estado === 'recibido_parcial' ? 'PARCIAL' : 'TOTAL'}</h3>
-                <p className="text-[10px] text-neutral-500 font-mono">OC {recepcionTarget.compra.numero} — Ingresa las cantidades recibidas</p>
+                <p className="text-[11px] text-neutral-500 font-mono">OC {recepcionTarget.compra.numero} — Ingresa las cantidades recibidas</p>
               </div>
               <button onClick={() => { setShowRecepcionModal(false); setRecepcionTarget(null); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
@@ -9470,7 +9492,7 @@ export default function AppHome() {
             <div className="border-b-2 border-black p-4 flex justify-between items-center shrink-0">
               <div>
                 <h3 className="font-mono text-sm font-bold">🗑 PAPELERA</h3>
-                <p className="text-[10px] text-neutral-500 font-mono">Elementos eliminados recientemente — puedes restaurarlos.</p>
+                <p className="text-[11px] text-neutral-500 font-mono">Elementos eliminados recientemente — puedes restaurarlos.</p>
               </div>
               <button onClick={() => setShowPapelera(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
@@ -9485,12 +9507,12 @@ export default function AppHome() {
                   <div key={`${item.entidad}-${item.id}`} className="flex items-center justify-between border border-neutral-200 bg-neutral-50 px-3 py-2 gap-3">
                     <div className="min-w-0">
                       <div className="font-semibold text-xs text-black truncate">{item.etiqueta}</div>
-                      <div className="text-[10px] text-neutral-500 font-mono">{item.entidad} · eliminado {new Date(item.eliminadoEn).toLocaleDateString('es-CO')}</div>
+                      <div className="text-[11px] text-neutral-500 font-mono">{item.entidad} · eliminado {new Date(item.eliminadoEn).toLocaleDateString('es-CO')}</div>
                     </div>
                     <button
                       type="button"
                       onClick={() => void handleRestaurarDePapelera(item.entidad, item.id)}
-                      className="neo-btn-secondary text-[10px] px-2 py-1 shrink-0"
+                      className="neo-btn-secondary text-[11px] px-2 py-1 shrink-0"
                     >
                       Restaurar
                     </button>
@@ -9512,7 +9534,7 @@ export default function AppHome() {
               eventoPopup.tipo === 'recordatorio' ? 'bg-brand-blue/20' : 'bg-brand-red/15'
             }`}>
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[9px] font-bold border border-black px-1.5 py-0.5 bg-white">{eventoPopup.tipo.toUpperCase()}</span>
+                <span className="font-mono text-[11px] font-bold border border-black px-1.5 py-0.5 bg-white">{eventoPopup.tipo.toUpperCase()}</span>
                 {eventoPopup.canal === 'instagram' && <Instagram size={14} />}
                 {eventoPopup.canal === 'facebook' && <Facebook size={14} />}
                 {eventoPopup.canal === 'tiktok' && <TikTokIcon size={14} />}
@@ -9525,14 +9547,14 @@ export default function AppHome() {
               <h3 className="font-black text-base text-black">{eventoPopup.titulo}</h3>
               {/* Estado */}
               <div className="flex items-center gap-2">
-                <span className="font-mono text-[9px] text-neutral-500 uppercase">Estado:</span>
+                <span className="font-mono text-[11px] text-neutral-500 uppercase">Estado:</span>
                 {ESTADO_ANTERIOR_LOCAL[eventoPopup.estado] !== null && (
                   <button type="button" onClick={() => {
                     const ant = ESTADO_ANTERIOR_LOCAL[eventoPopup.estado];
                     if (ant) void handlePopupCambiarEstado(eventoPopup, ant);
-                  }} className="text-neutral-400 hover:text-black font-bold">‹</button>
+                  }} className="text-neutral-600 hover:text-black font-bold">‹</button>
                 )}
-                <span className={`font-mono text-[9px] font-bold border-[1.5px] border-black px-2 py-1 ${
+                <span className={`font-mono text-[11px] font-bold border-[1.5px] border-black px-2 py-1 ${
                   eventoPopup.estado === 'idea' ? 'bg-neutral-100 text-neutral-600' :
                   eventoPopup.estado === 'grabado' ? 'bg-orange-100 text-orange-700' :
                   eventoPopup.estado === 'editado' ? 'bg-brand-yellow/30 text-neutral-700' :
@@ -9543,12 +9565,12 @@ export default function AppHome() {
                   <button type="button" onClick={() => {
                     const sig = TRANSICIONES_EVENTO_LOCAL[eventoPopup.estado];
                     if (sig) void handlePopupCambiarEstado(eventoPopup, sig);
-                  }} className="text-neutral-400 hover:text-black font-bold">›</button>
+                  }} className="text-neutral-600 hover:text-black font-bold">›</button>
                 )}
               </div>
               {/* Notas / Descripción */}
               <div className="flex flex-col gap-1.5">
-                <label className="font-mono text-[9px] font-bold text-neutral-500 uppercase">Notas</label>
+                <label className="font-mono text-[11px] font-bold text-neutral-500 uppercase">Notas</label>
                 <textarea
                   rows={4}
                   value={eventoPopupDesc}
@@ -9594,7 +9616,7 @@ export default function AppHome() {
                 {notaPopup.tieneCheckbox && (
                   <button type="button" onClick={() => { void handleToggleNotaCompletada(notaPopup); setNotaPopup({ ...notaPopup, completada: !notaPopup.completada }); }}
                     className={`shrink-0 w-4 h-4 border-2 border-black flex items-center justify-center ${notaPopup.completada ? 'bg-black' : 'bg-white'}`}>
-                    {notaPopup.completada && <span className="text-white text-[9px] font-black leading-none">✓</span>}
+                    {notaPopup.completada && <span className="text-white text-[11px] font-black leading-none">✓</span>}
                   </button>
                 )}
                 <h3 className={`font-black text-base ${notaPopup.completada ? 'line-through opacity-50' : ''}`}>{notaPopup.titulo}</h3>
@@ -9602,7 +9624,7 @@ export default function AppHome() {
               {notaPopup.contenido && (
                 <p className="text-sm text-neutral-700 font-mono whitespace-pre-wrap leading-relaxed border-l-4 border-brand-yellow pl-3">{notaPopup.contenido}</p>
               )}
-              <p className="font-mono text-[9px] text-neutral-400">{new Date(notaPopup.createdAt).toLocaleDateString('es-CO')}</p>
+              <p className="font-mono text-[11px] text-neutral-600">{new Date(notaPopup.createdAt).toLocaleDateString('es-CO')}</p>
             </div>
             <div className="border-t-2 border-black px-4 py-2.5 flex justify-end bg-neutral-50">
               <button type="button" onClick={() => setNotaPopup(null)} className="neo-btn text-xs px-3 py-1">Cerrar</button>

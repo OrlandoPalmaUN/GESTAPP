@@ -179,7 +179,7 @@ export default function AdminUsuariosPage() {
       <div className="mx-auto max-w-5xl px-6 py-8">
         <div className="mb-4 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <UserCog size={18} className="text-neutral-400" />
+            <UserCog size={18} className="text-neutral-600" />
             <h2 className="text-sm font-medium text-neutral-700">{usuarios.length} usuario(s)</h2>
           </div>
           <button
@@ -243,7 +243,7 @@ export default function AdminUsuariosPage() {
                 <span className="font-medium text-neutral-700">Empresa (tenant)</span>
                 <p className="rounded-lg border border-neutral-200 bg-neutral-50 px-3 py-2 text-sm text-neutral-600">
                   {tenantsPorId.get(tenantFijo)?.name ?? 'Tu empresa'}{' '}
-                  <span className="text-neutral-400">— como admin, solo puedes crear usuarios dentro de tu propia empresa</span>
+                  <span className="text-neutral-600">— como admin, solo puedes crear usuarios dentro de tu propia empresa</span>
                 </p>
               </label>
             )}
@@ -251,7 +251,7 @@ export default function AdminUsuariosPage() {
             {requiereTenant && !tenantFijo && (
               <label className="flex flex-col gap-1 text-sm sm:col-span-2">
                 <span className="font-medium text-neutral-700">
-                  Empresa (tenant) <span className="font-normal text-neutral-400">— sin tenant no hay usuario</span>
+                  Empresa (tenant) <span className="font-normal text-neutral-600">— sin tenant no hay usuario</span>
                 </span>
                 {tenants.length === 0 ? (
                   <p className="rounded-lg bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -324,13 +324,13 @@ export default function AdminUsuariosPage() {
             <tbody>
               {cargando ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-neutral-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-neutral-600">
                     Cargando usuarios…
                   </td>
                 </tr>
               ) : usuarios.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-neutral-400">
+                  <td colSpan={7} className="px-4 py-8 text-center text-neutral-600">
                     No hay usuarios todavía.
                   </td>
                 </tr>
@@ -343,7 +343,7 @@ export default function AdminUsuariosPage() {
                       <span className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${ESTILO_ROL[u.rol]}`}>{ETIQUETA_ROL[u.rol]}</span>
                     </td>
                     <td className="px-4 py-3 text-neutral-600">
-                      {u.tenantId ? (tenantsPorId.get(u.tenantId)?.name ?? <span className="text-neutral-400">(empresa no encontrada)</span>) : <span className="text-neutral-400">—</span>}
+                      {u.tenantId ? (tenantsPorId.get(u.tenantId)?.name ?? <span className="text-neutral-600">(empresa no encontrada)</span>) : <span className="text-neutral-600">—</span>}
                     </td>
                     <td className="px-4 py-3">
                       <button
@@ -364,7 +364,7 @@ export default function AdminUsuariosPage() {
                       <button
                         onClick={() => eliminarUsuario(u)}
                         disabled={u.id === yo.id}
-                        className="rounded p-1.5 text-neutral-400 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
+                        className="rounded p-1.5 text-neutral-600 transition hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-30"
                         title={u.id === yo.id ? 'No puedes eliminar tu propio usuario' : 'Eliminar usuario'}
                       >
                         <Trash2 size={16} />
