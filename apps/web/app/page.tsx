@@ -945,7 +945,7 @@ export default function AppHome() {
   // de ESTE pedido (p.ej. un descuento negociado) — el margen se recalcula
   // en vivo comparándolo contra el costo del producto.
   const [orderItems, setOrderItems] = useState<{ producto_id: string; variante_id: string | null; cantidad: number; precio_excepcional: number | null }[]>([
-    { producto_id: 'prod-1', variante_id: null, cantidad: 1, precio_excepcional: null },
+    { producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null },
   ]);
   // Variantes del producto elegido por cada ítem — se cargan al vuelo cuando
   // el producto seleccionado tiene `tiene_variantes` (evita pedir TODAS las
@@ -1961,6 +1961,13 @@ export default function AppHome() {
   };
 
   const handleTransicionarCompra = async (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
+    // Sin proveedor no hay a quién registrarle la deuda — el backend ya lo
+    // bloquea, pero avisamos acá antes de abrir el modal de recepción para
+    // no dejar que el usuario complete cantidades y se entere del error al final.
+    if ((estado === 'recibido' || estado === 'recibido_parcial') && !compra.proveedorId) {
+      alert('Esta OC no tiene proveedor asignado — asígnalo antes de recibirla, o no se generará la cuenta por pagar.');
+      return;
+    }
     // Para recepciones, abrir modal de cantidades por ítem
     if ((estado === 'recibido' || estado === 'recibido_parcial') && compra.items.some(i => i.productoId)) {
       openRecepcionModal(compra, estado);
@@ -2782,6 +2789,11 @@ export default function AppHome() {
     // (ver `apps/api/.../pedidos.ts`); `orderValidationError` queda solo para
     // mostrar errores reales que el servidor devuelva.
 
+    if (orderItems.some((item) => !item.producto_id)) {
+      setOrderValidationError('Selecciona un producto para cada ítem del pedido.');
+      return;
+    }
+
     for (const item of orderItems) {
       const producto = products.find((p) => p.id === item.producto_id);
       if (producto?.tiene_variantes && !item.variante_id) {
@@ -2806,7 +2818,7 @@ export default function AppHome() {
           items: itemsAEnviar,
         });
         setShowCreateOrder(false);
-        setOrderItems([{ producto_id: products[0]?.id ?? 'prod-1', variante_id: null, cantidad: 1, precio_excepcional: null }]);
+        setOrderItems([{ producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null }]);
         setShippingEnabled(false);
         setShippingPrice('');
         await Promise.all([fetchPedidos(), fetchFinanzas()]);
@@ -2817,8 +2829,7 @@ export default function AppHome() {
   };
 
   // Crear cliente inline desde el formulario de pedido
-  const handleInlineCreateClient = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleInlineCreateClient = async () => {
     if (!inlineClientForm.nombre.trim()) {
       setInlineClientError('El nombre es obligatorio.');
       return;
@@ -7334,7 +7345,15 @@ export default function AppHome() {
                 ) : (
                   <div className="border border-black/20 bg-neutral-50 p-3 flex flex-col gap-2">
                     <p className="font-mono text-[10px] font-bold text-neutral-500 uppercase">Nuevo cliente</p>
-                    <form onSubmit={(e) => void handleInlineCreateClient(e)} className="flex flex-col gap-2">
+                    <div
+                      className="flex flex-col gap-2"
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          void handleInlineCreateClient();
+                        }
+                      }}
+                    >
                       <input
                         type="text"
                         placeholder="Nombre *"
@@ -7361,13 +7380,14 @@ export default function AppHome() {
                         <p className="text-brand-red font-mono text-[10px]">{inlineClientError}</p>
                       )}
                       <button
-                        type="submit"
+                        type="button"
+                        onClick={() => void handleInlineCreateClient()}
                         disabled={inlineCreandoCliente || !inlineClientForm.nombre.trim()}
                         className="neo-btn bg-black text-white text-xs py-1.5 disabled:opacity-50"
                       >
                         {inlineCreandoCliente ? 'Creando…' : 'Crear y seleccionar'}
                       </button>
-                    </form>
+                    </div>
                   </div>
                 )}
               </div>
@@ -7379,11 +7399,7 @@ export default function AppHome() {
                   <button
                     type="button"
                     onClick={() => {
-                      const firstProd = products[0];
-                      if (firstProd) {
-                        setOrderItems([...orderItems, { producto_id: firstProd.id, variante_id: null, cantidad: 1, precio_excepcional: null }]);
-                        if (firstProd.tiene_variantes) void cargarVariantesParaItem(firstProd.id);
-                      }
+                      setOrderItems([...orderItems, { producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null }]);
                     }}
                     className="text-brand-blue hover:underline font-bold flex items-center gap-0.5 text-[10px]"
                   >
@@ -7422,6 +7438,7 @@ export default function AppHome() {
                             }}
                             className="neo-input flex-1 py-1.5"
                           >
+                            <option value="">Seleccionar producto…</option>
                             {products.map((p) => (
                               <option key={p.id} value={p.id}>{p.nombre} (Dispo: {productStocks[p.id] ?? 0})</option>
                             ))}
@@ -7448,9 +7465,7 @@ export default function AppHome() {
                             type="button"
                             onClick={() => {
                               const updated = orderItems.filter((_, i) => i !== idx);
-                              const firstProd = products[0];
-                              const defaultId = firstProd ? firstProd.id : '';
-                              setOrderItems(updated.length === 0 ? [{ producto_id: defaultId, variante_id: null, cantidad: 1, precio_excepcional: null }] : updated);
+                              setOrderItems(updated.length === 0 ? [{ producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null }] : updated);
                             }}
                             className="font-mono font-bold text-base hover:text-brand-red px-2"
                           >
@@ -8077,7 +8092,9 @@ export default function AppHome() {
                       }`}
                     >
                       → {est.replace('_', ' ').toUpperCase()}
-                      {(est === 'recibido' || est === 'recibido_parcial') && !selectedCompra.facturaCompraId && selectedCompra.proveedorId && ' (crea CxP)'}
+                      {(est === 'recibido' || est === 'recibido_parcial') && !selectedCompra.facturaCompraId && (
+                        selectedCompra.proveedorId ? ' (crea CxP)' : ' (sin proveedor: no crea CxP)'
+                      )}
                     </button>
                   ))}
                 </div>

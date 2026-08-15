@@ -387,6 +387,14 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
     if (estadoNuevo === 'recibido_parcial' && (!body.data.cantidades || body.data.cantidades.length === 0)) {
       return reply.badRequest('Para marcar una OC como recibida parcialmente debes indicar las cantidades recibidas.')
     }
+    // Sin proveedor no hay a quién registrarle la deuda: antes esto se dejaba
+    // pasar en silencio (se recibía el inventario pero la CxP nunca se creaba,
+    // sin ningún aviso) — ahora se bloquea la recepción hasta asignar proveedor.
+    if ((estadoNuevo === 'recibido' || estadoNuevo === 'recibido_parcial') && !actual[0]!.proveedor_id) {
+      return reply.badRequest(
+        'Esta OC no tiene proveedor asignado — asígnalo antes de recibirla, o no se generará la cuenta por pagar.',
+      )
+    }
 
     const db = request.tenantDb
     await db.query('BEGIN')
