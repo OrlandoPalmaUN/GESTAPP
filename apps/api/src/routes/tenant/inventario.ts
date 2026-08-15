@@ -187,6 +187,10 @@ async function generarSku(tenantDb: FastifyRequest['tenantDb'] & {}): Promise<st
  */
 export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // GET /inventario/categorias — solo activas (no borradas); lo borrado vive en /papelera.
   fastify.get('/inventario/categorias', conSesion, async (request, reply) => {
@@ -242,7 +246,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
   // No se permite borrar una categoría que todavía tiene productos activos
   // colgando de ella — quedarían "huérfanos" en la práctica (el filtro de
   // inventario por categoría dejaría de encontrarlos).
-  fastify.delete<{ Params: { id: string } }>('/inventario/categorias/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/inventario/categorias/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const enUso = await request.tenantDb.query(
       'SELECT id FROM productos WHERE categoria_id = $1 AND deleted_at IS NULL LIMIT 1',
@@ -401,7 +405,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
   // ?force=true permite saltarse la verificación si el usuario insiste.
   fastify.delete<{ Params: { id: string }; Querystring: { force?: string } }>(
     '/inventario/productos/:id',
-    conSesion,
+    soloAdmin,
     async (request, reply) => {
       if (!exigirTenant(request, reply)) return
 

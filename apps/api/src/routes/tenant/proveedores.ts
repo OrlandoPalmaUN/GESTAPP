@@ -47,6 +47,10 @@ function exigirTenant(request: FastifyRequest, reply: FastifyReply): request is 
  */
 export async function proveedoresRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // GET /proveedores — solo activos (no borrados); lo borrado vive en /papelera.
   fastify.get('/proveedores', conSesion, async (request, reply) => {
@@ -123,7 +127,7 @@ export async function proveedoresRoutes(fastify: FastifyInstance): Promise<void>
   })
 
   // DELETE /proveedores/:id — borrado suave: queda en /papelera y se puede deshacer.
-  fastify.delete<{ Params: { id: string } }>('/proveedores/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/proveedores/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rowCount } = await request.tenantDb.query(
       'UPDATE proveedores SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL',

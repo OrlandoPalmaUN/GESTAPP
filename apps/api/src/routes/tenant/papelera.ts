@@ -28,16 +28,20 @@ function esEntidadValida(valor: string): valor is EntidadPapelera {
  */
 export async function papeleraRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // GET /papelera — todo lo borrado en los últimos 30 días, más reciente primero.
-  fastify.get('/papelera', conSesion, async (request, reply) => {
+  fastify.get('/papelera', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const items = await listarPapelera(request.tenantDb)
     return reply.send({ items })
   })
 
   // POST /papelera/restaurar — { entidad, id } → revierte el borrado (deshacer).
-  fastify.post<{ Body: { entidad?: string; id?: string } }>('/papelera/restaurar', conSesion, async (request, reply) => {
+  fastify.post<{ Body: { entidad?: string; id?: string } }>('/papelera/restaurar', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { entidad, id } = request.body ?? {}
     if (!entidad || !id) return reply.badRequest('Debes indicar "entidad" e "id" para restaurar.')

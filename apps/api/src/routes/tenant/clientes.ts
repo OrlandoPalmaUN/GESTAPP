@@ -47,6 +47,10 @@ function exigirTenant(request: FastifyRequest, reply: FastifyReply): request is 
  */
 export async function clientesRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // GET /clientes — solo activos (no borrados); lo borrado vive en /papelera.
   fastify.get('/clientes', conSesion, async (request, reply) => {
@@ -129,7 +133,7 @@ export async function clientesRoutes(fastify: FastifyInstance): Promise<void> {
   // (todo se restaura junto desde papelera con el handler de pedidos).
   fastify.delete<{ Params: { id: string }; Querystring: { force?: string } }>(
     '/clientes/:id',
-    conSesion,
+    soloAdmin,
     async (request, reply) => {
       if (!exigirTenant(request, reply)) return
 

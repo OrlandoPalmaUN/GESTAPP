@@ -246,6 +246,10 @@ async function cargarItemsDePedidos(
  */
 export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // GET /pedidos
   fastify.get('/pedidos', conSesion, async (request, reply) => {
@@ -581,7 +585,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
   // DELETE /pedidos/:id — borrado suave, recuperable desde /papelera.
   // Si el pedido tiene una CxC sin abonos, se borra en cascada.
   // Si la CxC ya tiene abonos, se bloquea (los pagos registrados no se pueden huerfanar).
-  fastify.delete<{ Params: { id: string } }>('/pedidos/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/pedidos/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const client = request.tenantDb

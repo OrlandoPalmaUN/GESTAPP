@@ -2,6 +2,8 @@ import {
   actualizarAbonoSchema,
   actualizarCuentaBancariaSchema,
   actualizarFacturaSchema,
+  actualizarGastoOperativoSchema,
+  actualizarIngresoBancarioSchema,
   calcularEstadoFactura,
   calcularSaldoPendiente,
   crearAbonoSchema,
@@ -311,6 +313,10 @@ async function listarFacturas(
  */
 export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // GET /finanzas/facturas?tipo=cxc|cxp
   fastify.get<{ Querystring: { tipo?: string } }>('/finanzas/facturas', conSesion, async (request, reply) => {
@@ -543,7 +549,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   // PATCH /finanzas/facturas/:id?tipo=cxc|cxp — edición administrativa (ver `actualizarFacturaSchema`).
   fastify.patch<{ Params: { id: string }; Querystring: { tipo?: string } }>(
     '/finanzas/facturas/:id',
-    conSesion,
+    soloAdmin,
     async (request, reply) => {
       if (!exigirTenant(request, reply)) return
       const tipoParsed = tipoFacturaSchema.safeParse(request.query.tipo)
@@ -578,7 +584,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   // ya recibidos/hechos — primero hay que revertir esos abonos (que también son reversibles).
   fastify.delete<{ Params: { id: string }; Querystring: { tipo?: string } }>(
     '/finanzas/facturas/:id',
-    conSesion,
+    soloAdmin,
     async (request, reply) => {
       if (!exigirTenant(request, reply)) return
       const tipoParsed = tipoFacturaSchema.safeParse(request.query.tipo)
@@ -605,7 +611,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   )
 
   // PATCH /finanzas/abonos/:id — solo metadatos (ver `actualizarAbonoSchema`); el monto no se toca por aquí.
-  fastify.patch<{ Params: { id: string } }>('/finanzas/abonos/:id', conSesion, async (request, reply) => {
+  fastify.patch<{ Params: { id: string } }>('/finanzas/abonos/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const body = actualizarAbonoSchema.safeParse(request.body)
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
@@ -633,7 +639,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   // recalcula automáticamente al excluir este abono (nunca se guarda, ver
   // `calcularSaldoPendiente`) — deshacerlo desde /papelera revierte el efecto al instante.
   // Si el abono tenía cuenta bancaria asociada, se revierte el movimiento de saldo en la misma tx.
-  fastify.delete<{ Params: { id: string } }>('/finanzas/abonos/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/finanzas/abonos/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const client = request.tenantDb
@@ -681,7 +687,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   // POST /finanzas/cuentas
-  fastify.post('/finanzas/cuentas', conSesion, async (request, reply) => {
+  fastify.post('/finanzas/cuentas', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const body = crearCuentaBancariaSchema.safeParse(request.body)
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
@@ -695,7 +701,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   // PATCH /finanzas/cuentas/:id
-  fastify.patch<{ Params: { id: string } }>('/finanzas/cuentas/:id', conSesion, async (request, reply) => {
+  fastify.patch<{ Params: { id: string } }>('/finanzas/cuentas/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const body = actualizarCuentaBancariaSchema.safeParse(request.body)
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
@@ -721,7 +727,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   // DELETE /finanzas/cuentas/:id — borrado suave, recuperable desde /papelera.
-  fastify.delete<{ Params: { id: string } }>('/finanzas/cuentas/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/finanzas/cuentas/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const usos = await request.tenantDb.query<{
       abonos: number
@@ -756,7 +762,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaTransferencia>(
       `SELECT id, cuenta_origen_id, cuenta_destino_id, monto, descripcion, fecha, usuario_id, created_at
-       FROM transferencias_bancarias ORDER BY created_at DESC`,
+       FROM transferencias_bancarias WHERE deleted_at IS NULL ORDER BY created_at DESC`,
     )
     return reply.send({ transferencias: rows.map(aTransferencia) })
   })
@@ -826,6 +832,78 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
         transferencia: aTransferencia(rows[0]!),
         cuentas: cuentasActualizadasRes.rows.map(aCuentaBancaria),
       })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
+  // DELETE /finanzas/transferencias/:id — revierte una transferencia.
+  //
+  // Es la única operación de dinero que no tenía vuelta atrás: una
+  // transferencia mal hecha movía saldo real en dos cuentas y solo se podía
+  // arreglar tocando la base a mano. El borrado es suave (queda la evidencia
+  // de que existió) y los saldos vuelven exactos dentro de la misma tx.
+  fastify.delete<{ Params: { id: string } }>('/finanzas/transferencias/:id', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const { rows, rowCount } = await client.query<{
+        cuenta_origen_id: string; cuenta_destino_id: string; monto: string
+      }>(
+        `SELECT cuenta_origen_id, cuenta_destino_id, monto FROM transferencias_bancarias
+         WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [request.params.id],
+      )
+      if (rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Transferencia no encontrada.')
+      }
+      const tr = rows[0]!
+      const monto = Number(tr.monto)
+
+      // Mismo orden determinístico que el POST para no generar deadlocks.
+      const ids = [tr.cuenta_origen_id, tr.cuenta_destino_id].sort()
+      const cuentasRes = await client.query<FilaCuentaBancaria>(
+        `SELECT id, banco, numero, tipo, saldo, created_at FROM cuentas_bancarias
+         WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
+         ORDER BY id FOR UPDATE`,
+        [ids],
+      )
+      if (cuentasRes.rowCount !== 2) {
+        await client.query('ROLLBACK')
+        return reply.badRequest(
+          'No se puede revertir: alguna de las cuentas de la transferencia ya no existe.',
+        )
+      }
+
+      // Revertir es devolver el monto al origen y quitarlo del destino — pero
+      // ese dinero ya pudo haberse gastado. Se bloquea en vez de dejar el
+      // saldo en negativo (mismo criterio que el resto del módulo).
+      const destino = cuentasRes.rows.find((c) => c.id === tr.cuenta_destino_id)!
+      if (Number(destino.saldo) < monto) {
+        await client.query('ROLLBACK')
+        return reply.badRequest(
+          `No se puede revertir: la cuenta destino ya no tiene el monto transferido ` +
+          `($${Number(destino.saldo).toLocaleString('es-CO')} disponible, se requieren $${monto.toLocaleString('es-CO')}). ` +
+          `Registra una transferencia en sentido contrario por lo que sí esté disponible.`,
+        )
+      }
+
+      await client.query('UPDATE cuentas_bancarias SET saldo = saldo + $1 WHERE id = $2', [monto, tr.cuenta_origen_id])
+      await client.query('UPDATE cuentas_bancarias SET saldo = saldo - $1 WHERE id = $2', [monto, tr.cuenta_destino_id])
+      await client.query('UPDATE transferencias_bancarias SET deleted_at = NOW() WHERE id = $1', [request.params.id])
+
+      const cuentasActualizadasRes = await client.query<FilaCuentaBancaria>(
+        'SELECT id, banco, numero, tipo, saldo, created_at FROM cuentas_bancarias WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL',
+        [ids],
+      )
+
+      await client.query('COMMIT')
+      return reply.send({ cuentas: cuentasActualizadasRes.rows.map(aCuentaBancaria) })
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined)
       throw error
@@ -903,9 +981,107 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     }
   })
 
+  // PATCH /finanzas/gastos/:id — corrige un gasto ya registrado.
+  //
+  // Si cambian el monto o la cuenta, se revierte el efecto anterior sobre el
+  // saldo y se aplica el nuevo en la misma transacción. Antes no existía esta
+  // ruta: corregir un typo obligaba a borrar y recrear, lo que dejaba en la
+  // auditoría un "eliminó" que en realidad fue una corrección.
+  fastify.patch<{ Params: { id: string } }>('/finanzas/gastos/:id', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const body = actualizarGastoOperativoSchema.safeParse(request.body)
+    if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+    if (Object.keys(body.data).length === 0) return reply.badRequest('No hay campos para actualizar.')
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const actualRes = await client.query<FilaGasto>(
+        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+         FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [request.params.id],
+      )
+      if (actualRes.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Gasto no encontrado.')
+      }
+      const prev = actualRes.rows[0]!
+      const montoPrev = Number(prev.monto)
+      const cuentaPrev = prev.cuenta_bancaria_id
+      const montoNuevo = body.data.monto ?? montoPrev
+      const cuentaNueva = body.data.cuentaBancariaId !== undefined ? body.data.cuentaBancariaId : cuentaPrev
+
+      if (cuentaNueva !== cuentaPrev || montoNuevo !== montoPrev) {
+        // Lock de todas las cuentas involucradas en orden determinístico.
+        const involucradas = [...new Set([cuentaPrev, cuentaNueva].filter(Boolean) as string[])].sort()
+        if (involucradas.length > 0) {
+          await client.query(
+            'SELECT id FROM cuentas_bancarias WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL ORDER BY id FOR UPDATE',
+            [involucradas],
+          )
+        }
+
+        // 1) Revertir el descuento anterior (el gasto había restado del saldo).
+        if (cuentaPrev) {
+          await client.query(
+            'UPDATE cuentas_bancarias SET saldo = saldo + $1 WHERE id = $2 AND deleted_at IS NULL',
+            [montoPrev, cuentaPrev],
+          )
+        }
+        // 2) Aplicar el nuevo descuento — la lectura ya refleja la reversa.
+        if (cuentaNueva) {
+          const cRes = await client.query<{ saldo: string }>(
+            'SELECT saldo FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL',
+            [cuentaNueva],
+          )
+          if (cRes.rowCount === 0) {
+            await client.query('ROLLBACK')
+            return reply.badRequest('La cuenta bancaria seleccionada no existe.')
+          }
+          if (Number(cRes.rows[0]!.saldo) < montoNuevo) {
+            await client.query('ROLLBACK')
+            return reply.badRequest(
+              `Saldo insuficiente en la cuenta bancaria ($${Number(cRes.rows[0]!.saldo).toLocaleString('es-CO')} disponible tras revertir el gasto anterior, se requieren $${montoNuevo.toLocaleString('es-CO')}).`,
+            )
+          }
+          await client.query(
+            'UPDATE cuentas_bancarias SET saldo = saldo - $1 WHERE id = $2',
+            [montoNuevo, cuentaNueva],
+          )
+        }
+      }
+
+      const sets: string[] = []
+      const valores: unknown[] = []
+      const ag = (col: string, val: unknown) => { valores.push(val); sets.push(`${col} = $${valores.length}`) }
+      if (body.data.descripcion !== undefined) ag('descripcion', body.data.descripcion)
+      if (body.data.categoria !== undefined) ag('categoria', body.data.categoria)
+      if (body.data.monto !== undefined) ag('monto', body.data.monto)
+      if (body.data.fecha !== undefined) ag('fecha', body.data.fecha)
+      if (body.data.medioPago !== undefined) ag('medio_pago', body.data.medioPago)
+      if (body.data.cuentaBancariaId !== undefined) ag('cuenta_bancaria_id', body.data.cuentaBancariaId)
+      if (body.data.notas !== undefined) ag('notas', body.data.notas)
+
+      valores.push(request.params.id)
+      const { rows } = await client.query<FilaGasto>(
+        `UPDATE gastos_operativos SET ${sets.join(', ')}
+         WHERE id = $${valores.length} AND deleted_at IS NULL
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+        valores,
+      )
+
+      await client.query('COMMIT')
+      return reply.send({ gasto: aGasto(rows[0]!) })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
   // DELETE /finanzas/gastos/:id — borrado suave.
   // Si el gasto tenía cuenta bancaria, se revierte el descuento del saldo en la misma tx.
-  fastify.delete<{ Params: { id: string } }>('/finanzas/gastos/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/finanzas/gastos/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const client = request.tenantDb
@@ -1001,8 +1177,90 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     }
   })
 
+  // PATCH /finanzas/ingresos/:id — corrige un ingreso ya registrado.
+  // Espejo del PATCH de gastos, con los signos invertidos: el ingreso había
+  // SUMADO al saldo, así que revertir es restar.
+  fastify.patch<{ Params: { id: string } }>('/finanzas/ingresos/:id', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const body = actualizarIngresoBancarioSchema.safeParse(request.body)
+    if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+    if (Object.keys(body.data).length === 0) return reply.badRequest('No hay campos para actualizar.')
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const actualRes = await client.query<FilaIngreso>(
+        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+         FROM ingresos_bancarios WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        [request.params.id],
+      )
+      if (actualRes.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Ingreso no encontrado.')
+      }
+      const prev = actualRes.rows[0]!
+      const montoPrev = Number(prev.monto)
+      const cuentaPrev = prev.cuenta_bancaria_id
+      const montoNuevo = body.data.monto ?? montoPrev
+      const cuentaNueva = body.data.cuentaBancariaId ?? cuentaPrev
+
+      if (cuentaNueva !== cuentaPrev || montoNuevo !== montoPrev) {
+        const involucradas = [...new Set([cuentaPrev, cuentaNueva])].sort()
+        const lockRes = await client.query<{ id: string; saldo: string }>(
+          'SELECT id, saldo FROM cuentas_bancarias WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL ORDER BY id FOR UPDATE',
+          [involucradas],
+        )
+        if (lockRes.rowCount !== involucradas.length) {
+          await client.query('ROLLBACK')
+          return reply.badRequest('La cuenta bancaria seleccionada no existe.')
+        }
+
+        // Revertir el ingreso anterior es SACAR esa plata de la cuenta — pero
+        // pudo haberse gastado ya. Se bloquea en vez de dejar saldo negativo.
+        const saldoPrev = Number(lockRes.rows.find((c) => c.id === cuentaPrev)!.saldo)
+        if (saldoPrev < montoPrev) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            `No se puede corregir: la cuenta ya no tiene el monto del ingreso original ` +
+            `($${saldoPrev.toLocaleString('es-CO')} disponible, el ingreso fue de $${montoPrev.toLocaleString('es-CO')}). ` +
+            `Registra el ajuste como un movimiento aparte.`,
+          )
+        }
+
+        await client.query('UPDATE cuentas_bancarias SET saldo = saldo - $1 WHERE id = $2', [montoPrev, cuentaPrev])
+        await client.query('UPDATE cuentas_bancarias SET saldo = saldo + $1 WHERE id = $2', [montoNuevo, cuentaNueva])
+      }
+
+      const sets: string[] = []
+      const valores: unknown[] = []
+      const ag = (col: string, val: unknown) => { valores.push(val); sets.push(`${col} = $${valores.length}`) }
+      if (body.data.descripcion !== undefined) ag('descripcion', body.data.descripcion)
+      if (body.data.categoria !== undefined) ag('categoria', body.data.categoria)
+      if (body.data.monto !== undefined) ag('monto', body.data.monto)
+      if (body.data.fecha !== undefined) ag('fecha', body.data.fecha)
+      if (body.data.medioPago !== undefined) ag('medio_pago', body.data.medioPago)
+      if (body.data.cuentaBancariaId !== undefined) ag('cuenta_bancaria_id', body.data.cuentaBancariaId)
+      if (body.data.notas !== undefined) ag('notas', body.data.notas)
+
+      valores.push(request.params.id)
+      const { rows } = await client.query<FilaIngreso>(
+        `UPDATE ingresos_bancarios SET ${sets.join(', ')}
+         WHERE id = $${valores.length} AND deleted_at IS NULL
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+        valores,
+      )
+
+      await client.query('COMMIT')
+      return reply.send({ ingreso: aIngreso(rows[0]!) })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
   // DELETE /finanzas/ingresos/:id — borrado suave; revierte el saldo bancario.
-  fastify.delete<{ Params: { id: string } }>('/finanzas/ingresos/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/finanzas/ingresos/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const client = request.tenantDb

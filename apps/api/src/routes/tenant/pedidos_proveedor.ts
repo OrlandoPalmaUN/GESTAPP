@@ -129,6 +129,10 @@ function calcularTotalRecibido(items: FilaPedidoProveedorItem[], totalOrden: num
 
 export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // GET /compras — lista todos los pedidos a proveedores
   fastify.get('/compras', conSesion, async (request, reply) => {
@@ -568,7 +572,7 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
 
   // DELETE /compras/:id — borrado suave
   // Solo se permite si la OC no ha recibido inventario ni generado CxP.
-  fastify.delete<{ Params: { id: string } }>('/compras/:id', conSesion, async (request, reply) => {
+  fastify.delete<{ Params: { id: string } }>('/compras/:id', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const idParsed = z.uuid().safeParse(request.params.id)

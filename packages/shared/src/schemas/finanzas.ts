@@ -112,3 +112,36 @@ export const crearGastoOperativoSchema = z.object({
   cuentaBancariaId: z.uuid().optional(),
   notas: z.string().optional(),
 })
+
+/**
+ * Corregir un gasto ya registrado. A diferencia de `abonos` —donde el monto es
+ * inmutable porque el saldo de la factura se deriva de él— acá sí se permite
+ * cambiar `monto` y `cuentaBancariaId`: el API revierte el efecto anterior
+ * sobre el saldo y aplica el nuevo dentro de la misma transacción.
+ *
+ * Antes no existía PATCH y un gasto con un typo obligaba a borrarlo y
+ * recrearlo, lo que ensucia la auditoría con un borrado que en realidad
+ * fue una corrección.
+ */
+export const actualizarGastoOperativoSchema = z.object({
+  descripcion: z.string().trim().min(1, 'La descripción no puede quedar vacía.').optional(),
+  categoria: categoriaGastoSchema.optional(),
+  monto: z.number().positive('El monto debe ser mayor que cero.').optional(),
+  fecha: z.string().optional(),
+  medioPago: z.string().nullable().optional(),
+  /** `null` desvincula el gasto de la cuenta (devuelve el saldo descontado). */
+  cuentaBancariaId: z.uuid().nullable().optional(),
+  notas: z.string().nullable().optional(),
+})
+
+/** Corregir un ingreso manual — misma lógica de reversa/aplicación que el gasto. */
+export const actualizarIngresoBancarioSchema = z.object({
+  descripcion: z.string().trim().min(1, 'La descripción no puede quedar vacía.').optional(),
+  categoria: categoriaIngresoSchema.optional(),
+  monto: z.number().positive('El monto debe ser mayor que cero.').optional(),
+  fecha: z.string().optional(),
+  medioPago: z.string().nullable().optional(),
+  /** Obligatoria en ingresos (a diferencia de gastos): no puede quedar en null. */
+  cuentaBancariaId: z.uuid().optional(),
+  notas: z.string().nullable().optional(),
+})

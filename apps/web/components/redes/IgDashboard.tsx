@@ -287,15 +287,19 @@ function PostDrawer({
             <div>
               <div className="flex items-center gap-2 border-b border-black pb-2 mb-2">
                 <h4 className="font-mono text-[10px] uppercase font-bold flex-1">Comentarios</h4>
+                {/* "Preguntas" se quitó: filtraba por `ig_comentarios.es_pregunta`,
+                    una columna que se lee pero nunca se escribe (la clasificación
+                    por LLM quedó sin construir), así que el filtro SIEMPRE
+                    devolvía vacío. Vuelve cuando exista quien marque la columna. */}
                 <div className="flex gap-1">
-                  {(['todos', 'sin-responder', 'preguntas'] as const).map((f) => (
+                  {(['todos', 'sin-responder'] as const).map((f) => (
                     <button
                       key={f}
                       type="button"
                       onClick={() => setFilterCom(f)}
                       className={`font-mono text-[9px] px-1.5 py-0.5 border border-black ${filterCom === f ? 'bg-black text-white' : 'bg-white'}`}
                     >
-                      {f === 'todos' ? 'Todos' : f === 'sin-responder' ? 'Sin responder' : 'Preguntas'}
+                      {f === 'todos' ? 'Todos' : 'Sin responder'}
                     </button>
                   ))}
                 </div>

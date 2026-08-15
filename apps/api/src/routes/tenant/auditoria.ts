@@ -53,11 +53,15 @@ function aCable(row: FilaAuditoria) {
 
 export async function auditoriaRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // ──────────────────────────────────────────────────────────────────────────
   // GET /auditoria?entidadTipo=&usuarioId=&accion=&desde=&hasta=&page=&pageSize=
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/auditoria', conSesion, async (request, reply) => {
+  fastify.get('/auditoria', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const q = request.query as Record<string, string>
@@ -100,7 +104,7 @@ export async function auditoriaRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /auditoria/usuarios — usuarios distintos que aparecen en el timeline,
   // para poblar el filtro sin depender del endpoint admin de usuarios.
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/auditoria/usuarios', conSesion, async (request, reply) => {
+  fastify.get('/auditoria/usuarios', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const { rows } = await request.tenantDb.query<{ usuario_id: string; usuario_nombre: string | null }>(

@@ -41,7 +41,7 @@ import {
   Menu,
 } from 'lucide-react';
 
-import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero } from '@antigravity/shared';
+import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, Tenant, TransferenciaBancaria } from '@antigravity/shared';
 
 // Definido localmente para no forzar un import de valor de @antigravity/shared
 // (el tsconfig apunta al source TS que usa extensiones .js — solo funciona con import type).
@@ -135,8 +135,10 @@ const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
 
 import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type VarianteProducto } from '../lib/api';
 import { useAuth } from '../lib/auth-context';
-import {
-  TENANTS_GLOBAL_METRICS,
+// Solo los tipos — los datos de ejemplo (INITIAL_*, TENANTS_GLOBAL_METRICS) ya
+// no se usan: alimentaban paneles que mostraban cifras inventadas como si
+// fueran reales, y de ahí salió el bug del producto por defecto 'prod-1'.
+import type {
   Product,
   Category,
   InventoryMovement,
@@ -490,9 +492,10 @@ export default function AppHome() {
     periodo: { label: string; desde: string; hasta: string };
     ventas: { total: number; pedidos: number; ticketPromedio: number; delta: number | null; deltaPedidos: number | null };
     compras: { total: number; oc: number; delta: number | null };
+    costoVentas: { total: number; ventasSinCosto: number };
     gastos: { total: number; delta: number | null };
     ingresosManuales: number; cxcCobrada: number;
-    margenBruto: { total: number; porcentaje: number; delta: number | null };
+    margenBruto: { total: number; porcentaje: number; delta: number | null; ventasSinCosto: number };
     utilidadNeta: number;
     topProductos: { nombre: string; categoria: string | null; unidades: number; ventasTotal: number }[];
   };
@@ -515,10 +518,12 @@ export default function AppHome() {
   const [reportesCalorPedidos, setReportesCalorPedidos] = useState<CalorCelda[] | null>(null);
   const [reportesCalorIG, setReportesCalorIG] = useState<CalorIG[] | null>(null);
   const [reportesCalorCargando, setReportesCalorCargando] = useState(false);
-  type SemanaComp = { semana: number; label: string; desde: string; hasta: string; pedidos: number; ventas: number; gastos: number; margenBruto: number; topProducto: { nombre: string; ventas: number } | null };
+  type SemanaComp = { semana: number; label: string; desde: string; hasta: string; pedidos: number; ventas: number; gastos: number; costoVentas: number; margenBruto: number; utilidadNeta: number; topProducto: { nombre: string; ventas: number } | null };
   const [reportesSemComp, setReportesSemComp] = useState<SemanaComp[] | null>(null);
   const [reportesSemCompCargando, setReportesSemCompCargando] = useState(false);
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
+  /** Empresas reales para la consola de plataforma — `null` mientras carga. */
+  const [superAdminTenants, setSuperAdminTenants] = useState<Tenant[] | null>(null);
   
   // --- ESTADOS DEL DATASET MUTABLE (Base de datos en memoria) ---
   // Inventario: conectado al backend real (ver fetchInventario más abajo) —
@@ -568,6 +573,11 @@ export default function AppHome() {
   });
   const [guardandoTransferencia, setGuardandoTransferencia] = useState(false);
   const [transferenciaError, setTransferenciaError] = useState<string | null>(null);
+  // Historial de transferencias — el endpoint existía desde siempre pero nunca
+  // se mostraba, así que una transferencia equivocada quedaba invisible y sin
+  // forma de revertirse desde la app.
+  const [transferencias, setTransferencias] = useState<TransferenciaBancaria[]>([]);
+  const [revirtiendoTransferencia, setRevirtiendoTransferencia] = useState<string | null>(null);
 
   // --- Gastos operativos ---
   const [gastos, setGastos] = useState<GastoOperativo[]>([]);
@@ -910,19 +920,10 @@ export default function AppHome() {
   const [editingAbono, setEditingAbono] = useState<PaymentAbono | null>(null);
   const [editAbonoForm, setEditAbonoForm] = useState({ medio_pago: '', referencia: '', fecha: '' });
 
-  // 2. Importador de Excel
-  const [showImportExcel, setShowImportExcel] = useState(false);
-  const [importStep, setImportStep] = useState(1); // 1: Upload, 2: Mapping, 3: Validation, 4: Success
-  const [excelFilename, setExcelFilename] = useState('');
-  const [excelMapping, setExcelMapping] = useState({
-    sku: 'REF_PRODUCTO',
-    nombre: 'DESCRIPCION_LARGA',
-    precio_venta: 'PRECIO_CORRIENTE',
-    stock_inicial: 'CANTIDAD_FONDOS',
-    stock_minimo: 'ALERTAS_UMBRAL',
-  });
-  const [importProgress, setImportProgress] = useState(0);
-  const [importLogs, setImportLogs] = useState<string[]>([]);
+  // 2. (removido) Importador de Excel — era una simulación: no leía ningún
+  // archivo, animaba un log guionado e inyectaba un producto hardcodeado en el
+  // estado local. Un usuario cargando 200 productos habría creído que funcionó.
+  // Volver a agregarlo requiere parseo real + endpoint de carga masiva.
 
   // 3. Crear pedido
   const [showCreateOrder, setShowCreateOrder] = useState(false);
@@ -1044,7 +1045,14 @@ export default function AppHome() {
   const [sloganInput, setSloganInput] = useState('');
   const [guardandoConfigEmpresa, setGuardandoConfigEmpresa] = useState(false);
   const [configEmpresaError, setConfigEmpresaError] = useState<string | null>(null);
-  const puedeEditarConfigEmpresa = usuario?.rol === 'admin' || usuario?.rol === 'superadmin';
+  /**
+   * `admin` del tenant (o superadmin). El backend ya rechaza con 403 lo
+   * sensible —borrar facturas/cuentas, papelera, auditoría, reportes de
+   * margen—; acá se usa para no MOSTRAR esas pantallas y botones a un
+   * empleado, que si no vería la app fallando sin entender por qué.
+   */
+  const esAdmin = usuario?.rol === 'admin' || usuario?.rol === 'superadmin';
+  const puedeEditarConfigEmpresa = esAdmin;
 
   // Captura visual del panel de Reportes (KPIs, mapas de calor, tablas) para exportar a PDF tal como se ve en pantalla.
   const reporteCapturaRef = useRef<HTMLDivElement>(null);
@@ -1290,6 +1298,51 @@ export default function AppHome() {
   useEffect(() => {
     void fetchCuentasBancarias();
   }, [fetchCuentasBancarias]);
+
+  // La consola de plataforma solo carga cuando el superadmin la abre.
+  useEffect(() => {
+    if (!superAdminMode || superAdminTenants !== null) return;
+    void (async () => {
+      try {
+        const { tenants } = await api.listarTenants();
+        setSuperAdminTenants(tenants);
+      } catch {
+        setSuperAdminTenants([]);
+      }
+    })();
+  }, [superAdminMode, superAdminTenants]);
+
+  const fetchTransferencias = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    try {
+      const { transferencias } = await api.listarTransferencias();
+      setTransferencias(transferencias);
+    } catch { /* silencioso — es un panel secundario, no bloquea Finanzas */ }
+  }, [usuario?.tenantId]);
+
+  useEffect(() => {
+    void fetchTransferencias();
+  }, [fetchTransferencias]);
+
+  const handleRevertirTransferencia = async (t: TransferenciaBancaria) => {
+    const origen = bankAccounts.find((c) => c.id === t.cuentaOrigenId);
+    const destino = bankAccounts.find((c) => c.id === t.cuentaDestinoId);
+    const ok = window.confirm(
+      `¿Revertir esta transferencia?\n\n` +
+      `$${t.monto.toLocaleString('es-CO')} de ${destino?.banco ?? 'destino'} de vuelta a ${origen?.banco ?? 'origen'}.\n\n` +
+      `Los saldos vuelven a como estaban. La transferencia queda registrada como revertida.`,
+    );
+    if (!ok) return;
+    setRevirtiendoTransferencia(t.id);
+    try {
+      await api.revertirTransferencia(t.id);
+      await Promise.all([fetchTransferencias(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      alert(error instanceof ApiError ? error.message : 'No se pudo revertir la transferencia.');
+    } finally {
+      setRevirtiendoTransferencia(null);
+    }
+  };
 
   const resetBankAccountForm = () => {
     setEditingBankAccount(null);
@@ -1717,6 +1770,7 @@ export default function AppHome() {
       }));
       setShowTransferenciaModal(false);
       setTransferenciaForm({ cuentaOrigenId: '', cuentaDestinoId: '', monto: '', descripcion: '' });
+      void fetchTransferencias(); // para que aparezca en el historial con su botón de reversa
     } catch (error) {
       setTransferenciaError(error instanceof ApiError ? error.message : 'No se pudo realizar la transferencia.');
     } finally {
@@ -2715,68 +2769,6 @@ export default function AppHome() {
     }
   };
 
-  // 2. Simulación de carga e importación desde Excel
-  const triggerExcelUpload = () => {
-    setExcelFilename('inventario_ferreteria_y_textil_2026.xlsx');
-    setImportStep(2);
-  };
-
-  const executeImportSimulation = () => {
-    setImportStep(3);
-    setImportLogs([]);
-    setImportProgress(0);
-
-    const logMessages = [
-      'Leyendo hojas del libro Excel...',
-      'Analizando columna: SKU [Mapeado de REF_PRODUCTO]',
-      'Analizando columna: Nombre [Mapeado de DESCRIPCION_LARGA]',
-      'Validando tipos de datos y nulos...',
-      'Validando SKU únicos en base de datos...',
-      'Transfiriendo datos a lote temporal...',
-      'Insertando productos en lote #1...',
-      'Actualizando saldos iniciales y registros de inventario...',
-      '¡Listo! Base de datos sincronizada.'
-    ];
-
-    let currentLog = 0;
-    const interval = setInterval(() => {
-      setImportProgress((prev) => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          
-          // Agregar un producto real de prueba a la lista importada para mostrar efectividad
-          const importedProd: Product = {
-            id: 'prod-imported-1',
-            sku: 'TX-IMPORT-99',
-            nombre: 'Botones y Broches Metálicos (Importado)',
-            descripcion: 'Caja de broches de alta resistencia',
-            categoria_id: 'cat-3',
-            precio_costo: 8000,
-            precio_venta: 22000,
-            stock_minimo: 50,
-            stock_inicial: 150,
-            tiene_variantes: false,
-          };
-          setProducts(prevProducts => [importedProd, ...prevProducts]);
-          
-          setImportStep(4);
-          return 100;
-        }
-        
-        // Agregar logs asíncronos en base al progreso
-        if (currentLog < logMessages.length && prev >= (currentLog * 12)) {
-          const msg = logMessages[currentLog];
-          if (msg) {
-            setImportLogs(prevLogs => [...prevLogs, msg]);
-          }
-          currentLog++;
-        }
-        
-        return prev + 10;
-      });
-    }, 300);
-  };
-
   // 3. Crear nuevo pedido — el SERVIDOR valida stock, resuelve precios del
   // catálogo y genera el número consecutivo. Nunca fabricamos el pedido localmente.
   const handleCreateOrder = (e: React.FormEvent) => {
@@ -2926,6 +2918,26 @@ export default function AppHome() {
   // (transaccionalmente) los movimientos de inventario que correspondan.
   // Tras la transición, refrescamos tanto pedidos como inventario (el stock cambió).
   const handleTransitionOrder = (orderId: string, targetState: Order['estado']) => {
+    const ord = orders.find((o) => o.id === orderId);
+    const nombre = ord ? getOrderDisplayName(ord) : 'este pedido';
+
+    // Los cambios de estado NO pasan por la papelera: a diferencia de un
+    // borrado, acá no hay "Deshacer". Cancelar libera el stock reservado y
+    // retroceder desde un estado que ya descontó inventario reabre
+    // movimientos — ambos se confirman antes de ejecutarse.
+    if (targetState === 'cancelado') {
+      const ok = window.confirm(
+        `¿Cancelar ${nombre}?\n\nSe libera el stock que tenía reservado.\nEsta acción no se puede deshacer desde la papelera.`,
+      );
+      if (!ok) return;
+    } else if (ord && (ord.estado === 'entregado' || ord.estado === 'despachado') && targetState !== ord.estado) {
+      const ok = window.confirm(
+        `Vas a mover ${nombre} de "${ord.estado}" a "${targetState}".\n\n` +
+        `Ese pedido ya descontó inventario. Solo hacelo si estás corrigiendo un error.`,
+      );
+      if (!ok) return;
+    }
+
     void (async () => {
       try {
         await api.transicionarPedido(orderId, targetState);
@@ -3150,25 +3162,32 @@ export default function AppHome() {
                 <span>Redes Sociales</span>
               </button>
 
-              <button
-                onClick={() => { setActiveTab('reportes'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'reportes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <BarChart3 size={18} />
-                <span>Reportes</span>
-              </button>
+              {/* Reportes y Actividad son admin-only en el backend (márgenes,
+                  utilidad, log de auditoría): se ocultan para que un empleado
+                  no entre a una pantalla que le va a responder 403. */}
+              {esAdmin && (
+                <button
+                  onClick={() => { setActiveTab('reportes'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                  className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                    activeTab === 'reportes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  }`}
+                >
+                  <BarChart3 size={18} />
+                  <span>Reportes</span>
+                </button>
+              )}
 
-              <button
-                onClick={() => { setActiveTab('auditoria'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'auditoria' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <Footprints size={18} />
-                <span>Actividad</span>
-              </button>
+              {esAdmin && (
+                <button
+                  onClick={() => { setActiveTab('auditoria'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                  className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                    activeTab === 'auditoria' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  }`}
+                >
+                  <Footprints size={18} />
+                  <span>Actividad</span>
+                </button>
+              )}
 
               <button
                 onClick={() => { setActiveTab('config'); setSuperAdminMode(false); setSidebarOpen(false); }}
@@ -3181,15 +3200,19 @@ export default function AppHome() {
               </button>
             </nav>
 
-            <div className="p-4 border-t border-black">
-              <button
-                onClick={() => { void fetchPapelera(); setShowPapelera(true); setSidebarOpen(false); }}
-                className="w-full text-left font-mono text-xs font-bold px-3 py-2 flex items-center gap-2 border-2 border-dashed border-neutral-300 hover:border-black text-neutral-500 hover:text-black transition-colors"
-              >
-                <Trash2 size={14} />
-                <span>Papelera</span>
-              </button>
-            </div>
+            {/* Restaurar lo borrado deshace efectos en cascada (una factura,
+                sus abonos, el stock de un pedido): es admin-only. */}
+            {esAdmin && (
+              <div className="p-4 border-t border-black">
+                <button
+                  onClick={() => { void fetchPapelera(); setShowPapelera(true); setSidebarOpen(false); }}
+                  className="w-full text-left font-mono text-xs font-bold px-3 py-2 flex items-center gap-2 border-2 border-dashed border-neutral-300 hover:border-black text-neutral-500 hover:text-black transition-colors"
+                >
+                  <Trash2 size={14} />
+                  <span>Papelera</span>
+                </button>
+              </div>
+            )}
 
             <div className="mt-auto p-4 border-t border-black flex flex-col gap-2 font-mono text-[10px]">
               <div className="flex justify-between">
@@ -3223,70 +3246,59 @@ export default function AppHome() {
                   </p>
                 </div>
 
-                {/* Métricas consolidadas */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-5">
-                  <div className="neo-card flex flex-col bg-white">
-                    <span className="font-mono text-[10px] text-neutral-500 font-bold">TENANTS TOTALES</span>
-                    <span className="text-2xl font-black text-black tracking-tight">{TENANTS_GLOBAL_METRICS.totalTenants}</span>
-                    <span className="text-[10px] text-green-600 mt-1 font-bold">✓ {TENANTS_GLOBAL_METRICS.activeTenants} activos en red</span>
-                  </div>
-
-                  <div className="neo-card flex flex-col bg-white">
-                    <span className="font-mono text-[10px] text-neutral-500 font-bold">RECURRING REVENUE (MRR)</span>
-                    <span className="text-2xl font-black text-black tracking-tight">
-                      ${TENANTS_GLOBAL_METRICS.monthlyRecurringRevenueCop.toLocaleString('es-CO')} COP
-                    </span>
-                    <span className="text-[10px] text-neutral-500 mt-1 font-bold">Wompi Recurrente mensual</span>
-                  </div>
-
-                  <div className="neo-card flex flex-col bg-white">
-                    <span className="font-mono text-[10px] text-neutral-500 font-bold">USO ALMACENAMIENTO BD</span>
-                    <span className="text-2xl font-black text-black tracking-tight">{TENANTS_GLOBAL_METRICS.databaseStorageUsed}</span>
-                    <span className="text-[10px] text-neutral-500 mt-1 font-bold">Postgres centralizado</span>
-                  </div>
-
-                  <div className="neo-card flex flex-col bg-white">
-                    <span className="font-mono text-[10px] text-neutral-500 font-bold">CARGA DEL SISTEMA (AWS)</span>
-                    <span className="text-2xl font-black text-green-600 tracking-tight">{TENANTS_GLOBAL_METRICS.systemLoad}</span>
-                    <span className="text-[10px] text-green-600 mt-1 font-bold">Salud del cluster: Excelente</span>
-                  </div>
-                </div>
-
-                {/* Distribución de Planes */}
-                <div className="neo-card bg-white">
-                  <h3 className="font-mono text-sm font-bold border-b-2 border-black pb-2 mb-4">DISTRIBUCIÓN DE PLANES DE CLIENTES</h3>
-                  <div className="flex flex-col gap-3 font-mono">
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span>PLAN BÁSICO (COP $79.000/mes)</span>
-                        <span className="font-bold">{TENANTS_GLOBAL_METRICS.planDistribution.basico} empresas ({Math.round(TENANTS_GLOBAL_METRICS.planDistribution.basico / TENANTS_GLOBAL_METRICS.totalTenants * 100)}%)</span>
+                {/* Métricas consolidadas — datos reales de `/admin/tenants`.
+                    Antes venían de TENANTS_GLOBAL_METRICS en mockData.ts: MRR,
+                    uso de disco y "carga del cluster AWS" eran inventados. Se
+                    quitaron los que no se pueden medir hoy en vez de mostrar
+                    números falsos en la consola de plataforma. */}
+                {superAdminTenants === null ? (
+                  <div className="neo-card bg-white font-mono text-xs text-neutral-500">Cargando métricas de plataforma…</div>
+                ) : (
+                  <>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                      <div className="neo-card flex flex-col bg-white">
+                        <span className="font-mono text-[10px] text-neutral-500 font-bold">EMPRESAS TOTALES</span>
+                        <span className="text-2xl font-black text-black tracking-tight">{superAdminTenants.length}</span>
+                        <span className="text-[10px] text-green-600 mt-1 font-bold">
+                          ✓ {superAdminTenants.filter((t) => t.status === 'active').length} activas
+                        </span>
                       </div>
-                      <div className="w-full bg-neutral-100 border border-black h-4">
-                        <div className="bg-brand-blue border-r border-black h-full" style={{ width: `${TENANTS_GLOBAL_METRICS.planDistribution.basico / TENANTS_GLOBAL_METRICS.totalTenants * 100}%` }}></div>
+                      <div className="neo-card flex flex-col bg-white">
+                        <span className="font-mono text-[10px] text-neutral-500 font-bold">FACTURACIÓN</span>
+                        <span className="text-sm font-bold text-neutral-600 tracking-tight mt-1">Sin cobro automatizado</span>
+                        <span className="text-[10px] text-neutral-500 mt-1">
+                          Los planes aún no se cobran ni se aplican límites. El MRR aparecerá cuando exista billing real.
+                        </span>
                       </div>
                     </div>
 
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span>PLAN PROFESIONAL (COP $189.000/mes)</span>
-                        <span className="font-bold">{TENANTS_GLOBAL_METRICS.planDistribution.profesional} empresas ({Math.round(TENANTS_GLOBAL_METRICS.planDistribution.profesional / TENANTS_GLOBAL_METRICS.totalTenants * 100)}%)</span>
-                      </div>
-                      <div className="w-full bg-neutral-100 border border-black h-4">
-                        <div className="bg-brand-red border-r border-black h-full" style={{ width: `${TENANTS_GLOBAL_METRICS.planDistribution.profesional / TENANTS_GLOBAL_METRICS.totalTenants * 100}%` }}></div>
+                    {/* Distribución de Planes — conteo real por plan */}
+                    <div className="neo-card bg-white">
+                      <h3 className="font-mono text-sm font-bold border-b-2 border-black pb-2 mb-4">DISTRIBUCIÓN DE PLANES</h3>
+                      <div className="flex flex-col gap-3 font-mono">
+                        {([
+                          { id: 'basico', label: 'PLAN BÁSICO', color: 'bg-brand-blue' },
+                          { id: 'profesional', label: 'PLAN PROFESIONAL', color: 'bg-brand-red' },
+                          { id: 'empresarial', label: 'PLAN EMPRESARIAL', color: 'bg-black' },
+                        ] as const).map((p) => {
+                          const n = superAdminTenants.filter((t) => t.plan === p.id).length;
+                          const pct = superAdminTenants.length > 0 ? Math.round((n / superAdminTenants.length) * 100) : 0;
+                          return (
+                            <div key={p.id}>
+                              <div className="flex justify-between text-xs mb-1">
+                                <span>{p.label}</span>
+                                <span className="font-bold">{n} empresa{n !== 1 ? 's' : ''} ({pct}%)</span>
+                              </div>
+                              <div className="w-full bg-neutral-100 border border-black h-4">
+                                <div className={`${p.color} border-r border-black h-full`} style={{ width: `${pct}%` }}></div>
+                              </div>
+                            </div>
+                          );
+                        })}
                       </div>
                     </div>
-
-                    <div>
-                      <div className="flex justify-between text-xs mb-1">
-                        <span>PLAN EMPRESARIAL (COP $390.000/mes)</span>
-                        <span className="font-bold">{TENANTS_GLOBAL_METRICS.planDistribution.empresarial} empresas ({Math.round(TENANTS_GLOBAL_METRICS.planDistribution.empresarial / TENANTS_GLOBAL_METRICS.totalTenants * 100)}%)</span>
-                      </div>
-                      <div className="w-full bg-neutral-100 border border-black h-4">
-                        <div className="bg-black h-full" style={{ width: `${TENANTS_GLOBAL_METRICS.planDistribution.empresarial / TENANTS_GLOBAL_METRICS.totalTenants * 100}%` }}></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
+                  </>
+                )}
               </div>
             ) : (
               // --- MÓDULOS DE NEGOCIO ---
@@ -3741,13 +3753,6 @@ export default function AppHome() {
                         >
                           <Tag size={14} />
                           <span>Administrar Categorías</span>
-                        </button>
-                        <button
-                          onClick={() => { setImportStep(1); setImportLogs([]); setImportProgress(0); setShowImportExcel(true); }}
-                          className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 w-full sm:w-auto flex items-center justify-center gap-1.5"
-                        >
-                          <FileSpreadsheet size={14} />
-                          <span>Importar Excel</span>
                         </button>
                         <button
                           onClick={() => setShowCreateProduct(true)}
@@ -4721,6 +4726,44 @@ export default function AppHome() {
                             ))}
                           </div>
                         </div>
+
+                        {/* Historial de transferencias — con reversa. */}
+                        {transferencias.length > 0 && (
+                          <div className="neo-card bg-white">
+                            <h3 className="font-mono text-xs font-bold border-b border-black pb-2 mb-3">TRANSFERENCIAS ENTRE CUENTAS</h3>
+                            <div className="space-y-2">
+                              {transferencias.slice(0, 10).map((t) => {
+                                const origen = bankAccounts.find((c) => c.id === t.cuentaOrigenId);
+                                const destino = bankAccounts.find((c) => c.id === t.cuentaDestinoId);
+                                return (
+                                  <div key={t.id} className="border border-neutral-200 p-2.5 flex justify-between items-center gap-3 hover:bg-neutral-50">
+                                    <div className="min-w-0">
+                                      <div className="font-mono text-xs font-bold text-black truncate">
+                                        {origen?.banco ?? '—'} → {destino?.banco ?? '—'}
+                                      </div>
+                                      <div className="text-[11px] text-neutral-600 font-mono mt-0.5">
+                                        {new Date(t.fecha + 'T00:00:00').toLocaleDateString('es-CO')}
+                                        {t.descripcion ? ` · ${t.descripcion}` : ''}
+                                      </div>
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0">
+                                      <span className="font-mono font-black text-sm">${t.monto.toLocaleString('es-CO')}</span>
+                                      <button
+                                        type="button"
+                                        disabled={revirtiendoTransferencia === t.id}
+                                        onClick={() => void handleRevertirTransferencia(t)}
+                                        className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-red-50 hover:text-brand-red disabled:opacity-50"
+                                        title="Revertir esta transferencia y devolver los saldos"
+                                      >
+                                        {revirtiendoTransferencia === t.id ? '…' : '↩ Revertir'}
+                                      </button>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        )}
 
                         {/* Listado de Abonos Recientes */}
                         <div className="neo-card bg-white">
@@ -6368,17 +6411,21 @@ export default function AppHome() {
                                 </div>
                                 <div ref={reporteCapturaRef} className="flex flex-col gap-6 bg-white">
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                                  {[
-                                    { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''}`, delta: d.ventas.delta, color: 'text-green-700' },
-                                    { label: 'MARGEN BRUTO', value: `$${d.margenBruto.total.toLocaleString('es-CO')}`, sub: `${d.margenBruto.porcentaje}% sobre ventas`, delta: d.margenBruto.delta, color: d.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red' },
-                                    { label: 'COMPRAS / OC', value: `$${d.compras.total.toLocaleString('es-CO')}`, sub: `${d.compras.oc} orden${d.compras.oc !== 1 ? 'es' : ''}`, delta: d.compras.delta !== null ? -d.compras.delta : null, color: 'text-black' },
-                                    { label: 'UTILIDAD NETA', value: `$${d.utilidadNeta.toLocaleString('es-CO')}`, sub: `Gastos: $${d.gastos.total.toLocaleString('es-CO')}`, delta: null, color: d.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red' },
-                                  ].map((kpi) => (
+                                  {([
+                                    { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''}`, delta: d.ventas.delta, color: 'text-green-700', warn: null },
+                                    // El margen se calcula contra el COSTO DE LO VENDIDO, no contra las
+                                    // compras del mes. Si hay ventas sin costo cargado se avisa, porque
+                                    // en ese caso el margen mostrado es optimista.
+                                    { label: 'MARGEN BRUTO', value: `$${d.margenBruto.total.toLocaleString('es-CO')}`, sub: `${d.margenBruto.porcentaje}% sobre ventas · costo $${d.costoVentas.total.toLocaleString('es-CO')}`, delta: d.margenBruto.delta, color: d.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red', warn: d.margenBruto.ventasSinCosto > 0 ? `$${d.margenBruto.ventasSinCosto.toLocaleString('es-CO')} en ventas sin costo cargado — el margen real es menor` : null },
+                                    { label: 'COMPRAS / OC', value: `$${d.compras.total.toLocaleString('es-CO')}`, sub: `${d.compras.oc} orden${d.compras.oc !== 1 ? 'es' : ''} · reposición, no costo de venta`, delta: d.compras.delta !== null ? -d.compras.delta : null, color: 'text-black', warn: null },
+                                    { label: 'UTILIDAD NETA', value: `$${d.utilidadNeta.toLocaleString('es-CO')}`, sub: `Gastos: $${d.gastos.total.toLocaleString('es-CO')}`, delta: null, color: d.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red', warn: null },
+                                  ] as { label: string; value: string; sub: string; delta: number | null; color: string; warn: string | null }[]).map((kpi) => (
                                     <div key={kpi.label} className="border border-black p-3 flex flex-col gap-1 bg-neutral-50">
                                       <span className="font-mono text-[10px] text-neutral-500 font-bold">{kpi.label}</span>
                                       <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
                                       <span className="text-[10px] font-mono text-neutral-500">{kpi.sub}</span>
                                       {kpi.delta !== null && <span className={`text-[10px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs anterior</span>}
+                                      {kpi.warn && <span className="text-[10px] font-mono font-bold text-amber-700 leading-tight">⚠ {kpi.warn}</span>}
                                     </div>
                                   ))}
                                 </div>
@@ -6942,34 +6989,11 @@ export default function AppHome() {
                       </div>
                     </div>
 
-                    {/* Consumo de límites */}
-                    <div className="neo-card bg-white">
-                      <h3 className="font-mono text-sm font-bold border-b border-black pb-2 mb-4">LÍMITES Y CONSUMO DEL PLAN ACTUAL (PROFESIONAL)</h3>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 font-mono text-xs">
-                        
-                        <div>
-                          <div className="flex justify-between mb-1">
-                            <span>USUARIOS ACTIVOS EN TENANT</span>
-                            <span className="font-bold">4 / 10 creados (40%)</span>
-                          </div>
-                          <div className="w-full bg-neutral-100 border border-black h-4">
-                            <div className="bg-brand-blue border-r border-black h-full" style={{ width: '40%' }}></div>
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="flex justify-between mb-1">
-                            <span>PRODUCTOS EN INVENTARIO</span>
-                            <span className="font-bold">{products.length} / 10,000 creados ({Math.round(products.length / 10000 * 100)}%)</span>
-                          </div>
-                          <div className="w-full bg-neutral-100 border border-black h-4">
-                            <div className="bg-brand-red border-r border-black h-full" style={{ width: `${products.length / 10000 * 100}%` }}></div>
-                          </div>
-                        </div>
-
-                      </div>
-                    </div>
+                    {/* (removido) "Límites y consumo del plan" — mostraba
+                        "4 / 10 usuarios" y "/10.000 productos" como literales
+                        en el JSX: el plan del tenant no se consultaba y los
+                        límites (max_usuarios/max_productos) nunca se aplican en
+                        la API. Volver a mostrarlo cuando el billing sea real. */}
 
 
                   </div>
@@ -7144,169 +7168,6 @@ export default function AppHome() {
         </div>
       )}
 
-      {/* 2. Modal: Importador de Excel */}
-      {showImportExcel && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="neo-card bg-white max-w-lg w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-black pb-2">
-              <h3 className="font-mono text-sm font-bold text-black">
-                {importStep === 1 && '1. SUBIR ARCHIVO EXCEL'}
-                {importStep === 2 && '2. MAPEAR COLUMNAS DE EXCEL'}
-                {importStep === 3 && '3. PROCESANDO E IMPORTANDO...'}
-                {importStep === 4 && '4. IMPORTACIÓN EXITOSA'}
-              </h3>
-              <button
-                onClick={() => setShowImportExcel(false)}
-                disabled={importStep === 3}
-                className="font-mono font-bold text-lg hover:text-brand-red disabled:opacity-50"
-              >
-                ×
-              </button>
-            </div>
-
-            {/* STEP 1: Upload simulation */}
-            {importStep === 1 && (
-              <div className="flex flex-col gap-4 py-4 items-center justify-center border-2 border-dashed border-neutral-400 p-6 bg-neutral-50/50">
-                <FileSpreadsheet size={48} className="text-neutral-400" />
-                <div className="text-center text-xs">
-                  <p className="font-bold text-black">Arrastra tu archivo .xlsx o .csv aquí</p>
-                  <p className="text-neutral-500 mt-1">El archivo debe contener SKU, Nombre, Costo y stock mínimo.</p>
-                </div>
-                <button
-                  onClick={triggerExcelUpload}
-                  className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 mt-2"
-                >
-                  Simular Subida de inventario.xlsx
-                </button>
-              </div>
-            )}
-
-            {/* STEP 2: Mapping config */}
-            {importStep === 2 && (
-              <div className="flex flex-col gap-4 text-xs">
-                <p className="text-neutral-700 font-medium leading-relaxed bg-neutral-100 p-2.5 border border-black/10">
-                  Archivo subido: <code className="font-mono font-bold text-black">{excelFilename}</code>. 
-                  Por favor, asocia los campos del sistema con las columnas detectadas en tu hoja de Excel.
-                </p>
-
-                <div className="space-y-2.5">
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono font-bold">SKU (Filtro base)</span>
-                    <select
-                      value={excelMapping.sku}
-                      onChange={(e) => setExcelMapping({ ...excelMapping, sku: e.target.value })}
-                      className="neo-input font-mono text-[11px] py-1"
-                    >
-                      <option value="REF_PRODUCTO">REF_PRODUCTO (Col. A)</option>
-                      <option value="SKU">SKU (Col. B)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono font-bold">Nombre del Producto</span>
-                    <select
-                      value={excelMapping.nombre}
-                      onChange={(e) => setExcelMapping({ ...excelMapping, nombre: e.target.value })}
-                      className="neo-input font-mono text-[11px] py-1"
-                    >
-                      <option value="DESCRIPCION_LARGA">DESCRIPCION_LARGA (Col. C)</option>
-                      <option value="NAME">NAME (Col. A)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono font-bold">Precio Venta Cop</span>
-                    <select
-                      value={excelMapping.precio_venta}
-                      onChange={(e) => setExcelMapping({ ...excelMapping, precio_venta: e.target.value })}
-                      className="neo-input font-mono text-[11px] py-1"
-                    >
-                      <option value="PRECIO_CORRIENTE">PRECIO_CORRIENTE (Col. E)</option>
-                      <option value="PRICE">PRICE (Col. D)</option>
-                    </select>
-                  </div>
-
-                  <div className="flex justify-between items-center">
-                    <span className="font-mono font-bold">Stock Inicial Físico</span>
-                    <select
-                      value={excelMapping.stock_inicial}
-                      onChange={(e) => setExcelMapping({ ...excelMapping, stock_inicial: e.target.value })}
-                      className="neo-input font-mono text-[11px] py-1"
-                    >
-                      <option value="CANTIDAD_FONDOS">CANTIDAD_FONDOS (Col. F)</option>
-                      <option value="STOCK">STOCK (Col. F)</option>
-                    </select>
-                  </div>
-                </div>
-
-                <div className="bg-green-50 border border-green-500 p-2.5 text-[10px] text-green-800 leading-normal">
-                  💡 <strong>Validación inicial exitosa:</strong> Se detectaron 80 filas. 78 filas están listas para importar. 2 filas registran valores nulos (se omitirán).
-                </div>
-
-                <div className="flex gap-2 justify-end mt-2">
-                  <button
-                    onClick={() => setImportStep(1)}
-                    className="border border-black hover:bg-neutral-50 px-4 py-2 font-mono font-bold"
-                  >
-                    Atrás
-                  </button>
-                  <button
-                    onClick={executeImportSimulation}
-                    className="neo-btn bg-brand-blue text-white hover:opacity-90 px-4 py-2"
-                  >
-                    Iniciar Importación Masiva
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 3: Progress simulation */}
-            {importStep === 3 && (
-              <div className="flex flex-col gap-4 text-xs font-mono py-4">
-                <div className="flex justify-between items-center">
-                  <span>Importando registros en Postgres...</span>
-                  <span className="font-bold">{importProgress}%</span>
-                </div>
-                
-                {/* Progress bar */}
-                <div className="w-full bg-neutral-100 border-2 border-black h-5 overflow-hidden">
-                  <div className="bg-brand-blue h-full transition-all duration-300" style={{ width: `${importProgress}%` }}></div>
-                </div>
-
-                {/* Websocket simulation log */}
-                <div className="bg-neutral-900 text-green-400 p-3 h-32 overflow-y-auto text-[10px] font-mono leading-relaxed border border-black">
-                  {importLogs.map((log, index) => (
-                    <div key={index} className="flex gap-2">
-                      <span className="text-neutral-500">&gt;</span>
-                      <span>{log}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* STEP 4: Success */}
-            {importStep === 4 && (
-              <div className="flex flex-col gap-4 text-xs py-4 text-center items-center">
-                <div className="w-12 h-12 rounded-full border-2 border-black bg-green-100 text-green-800 flex items-center justify-center font-bold text-xl">✓</div>
-                <div>
-                  <h4 className="text-sm font-bold text-black">¡IMPORTACIÓN COMPLETADA!</h4>
-                  <p className="text-neutral-600 mt-1 max-w-sm">
-                    Se crearon 78 productos correctamente en tu schema PostgreSQL. El saldo de stock inicial fue agregado en un movimiento histórico.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowImportExcel(false)}
-                  className="neo-btn bg-brand-blue text-white hover:opacity-90 px-6 py-2.5 mt-2"
-                >
-                  Ver Inventario Actualizado
-                </button>
-              </div>
-            )}
-
-          </div>
-        </div>
-      )}
 
       {/* 3. Modal: Crear Pedido */}
       {showCreateOrder && (
@@ -8502,14 +8363,17 @@ export default function AppHome() {
                 {/* Cambiar estado */}
                 <div className="p-4 bg-neutral-50">
                   <div className="font-mono text-[10px] font-bold text-neutral-500 uppercase mb-2">Cambiar estado</div>
+                  {/* CANCELADO va aparte, no en la misma fila que ENTREGADO:
+                      con flex-wrap en móvil el salto de línea es impredecible y
+                      quedaban pegados, así que un toque mal dado cancelaba el
+                      pedido de un cliente (y eso no tiene deshacer). */}
                   <div className="flex flex-wrap gap-2">
-                    {otrosEstados.map(next => (
+                    {otrosEstados.filter(e => e !== 'cancelado').map(next => (
                       <button
                         key={next}
                         onClick={() => { handleTransitionOrder(ord.id, next); setOrderManager(null); }}
                         className={`font-mono text-[10px] font-bold px-3 py-2 border-2 border-black ${
-                          next === 'cancelado' ? 'bg-white text-brand-red hover:bg-red-50'
-                          : next === 'entregado' ? 'bg-green-600 text-white hover:bg-green-700'
+                          next === 'entregado' ? 'bg-green-600 text-white hover:bg-green-700'
                           : next === 'despachado' ? 'bg-brand-blue text-white hover:opacity-90'
                           : next === 'en_preparacion' ? 'bg-yellow-400 text-black hover:bg-yellow-500'
                           : next === 'confirmado' ? 'bg-blue-200 text-black hover:bg-blue-300'
@@ -8520,6 +8384,16 @@ export default function AppHome() {
                       </button>
                     ))}
                   </div>
+                  {otrosEstados.includes('cancelado') && (
+                    <div className="mt-3 pt-3 border-t border-neutral-300">
+                      <button
+                        onClick={() => { handleTransitionOrder(ord.id, 'cancelado'); setOrderManager(null); }}
+                        className="font-mono text-[10px] font-bold px-3 py-2 border-2 border-brand-red bg-white text-brand-red hover:bg-red-50"
+                      >
+                        → CANCELAR PEDIDO
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 {/* Historial ("footsteps") de este pedido */}

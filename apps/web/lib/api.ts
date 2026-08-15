@@ -531,6 +531,16 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  /** Corrige un ingreso. Si cambia monto/cuenta, el API ajusta el saldo bancario atómicamente. */
+  actualizarIngreso: (
+    id: string,
+    data: Partial<{ descripcion: string; categoria: CategoriaIngreso; monto: number; fecha: string; medioPago: string | null; cuentaBancariaId: string; notas: string | null }>,
+  ) =>
+    request<{ ingreso: IngresoBancario }>(`/finanzas/ingresos/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
   eliminarIngreso: (id: string) =>
     request<void>(`/finanzas/ingresos/${id}`, { method: 'DELETE' }),
 
@@ -574,6 +584,10 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  /** Revierte una transferencia: devuelve los saldos y deja la fila como evidencia. */
+  revertirTransferencia: (id: string) =>
+    request<{ cuentas: CuentaBancaria[] }>(`/finanzas/transferencias/${id}`, { method: 'DELETE' }),
+
   // --- Gastos operativos ---
 
   listarGastos: () => request<{ gastos: GastoOperativo[] }>('/finanzas/gastos'),
@@ -581,6 +595,16 @@ export const api = {
   crearGasto: (data: { descripcion: string; categoria?: CategoriaGasto; monto: number; fecha?: string; medioPago?: string; cuentaBancariaId?: string; notas?: string }) =>
     request<{ gasto: GastoOperativo }>('/finanzas/gastos', {
       method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  /** Corrige un gasto. Si cambia monto/cuenta, el API ajusta el saldo bancario atómicamente. */
+  actualizarGasto: (
+    id: string,
+    data: Partial<{ descripcion: string; categoria: CategoriaGasto; monto: number; fecha: string; medioPago: string | null; cuentaBancariaId: string | null; notas: string | null }>,
+  ) =>
+    request<{ gasto: GastoOperativo }>(`/finanzas/gastos/${id}`, {
+      method: 'PATCH',
       body: JSON.stringify(data),
     }),
 
@@ -750,7 +774,7 @@ export const api = {
       año: number
       semanas: Array<{
         semana: number; label: string; desde: string; hasta: string
-        pedidos: number; ventas: number; gastos: number; margenBruto: number
+        pedidos: number; ventas: number; gastos: number; costoVentas: number; margenBruto: number; utilidadNeta: number
         topProducto: { nombre: string; ventas: number } | null
       }>
     }>(`/reportes/semanas-comparacion?año=${año}&semanas=${semanas.join(',')}`),

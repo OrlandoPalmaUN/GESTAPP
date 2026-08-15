@@ -274,12 +274,16 @@ Responde en formato markdown con estas secciones (máximo 200 palabras en total)
 
 export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   const conSesion = { preHandler: [fastify.authenticate] }
+  // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
+  // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
+  // así que cualquier empleado con login podía borrar facturas o cuentas.
+  const soloAdmin = { preHandler: [fastify.requireRole('admin', 'superadmin')] }
 
   // ──────────────────────────────────────────────────────────────────────────
   // GET /reportes/periodo
   // Estadísticas del período: ventas, pedidos, compras, gastos, top productos
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/reportes/periodo', conSesion, async (request, reply) => {
+  fastify.get('/reportes/periodo', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const rango = parseQuery(request.query as Record<string, string>)
@@ -310,6 +314,34 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         COALESCE(SUM(total) FILTER (WHERE created_at >= $3 AND created_at < $4), 0)  AS "totalComprasPrev"
       FROM pedidos_proveedor
       WHERE estado != 'cancelado' AND deleted_at IS NULL
+    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
+
+    // ── Costo de la mercancía vendida (COGS) ──────────────────────────────
+    // OJO: el margen bruto NO es "ventas − compras". Las compras (OC) son
+    // reposición de inventario y pueden no tener nada que ver con lo que se
+    // vendió en el período: comprar $500k en agosto y vender mercancía traída
+    // en julio daba un "margen" negativo en un mes rentable, y el dueño tomaba
+    // decisiones con esa cifra.
+    //
+    // El costo real de lo vendido sale del snapshot `pedido_items.precio_costo`
+    // (migración 007, creado exactamente para esto). Los ítems sin costo
+    // cargado suman NULL — SUM los ignora, así que contribuirían margen
+    // inflado; por eso se reporta aparte `ventasSinCosto`, para que la UI
+    // pueda advertir en vez de mostrar un número que parece exacto y no lo es.
+    const costoQ = await db.query<{
+      costoVentas: string; costoVentasPrev: string; ventasSinCosto: string;
+    }>(`
+      SELECT
+        COALESCE(SUM(pi.precio_costo * pi.cantidad)
+                 FILTER (WHERE pe.created_at >= $1 AND pe.created_at < $2), 0) AS "costoVentas",
+        COALESCE(SUM(pi.precio_costo * pi.cantidad)
+                 FILTER (WHERE pe.created_at >= $3 AND pe.created_at < $4), 0) AS "costoVentasPrev",
+        COALESCE(SUM(pi.subtotal)
+                 FILTER (WHERE pe.created_at >= $1 AND pe.created_at < $2
+                           AND pi.precio_costo IS NULL), 0)                    AS "ventasSinCosto"
+      FROM pedido_items pi
+      JOIN pedidos pe ON pi.pedido_id = pe.id
+      WHERE pe.estado != 'cancelado' AND pe.deleted_at IS NULL
     `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
 
     // ── Gastos operativos ─────────────────────────────────────────────────
@@ -369,6 +401,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     const g = gastosQ.rows[0]!
     const cxc = cxcQ.rows[0]!
     const ing = ingresosQ.rows[0]!
+    const co = costoQ.rows[0]!
 
     const totalVentas = Number(v.totalVentas)
     const totalVentasPrev = Number(v.totalVentasPrev)
@@ -376,8 +409,12 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     const totalComprasPrev = Number(c.totalComprasPrev)
     const totalGastos = Number(g.totalGastos)
     const totalGastosPrev = Number(g.totalGastosPrev)
-    const margenBruto = totalVentas - totalCompras
-    const margenBrutoPrev = totalVentasPrev - totalComprasPrev
+    const costoVentas = Number(co.costoVentas)
+    const costoVentasPrev = Number(co.costoVentasPrev)
+    const ventasSinCosto = Number(co.ventasSinCosto)
+    // Margen bruto = ventas − costo de LO VENDIDO (no de lo comprado en el mes).
+    const margenBruto = totalVentas - costoVentas
+    const margenBrutoPrev = totalVentasPrev - costoVentasPrev
     const utilidadNeta = margenBruto - totalGastos
     const totalPedidos = Number(v.totalPedidos)
     const totalPedidosPrev = Number(v.totalPedidosPrev)
@@ -400,10 +437,17 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         delta: delta(totalVentas, totalVentasPrev),
         deltaPedidos: totalPedidosPrev > 0 ? totalPedidos - totalPedidosPrev : null,
       },
+      // Las compras son reposición de inventario (flujo de caja), NO el costo
+      // de lo vendido — se reportan aparte y no entran al margen.
       compras: {
         total: totalCompras,
         oc: Number(c.totalOC),
         delta: delta(totalCompras, totalComprasPrev),
+      },
+      costoVentas: {
+        total: costoVentas,
+        /** Ventas del período cuyos ítems no tienen costo cargado — el margen las sobreestima. */
+        ventasSinCosto,
       },
       gastos: {
         total: totalGastos,
@@ -415,6 +459,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         total: margenBruto,
         porcentaje: totalVentas > 0 ? Math.round((margenBruto / totalVentas) * 100) : 0,
         delta: delta(margenBruto, margenBrutoPrev),
+        ventasSinCosto,
       },
       utilidadNeta,
       topProductos: topQ.rows.map((r) => ({
@@ -431,7 +476,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   // Resumen rápido de todos los meses o semanas del año — una sola query.
   // Usado para la vista de tarjetas en el frontend.
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/reportes/overview', conSesion, async (request, reply) => {
+  fastify.get('/reportes/overview', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     const q = request.query as Record<string, string>
@@ -552,7 +597,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /reportes/ia
   // Análisis de IA del período: negocio + redes sociales con Groq
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/reportes/ia', conSesion, async (request, reply) => {
+  fastify.get('/reportes/ia', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
 
     if (!fastify.config.GROQ_API_KEY) {
@@ -576,7 +621,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /reportes/analisis-guardado?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
   // Devuelve el análisis guardado para un período (si existe).
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/reportes/analisis-guardado', conSesion, async (request, reply) => {
+  fastify.get('/reportes/analisis-guardado', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const q = request.query as Record<string, string>
     if (!q.desde || !q.hasta) return reply.badRequest('Faltan parámetros desde/hasta')
@@ -599,7 +644,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /reportes/top-clientes?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
   // Top clientes del período: pedidos, ventas totales, saldo pendiente.
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/reportes/top-clientes', conSesion, async (request, reply) => {
+  fastify.get('/reportes/top-clientes', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const q = request.query as Record<string, string>
     const rango = parseQuery(q)
@@ -645,7 +690,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /reportes/calor?desde=YYYY-MM-DD&hasta=YYYY-MM-DD
   // Mapa de calor: pedidos por día de semana × hora + posts IG por día/hora/tipo
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/reportes/calor', conSesion, async (request, reply) => {
+  fastify.get('/reportes/calor', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const q = request.query as Record<string, string>
     const rango = parseQuery(q)
@@ -693,7 +738,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
   // GET /reportes/semanas-comparacion?año=2026&semanas=22,23,24,25
   // Comparación de N semanas: ventas, pedidos, gastos, top producto.
   // ──────────────────────────────────────────────────────────────────────────
-  fastify.get('/reportes/semanas-comparacion', conSesion, async (request, reply) => {
+  fastify.get('/reportes/semanas-comparacion', soloAdmin, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const q = request.query as Record<string, string>
     const año = parseInt(q.año ?? String(new Date().getFullYear()), 10)
@@ -704,7 +749,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     const db = request.tenantDb
     const resultados = await Promise.all(semanas.map(async (sem) => {
       const rango = rangoSemana(año, sem)
-      const [v, g, top] = await Promise.all([
+      const [v, g, costo, top] = await Promise.all([
         db.query<{ pedidos: string; ventas: string }>(`
           SELECT COUNT(*) AS pedidos, COALESCE(SUM(total), 0) AS ventas
           FROM pedidos
@@ -713,6 +758,13 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         db.query<{ gastos: string }>(`
           SELECT COALESCE(SUM(monto), 0) AS gastos FROM gastos_operativos
           WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
+        `, [rango.desde, rango.hasta]),
+        // Costo de lo vendido en la semana — mismo criterio que /reportes/periodo.
+        db.query<{ costo: string }>(`
+          SELECT COALESCE(SUM(pi.precio_costo * pi.cantidad), 0) AS costo
+          FROM pedido_items pi JOIN pedidos pe ON pi.pedido_id = pe.id
+          WHERE pe.created_at >= $1 AND pe.created_at < $2
+            AND pe.estado != 'cancelado' AND pe.deleted_at IS NULL
         `, [rango.desde, rango.hasta]),
         db.query<{ nombre: string; ventas: string }>(`
           SELECT p.nombre, SUM(pi.subtotal) AS ventas
@@ -725,6 +777,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
       ])
       const ventas = Number(v.rows[0]?.ventas ?? 0)
       const gastos = Number(g.rows[0]?.gastos ?? 0)
+      const costoVentas = Number(costo.rows[0]?.costo ?? 0)
       return {
         semana: sem,
         label: rango.label,
@@ -733,7 +786,11 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         pedidos: Number(v.rows[0]?.pedidos ?? 0),
         ventas,
         gastos,
-        margenBruto: ventas - gastos,
+        costoVentas,
+        // Antes era `ventas − gastos`, que no es margen bruto (ignoraba el
+        // costo de la mercancía y restaba gastos operativos, que van después).
+        margenBruto: ventas - costoVentas,
+        utilidadNeta: ventas - costoVentas - gastos,
         topProducto: top.rows[0] ? { nombre: top.rows[0].nombre, ventas: Number(top.rows[0].ventas) } : null,
       }
     }))
