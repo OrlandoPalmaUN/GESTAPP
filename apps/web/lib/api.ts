@@ -10,6 +10,14 @@ export interface ItemPapelera {
   eliminadoEn: string
 }
 
+/** Un resultado de la búsqueda global — ver `GET /buscar`. */
+export interface ResultadoBusqueda {
+  tipo: 'cliente' | 'producto' | 'proveedor' | 'pedido' | 'compra' | 'factura_venta' | 'factura_compra'
+  id: string
+  etiqueta: string
+  subtitulo: string
+}
+
 /** Info mínima del tenant — la incluye `/auth/me` cuando el usuario pertenece a una empresa. */
 type TenantDeSesion = Pick<Tenant, 'id' | 'name' | 'slug' | 'status'> & { plan: PlanId }
 
@@ -131,6 +139,15 @@ export const api = {
     request<{ status: string }>(`/admin/usuarios/${id}`, { method: 'DELETE' }),
 
   listarTenants: () => request<{ tenants: Tenant[] }>('/admin/tenants'),
+
+  /**
+   * Búsqueda global cross-módulo (clientes, productos, proveedores, pedidos,
+   * OC y facturas). El endpoint existía desde siempre en el backend pero el
+   * frontend nunca lo llamaba: la única caja de búsqueda de toda la app estaba
+   * en Inventario y solo miraba nombre y SKU.
+   */
+  buscarGlobal: (q: string) =>
+    request<{ resultados: ResultadoBusqueda[]; total: number }>(`/buscar?q=${encodeURIComponent(q)}`),
 
   crearTenant: (data: { name: string; slug: string; plan?: PlanId }) =>
     request<{ tenant: Tenant }>('/admin/tenants', {

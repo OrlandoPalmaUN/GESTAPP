@@ -133,9 +133,10 @@ const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
   comisiones: 'Comisiones', marketing: 'Marketing', otros: 'Otros',
 };
 
-import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type VarianteProducto } from '../lib/api';
+import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type ResultadoBusqueda, type VarianteProducto } from '../lib/api';
 import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
 import { MoneyInput } from '../components/MoneyInput';
+import { BuscadorGlobal } from '../components/BuscadorGlobal';
 import { useAuth } from '../lib/auth-context';
 // Solo los tipos — los datos de ejemplo (INITIAL_*, TENANTS_GLOBAL_METRICS) ya
 // no se usan: alimentaban paneles que mostraban cifras inventadas como si
@@ -1313,6 +1314,60 @@ export default function AppHome() {
       }
     })();
   }, [superAdminMode, superAdminTenants]);
+
+  /**
+   * Lleva al módulo correspondiente a un resultado del buscador global.
+   *
+   * Hoy solo puede abrir el módulo (y en el caso de un pedido, además su
+   * gestor). Sin URLs propias no hay forma de "abrir" un producto o una
+   * factura puntual — eso llega con el ruteo por módulo.
+   */
+  const irAResultadoBusqueda = useCallback((r: ResultadoBusqueda) => {
+    setSuperAdminMode(false);
+    setSidebarOpen(false);
+    switch (r.tipo) {
+      case 'cliente':
+        setActiveTab('crm');
+        setCrmTypeFilter('clientes');
+        setSelectedCrmEntityId(r.id);
+        break;
+      case 'proveedor':
+        setActiveTab('crm');
+        setCrmTypeFilter('proveedores');
+        setSelectedCrmEntityId(r.id);
+        break;
+      case 'producto':
+        setActiveTab('inventario');
+        // Deja el inventario filtrado por ese producto, que es lo más cerca de
+        // "abrirlo" que se puede sin URL propia.
+        setSearchQuery(r.etiqueta);
+        break;
+      case 'pedido': {
+        setActiveTab('pedidos');
+        const pedido = orders.find((o) => o.id === r.id);
+        if (pedido) {
+          setOrderManager(pedido);
+          setOrderManagerNotas(pedido.notas ?? '');
+          setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' });
+          setAbonoError(null);
+        }
+        break;
+      }
+      case 'compra':
+        setActiveTab('finanzas');
+        setFinanceSubTab('compras');
+        break;
+      case 'factura_venta':
+        setActiveTab('finanzas');
+        setFinanceSubTab('cxc');
+        break;
+      case 'factura_compra':
+        setActiveTab('finanzas');
+        setFinanceSubTab('cxp');
+        break;
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders]);
 
   const fetchTransferencias = useCallback(async () => {
     if (!usuario?.tenantId) return;
@@ -3076,6 +3131,13 @@ export default function AppHome() {
           </div>
 
           <div className="flex items-center gap-4 text-xs font-mono">
+            {/* Buscador global — solo tiene sentido dentro de una empresa. */}
+            {tenant && !superAdminMode && (
+              <div className="hidden sm:block">
+                <BuscadorGlobal onIrA={irAResultadoBusqueda} />
+              </div>
+            )}
+
             <div className="text-right hidden md:block">
               <div className="font-bold text-black flex items-center gap-1.5 justify-end">
                 <span className="w-2 h-2 bg-green-600 rounded-full inline-block animate-pulse"></span>
