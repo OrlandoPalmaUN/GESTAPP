@@ -2893,6 +2893,35 @@ export default function AppHome() {
     }
   };
 
+  /**
+   * Cierre del Gestor de Pedido con guarda de cambios sin guardar.
+   *
+   * El textarea de notas exige "Guardar notas", pero el modal se cerraba con un
+   * clic en el fondo: escribías tres líneas de instrucciones de entrega, tocabas
+   * un poco afuera y desaparecían sin ningún aviso.
+   */
+  const cerrarGestorPedido = useCallback(() => {
+    if (orderManager) {
+      const notasGuardadas = orders.find((o) => o.id === orderManager.id)?.notas ?? '';
+      if (orderManagerNotas !== notasGuardadas) {
+        const ok = window.confirm('Escribiste notas que no guardaste. ¿Cerrar el pedido y perderlas?');
+        if (!ok) return;
+      }
+    }
+    setOrderManager(null);
+  }, [orderManager, orderManagerNotas, orders]);
+
+  // ESC cierra el Gestor de Pedido (con la misma guarda). Ninguno de los
+  // modales de la app respondía a ESC.
+  useEffect(() => {
+    if (!orderManager) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { e.preventDefault(); cerrarGestorPedido(); }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [orderManager, cerrarGestorPedido]);
+
   // Gestor de pedido: crear abono (con refresh en tiempo real de la factura correspondiente)
   const handleCrearAbono = async (facturaId: string, monto: number, pagarCompleto = false) => {
     setGuardandoAbono(true);
@@ -8196,8 +8225,14 @@ export default function AppHome() {
         const otrosEstados = todosEstados.filter(e => e !== ord.estado);
 
         return (
-          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={() => setOrderManager(null)}>
-            <div className="neo-card bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col gap-0" onClick={e => e.stopPropagation()}>
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4" onClick={cerrarGestorPedido}>
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label={`Pedido ${ord.numero}`}
+              className="neo-card bg-white w-full max-w-2xl max-h-[90vh] overflow-y-auto flex flex-col gap-0"
+              onClick={e => e.stopPropagation()}
+            >
 
               {/* Header */}
               <div className="flex items-start justify-between border-b-2 border-black p-4">
@@ -8216,7 +8251,7 @@ export default function AppHome() {
                     {client && <span className="text-[11px] text-neutral-500 font-mono">{client.nombre}</span>}
                   </div>
                 </div>
-                <button onClick={() => setOrderManager(null)} className="neo-btn p-1.5 hover:bg-neutral-50 shrink-0 ml-4" aria-label="Cerrar"><X size={16} /></button>
+                <button onClick={cerrarGestorPedido} className="neo-btn p-2 hover:bg-neutral-50 shrink-0 ml-4" aria-label="Cerrar"><X size={16} /></button>
               </div>
 
               <div className="flex flex-col gap-0 divide-y divide-black/10">
