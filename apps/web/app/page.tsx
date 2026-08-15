@@ -138,6 +138,7 @@ import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
 import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
 import { CarteraPorEdades } from '../components/CarteraPorEdades';
+import { usePaginacion, Paginador } from '../components/Paginador';
 import { useAuth } from '../lib/auth-context';
 // Solo los tipos — los datos de ejemplo (INITIAL_*, TENANTS_GLOBAL_METRICS) ya
 // no se usan: alimentaban paneles que mostraban cifras inventadas como si
@@ -528,6 +529,7 @@ export default function AppHome() {
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
   /** Empresas reales para la consola de plataforma — `null` mientras carga. */
   const [superAdminTenants, setSuperAdminTenants] = useState<Tenant[] | null>(null);
+
   
   // --- ESTADOS DEL DATASET MUTABLE (Base de datos en memoria) ---
   // Inventario: conectado al backend real (ver fetchInventario más abajo) —
@@ -603,6 +605,14 @@ export default function AppHome() {
     descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '',
   });
   const [guardandoIngreso, setGuardandoIngreso] = useState(false);
+
+  // Paginación de las tablas que crecen sin techo: el ledger de inventario
+  // (una fila por cada movimiento, para siempre) y los libros de gastos e
+  // ingresos. Antes se renderizaba cada fila existente en cada re-render de
+  // la página — y como casi no hay useMemo, eso pasaba en cada tecleo.
+  const movimientosPag = usePaginacion(movements, 25);
+  const gastosPag = usePaginacion(gastos, 25);
+  const ingresosPag = usePaginacion(ingresos, 25);
   const [ingresoFormError, setIngresoFormError] = useState<string | null>(null);
 
   // --- Resumen financiero ---
@@ -4006,7 +4016,7 @@ export default function AppHome() {
                     <div className="neo-card bg-white">
                       <h3 className="font-mono text-sm font-bold border-b border-black pb-2 mb-3">HISTORIAL TRANSACCIONAL DE INVENTARIO (Últimos Movimientos)</h3>
                       <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                        {movements.map((mov) => {
+                        {movimientosPag.visibles.map((mov) => {
                           const prod = products.find(p => p.id === mov.producto_id);
                           const isEntry = ['entrada_compra', 'entrada_devolucion', 'ajuste_positivo', 'liberacion_reserva'].includes(mov.tipo);
                           
@@ -4029,6 +4039,7 @@ export default function AppHome() {
                             </div>
                           );
                         })}
+                        <Paginador {...movimientosPag} etiqueta="movimientos" />
                       </div>
                     </div>
 
@@ -5294,7 +5305,7 @@ export default function AppHome() {
                               </tr>
                             </thead>
                             <tbody>
-                              {gastos.map((g) => {
+                              {gastosPag.visibles.map((g) => {
                                 const cuenta = bankAccounts.find(b => b.id === g.cuentaBancariaId);
                                 return (
                                   <tr key={g.id} className="border-b border-neutral-200 hover:bg-neutral-50">
@@ -5328,6 +5339,9 @@ export default function AppHome() {
                               )}
                             </tbody>
                           </table>
+                          <div className="px-3 pb-3">
+                            <Paginador {...gastosPag} etiqueta="gastos" />
+                          </div>
                         </div>
                       </div>
                     )}
@@ -5370,7 +5384,7 @@ export default function AppHome() {
                               </tr>
                             </thead>
                             <tbody>
-                              {ingresos.map((ing) => {
+                              {ingresosPag.visibles.map((ing) => {
                                 const cuenta = bankAccounts.find(b => b.id === ing.cuentaBancariaId);
                                 return (
                                   <tr key={ing.id} className="border-b border-neutral-200 hover:bg-neutral-50">
@@ -5404,6 +5418,9 @@ export default function AppHome() {
                               )}
                             </tbody>
                           </table>
+                          <div className="px-3 pb-3">
+                            <Paginador {...ingresosPag} etiqueta="ingresos" />
+                          </div>
                         </div>
                       </div>
                     )}
