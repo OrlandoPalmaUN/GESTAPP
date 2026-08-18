@@ -139,6 +139,10 @@ import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
 import { CarteraPorEdades } from '../components/CarteraPorEdades';
 import { usePaginacion, Paginador } from '../components/Paginador';
+import {
+  leerEstadoUrl, escribirEstadoUrl, valorInicialDeUrl, pedidoInicialDeUrl,
+  TABS_VALIDAS, FINANZAS_SUBTABS_VALIDAS, COM_SUBTABS_VALIDAS,
+} from '../lib/urlState';
 import { useAuth } from '../lib/auth-context';
 // Solo los tipos — los datos de ejemplo (INITIAL_*, TENANTS_GLOBAL_METRICS) ya
 // no se usan: alimentaban paneles que mostraban cifras inventadas como si
@@ -480,7 +484,12 @@ function HistorialEntidad({ entidadTipo, entidadId }: { entidadTipo: string; ent
 
 export default function AppHome() {
   // --- ESTADOS GENERALES DE LA APP ---
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'auditoria' | 'config'>('dashboard');
+  // El estado de navegación se inicializa DESDE la URL (ver lib/urlState.ts):
+  // así un link a un pedido abre directo en la pestaña correcta y refrescar no
+  // devuelve al Dashboard.
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'auditoria' | 'config'>(
+    () => valorInicialDeUrl('tab', TABS_VALIDAS, 'dashboard'),
+  );
   // Drawer del menú lateral en mobile/tablet (< lg) — en lg+ el sidebar siempre está visible y este estado se ignora.
   const [sidebarOpen, setSidebarOpen] = useState(false);
   // --- REPORTES ---
@@ -647,7 +656,9 @@ export default function AppHome() {
   const [calendarEvents, setCalendarEvents] = useState<EventoCalendario[]>([]);
   const [comunicacionesCargando, setComunicacionesCargando] = useState(false);
   const [comunicacionesError, setComunicacionesError] = useState<string | null>(null);
-  const [comunicacionesSubTab, setComunicacionesSubTab] = useState<'calendario' | 'redes' | 'notas'>('redes');
+  const [comunicacionesSubTab, setComunicacionesSubTab] = useState<'calendario' | 'redes' | 'notas'>(
+    () => valorInicialDeUrl('com', COM_SUBTABS_VALIDAS, 'redes'),
+  );
 
   // --- Notas internas ---
   const [notasInternas, setNotasInternas] = useState<NotaInterna[]>([]);
@@ -717,7 +728,9 @@ export default function AppHome() {
   const [transicionandoCompra, setTransicionandoCompra] = useState(false);
 
   // --- SUB-TABS INTERNAS ---
-  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos'>('resumen');
+  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos'>(
+    () => valorInicialDeUrl('finanzas', FINANZAS_SUBTABS_VALIDAS, 'resumen'),
+  );
 
   // --- BUSCADORES Y FILTROS ---
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -1379,6 +1392,67 @@ export default function AppHome() {
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orders]);
+
+  // ─── Estado de navegación en la URL ──────────────────────────────────────
+  // El tab inicial ya se leyó de la URL en el useState de arriba; acá queda
+  // reflejar los cambios, restaurar el pedido cuando llegue del servidor y
+  // atender el botón Atrás.
+  const primeraEscrituraUrl = useRef(true);
+  const pedidoPendienteDeAbrir = useRef<string | null>(pedidoInicialDeUrl());
+
+  const abrirPedidoPorId = useCallback((id: string): boolean => {
+    const p = orders.find((o) => o.id === id);
+    if (!p) return false;
+    setOrderManager(p);
+    setOrderManagerNotas(p.notas ?? '');
+    setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' });
+    setAbonoError(null);
+    return true;
+  }, [orders]);
+
+  // Abrir el pedido que venía en la URL, en cuanto el servidor responda.
+  useEffect(() => {
+    const id = pedidoPendienteDeAbrir.current;
+    if (!id || orders.length === 0) return;
+    pedidoPendienteDeAbrir.current = null;
+    abrirPedidoPorId(id);
+  }, [orders, abrirPedidoPorId]);
+
+  // Reflejar la navegación en la URL. La primera escritura reemplaza en vez de
+  // apilar, para no dejar una entrada de historial antes de la primera vista.
+  useEffect(() => {
+    escribirEstadoUrl(
+      {
+        tab: activeTab,
+        finanzas: activeTab === 'finanzas' ? financeSubTab : undefined,
+        com: activeTab === 'comunicaciones' ? comunicacionesSubTab : undefined,
+        pedido: orderManager?.id,
+      },
+      primeraEscrituraUrl.current ? 'replace' : 'push',
+    );
+    primeraEscrituraUrl.current = false;
+  }, [activeTab, financeSubTab, comunicacionesSubTab, orderManager]);
+
+  // Botón Atrás / Adelante del navegador.
+  useEffect(() => {
+    const onPop = () => {
+      const e = leerEstadoUrl();
+      if (!e) return;
+      if ((TABS_VALIDAS as readonly string[]).includes(e.tab)) {
+        setActiveTab(e.tab as typeof TABS_VALIDAS[number]);
+      }
+      if (e.finanzas && (FINANZAS_SUBTABS_VALIDAS as readonly string[]).includes(e.finanzas)) {
+        setFinanceSubTab(e.finanzas as typeof FINANZAS_SUBTABS_VALIDAS[number]);
+      }
+      if (e.com && (COM_SUBTABS_VALIDAS as readonly string[]).includes(e.com)) {
+        setComunicacionesSubTab(e.com as typeof COM_SUBTABS_VALIDAS[number]);
+      }
+      if (e.pedido) abrirPedidoPorId(e.pedido);
+      else setOrderManager(null);
+    };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, [abrirPedidoPorId]);
 
   const fetchTransferencias = useCallback(async () => {
     if (!usuario?.tenantId) return;
