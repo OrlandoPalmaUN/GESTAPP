@@ -27,7 +27,8 @@ function esEntidadValida(valor: string): valor is EntidadPapelera {
  * marca `deleted_at`, y esta es la puerta para revertir esa marca.
  */
 export async function papeleraRoutes(fastify: FastifyInstance): Promise<void> {
-  const conSesion = { preHandler: [fastify.authenticate] }
+  // Todas las rutas de este módulo son sensibles, así que no queda ninguna
+  // que use solo `authenticate`.
   // Acciones sensibles (destructivas o de dinero/visibilidad financiera): solo
   // admin del tenant. Antes TODO endpoint de negocio usaba solo `conSesion`,
   // así que cualquier empleado con login podía borrar facturas o cuentas.
