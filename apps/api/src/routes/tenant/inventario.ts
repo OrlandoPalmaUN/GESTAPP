@@ -16,6 +16,8 @@ import {
   type ProductoAtributo,
   type VarianteProducto,
 } from '@antigravity/shared'
+
+import { limitesDelPlan, verificarCupo } from '../../lib/limites-plan.js'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 
 interface FilaProducto {
@@ -299,6 +301,18 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
     if (!exigirTenant(request, reply)) return
     const body = crearProductoSchema.safeParse(request.body)
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+
+    // Cupo de productos del plan. Con `subscription_plans` vacía no hay tope.
+    {
+      const { maxProductos } = await limitesDelPlan(fastify.prisma, request.tenant.plan)
+      if (maxProductos !== null) {
+        const { rows } = await request.tenantDb.query<{ total: string }>(
+          'SELECT COUNT(*)::text AS total FROM productos WHERE deleted_at IS NULL',
+        )
+        const error = verificarCupo(Number(rows[0]!.total), maxProductos, 'productos', request.tenant.plan)
+        if (error) return reply.badRequest(error)
+      }
+    }
 
     const client = request.tenantDb
     // Capturado fuera del try para poder referenciarlo también en el catch

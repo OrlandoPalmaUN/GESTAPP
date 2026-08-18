@@ -2,6 +2,7 @@ import { actualizarUsuarioSchema, crearUsuarioSchema, type Usuario } from '@anti
 import type { FastifyInstance } from 'fastify'
 
 import { hashPassword } from '../../lib/password.js'
+import { limitesDelPlan, verificarCupo } from '../../lib/limites-plan.js'
 
 function aUsuarioDeCable(row: {
   id: string
@@ -65,6 +66,18 @@ export async function adminUsuariosRoutes(fastify: FastifyInstance): Promise<voi
         return reply.forbidden('Un admin solo puede crear usuarios dentro de su propia empresa.')
       }
       tenantId = request.user.tenantId
+    }
+
+    // Cupo de usuarios del plan. Con `subscription_plans` vacía no hay tope,
+    // así que hoy no cambia nada; queda activo para cuando se cobre.
+    if (tenantId) {
+      const tenant = await fastify.prisma.tenant.findUnique({ where: { id: tenantId }, select: { plan: true } })
+      if (tenant) {
+        const { maxUsuarios } = await limitesDelPlan(fastify.prisma, tenant.plan)
+        const actuales = await fastify.prisma.usuario.count({ where: { tenantId } })
+        const error = verificarCupo(actuales, maxUsuarios, 'usuarios', tenant.plan)
+        if (error) return reply.badRequest(error)
+      }
     }
 
     const existente = await fastify.prisma.usuario.findUnique({ where: { email: body.data.email } })
