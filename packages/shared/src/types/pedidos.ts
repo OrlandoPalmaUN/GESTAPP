@@ -88,6 +88,17 @@ export interface Cliente {
   direccion: string | null
   ciudad: string | null
   activo: boolean
+  /**
+   * Días de plazo para pagar. `0` = contado, `null` = usar el default (30).
+   * Determina el vencimiento de la CxC que genera cada pedido.
+   */
+  plazoDias: number | null
+  /**
+   * Tope de deuda acordado. `null` = sin límite. La app AVISA al superarlo,
+   * no bloquea: seguir vendiéndole a alguien que ya debe es una decisión del
+   * dueño, no del software.
+   */
+  cupoCredito: number | null
   createdAt: string
 }
 

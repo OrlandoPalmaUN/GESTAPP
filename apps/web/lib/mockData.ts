@@ -47,7 +47,14 @@ export interface InventoryMovement {
   detalle: string;
 }
 
-export interface Customer {
+export interface CustomerCredito {
+  /** Días de plazo para pagar. `0` = contado, `null` = default de 30. */
+  plazoDias: number | null;
+  /** Tope de deuda acordado. `null` = sin límite. Se avisa, no se bloquea. */
+  cupoCredito: number | null;
+}
+
+export interface Customer extends CustomerCredito {
   id: string;
   nombre: string;
   nit: string;

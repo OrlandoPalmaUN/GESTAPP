@@ -331,7 +331,7 @@ export const api = {
 
   actualizarCliente: (
     id: string,
-    data: Partial<{ nombre: string; nit: string | null; email: string | null; telefono: string | null; direccion: string | null; ciudad: string | null; activo: boolean }>,
+    data: Partial<{ nombre: string; nit: string | null; email: string | null; telefono: string | null; direccion: string | null; ciudad: string | null; activo: boolean; plazoDias: number | null; cupoCredito: number | null }>,
   ) =>
     request<{ cliente: Cliente }>(`/clientes/${id}`, {
       method: 'PATCH',

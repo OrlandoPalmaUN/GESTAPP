@@ -192,8 +192,18 @@ async function crearCxcAutomaticaSiAplica(
   if ((existente.rowCount ?? 0) > 0) return // ya tiene su cxc activa — no crear duplicada
 
   const numero = await generarNumeroFacturaVenta(client)
+
+  // El plazo lo define el cliente, no una constante. Antes eran 30 días para
+  // todos; en una PYME conviven clientes de contado, a 30 y a 60, y esa
+  // diferencia es justamente la que determina cuándo hay que cobrar.
+  // `plazo_dias = 0` es contado (vence hoy); NULL cae en los 30 de siempre.
+  const { rows: condiciones } = await client.query<{ plazo_dias: number | null }>(
+    'SELECT plazo_dias FROM clientes WHERE id = $1',
+    [pedido.cliente_id],
+  )
+  const plazo = condiciones[0]?.plazo_dias ?? 30
   const fechaVencimiento = new Date()
-  fechaVencimiento.setDate(fechaVencimiento.getDate() + 30)
+  fechaVencimiento.setDate(fechaVencimiento.getDate() + plazo)
 
   await client.query(
     `INSERT INTO facturas_venta (numero, cliente_id, pedido_id, fecha_vencimiento, total, notas)

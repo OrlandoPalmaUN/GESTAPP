@@ -194,6 +194,8 @@ function clienteAMockCustomer(c: Cliente): Customer {
     email: c.email ?? '',
     telefono: c.telefono ?? '',
     direccion: c.direccion ?? '',
+    plazoDias: c.plazoDias,
+    cupoCredito: c.cupoCredito,
   };
 }
 
@@ -919,7 +921,7 @@ export default function AppHome() {
 
   // Edición de Cliente
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const [editCustomerForm, setEditCustomerForm] = useState({ nombre: '', nit: '', email: '', telefono: '', direccion: '' });
+  const [editCustomerForm, setEditCustomerForm] = useState({ nombre: '', nit: '', email: '', telefono: '', direccion: '', plazoDias: '', cupoCredito: '' });
 
   // Creación de Cliente
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
@@ -2539,7 +2541,11 @@ export default function AppHome() {
   // --- Cliente ---
   const openEditCustomer = (c: Customer) => {
     setEditingCustomer(c);
-    setEditCustomerForm({ nombre: c.nombre, nit: c.nit, email: c.email, telefono: c.telefono, direccion: c.direccion });
+    setEditCustomerForm({
+      nombre: c.nombre, nit: c.nit, email: c.email, telefono: c.telefono, direccion: c.direccion,
+      plazoDias: c.plazoDias == null ? '' : String(c.plazoDias),
+      cupoCredito: c.cupoCredito == null ? '' : String(c.cupoCredito),
+    });
   };
   const handleSaveEditCustomer = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2551,6 +2557,10 @@ export default function AppHome() {
         email: editCustomerForm.email || null,
         telefono: editCustomerForm.telefono || null,
         direccion: editCustomerForm.direccion || null,
+        // '' significa "sin definir" → null, que en plazo cae al default de 30
+        // y en cupo significa sin límite.
+        plazoDias: editCustomerForm.plazoDias === '' ? null : Number(editCustomerForm.plazoDias),
+        cupoCredito: editCustomerForm.cupoCredito === '' ? null : Number(editCustomerForm.cupoCredito),
       });
       setEditingCustomer(null);
       await fetchPedidos();
@@ -7432,16 +7442,46 @@ export default function AppHome() {
                 </div>
 
                 {!showInlineNewClient ? (
-                  <select
-                    value={selectedCustomerId}
-                    onChange={(e) => setSelectedCustomerId(e.target.value)}
-                    className="neo-input"
-                  >
-                    <option value="">— Sin cliente —</option>
-                    {customers.map((c) => (
-                      <option key={c.id} value={c.id}>{c.nombre}{c.nit ? ` (${c.nit})` : ''}</option>
-                    ))}
-                  </select>
+                  <>
+                    <select
+                      value={selectedCustomerId}
+                      onChange={(e) => setSelectedCustomerId(e.target.value)}
+                      className="neo-input"
+                    >
+                      <option value="">— Sin cliente —</option>
+                      {customers.map((c) => (
+                        <option key={c.id} value={c.id}>{c.nombre}{c.nit ? ` (${c.nit})` : ''}</option>
+                      ))}
+                    </select>
+                    {/* Condiciones de crédito del cliente elegido. El aviso de
+                        cupo AVISA, no bloquea: seguir vendiéndole a alguien que
+                        ya debe es decisión del dueño, no del software. */}
+                    {(() => {
+                      const cli = customers.find((c) => c.id === selectedCustomerId);
+                      if (!cli) return null;
+                      const deuda = invoices
+                        .filter((i) => i.tipo === 'cxc' && i.cliente_id === cli.id)
+                        .reduce((a, b) => a + b.saldo_pendiente, 0);
+                      const excede = cli.cupoCredito != null && deuda > cli.cupoCredito;
+                      const plazoTexto = cli.plazoDias == null
+                        ? 'paga a 30 días (default)'
+                        : cli.plazoDias === 0 ? 'paga de contado' : `paga a ${cli.plazoDias} días`;
+                      return (
+                        <div className="mt-1 flex flex-col gap-1">
+                          <p className="font-mono text-[11px] text-neutral-600">
+                            {plazoTexto}
+                            {deuda > 0 && ` · debe ${money(deuda)}`}
+                            {cli.cupoCredito != null && ` · cupo ${money(cli.cupoCredito)}`}
+                          </p>
+                          {excede && (
+                            <p className="font-mono text-[11px] font-bold text-amber-700 border border-amber-500 bg-amber-50 px-2 py-1">
+                              ⚠ Este cliente ya superó su cupo de crédito ({money(deuda)} de {money(cli.cupoCredito!)}). Podés continuar igual.
+                            </p>
+                          )}
+                        </div>
+                      );
+                    })()}
+                  </>
                 ) : (
                   <div className="border border-black/20 bg-neutral-50 p-3 flex flex-col gap-2">
                     <p className="font-mono text-[11px] font-bold text-neutral-500 uppercase">Nuevo cliente</p>
@@ -9233,6 +9273,36 @@ export default function AppHome() {
                 <label className="font-mono font-bold">DIRECCIÓN</label>
                 <input type="text" value={editCustomerForm.direccion} onChange={(e) => setEditCustomerForm({ ...editCustomerForm, direccion: e.target.value })} className="neo-input" />
               </div>
+
+              {/* Condiciones de crédito. Vacío = default (30 días / sin tope). */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-neutral-300 pt-3">
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="cliente-plazo" className="font-mono font-bold">DÍAS PARA PAGAR</label>
+                  <input
+                    id="cliente-plazo"
+                    type="number"
+                    min="0"
+                    placeholder="30"
+                    value={editCustomerForm.plazoDias}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, plazoDias: e.target.value })}
+                    className="neo-input font-mono"
+                  />
+                  <span className="text-[11px] text-neutral-600">0 = contado · vacío = 30 días</span>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label htmlFor="cliente-cupo" className="font-mono font-bold">CUPO DE CRÉDITO</label>
+                  <MoneyInput
+                    id="cliente-cupo"
+                    aria-label="Cupo de crédito del cliente"
+                    placeholder="Sin límite"
+                    value={editCustomerForm.cupoCredito === '' ? '' : Number(editCustomerForm.cupoCredito)}
+                    onChange={(v) => setEditCustomerForm({ ...editCustomerForm, cupoCredito: v === '' ? '' : String(v) })}
+                    className="neo-input font-mono w-full"
+                  />
+                  <span className="text-[11px] text-neutral-600">Vacío = sin límite · solo avisa</span>
+                </div>
+              </div>
+
               <button type="submit" className="neo-btn bg-brand-blue text-white hover:opacity-90 mt-2 py-2.5">GUARDAR CAMBIOS</button>
             </form>
           </div>

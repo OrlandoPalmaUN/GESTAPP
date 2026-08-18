@@ -61,6 +61,10 @@ export const crearClienteSchema = z.object({
   telefono: z.string().optional(),
   direccion: z.string().optional(),
   ciudad: z.string().optional(),
+  /** Días para pagar: 0 = contado. Si se omite, la CxC vence a 30 días. */
+  plazoDias: z.number().int().min(0, 'El plazo no puede ser negativo.').nullable().optional(),
+  /** Tope de deuda acordado. Se avisa al superarlo, no se bloquea. */
+  cupoCredito: z.number().min(0, 'El cupo no puede ser negativo.').nullable().optional(),
 })
 
 /** Editar datos de un cliente ya creado — todos los campos opcionales (PATCH parcial). */
@@ -72,6 +76,8 @@ export const actualizarClienteSchema = z.object({
   direccion: z.string().nullable().optional(),
   ciudad: z.string().nullable().optional(),
   activo: z.boolean().optional(),
+  plazoDias: z.number().int().min(0).nullable().optional(),
+  cupoCredito: z.number().min(0).nullable().optional(),
 })
 
 /** Línea normal — referencia un producto del catálogo. */
