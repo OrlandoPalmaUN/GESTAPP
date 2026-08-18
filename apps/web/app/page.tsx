@@ -9,6 +9,7 @@ import {
   LayoutDashboard,
   Boxes,
   ClipboardList,
+  MessageCircle,
   DollarSign,
   Users,
   Settings,
@@ -139,6 +140,7 @@ import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
 import { CarteraPorEdades } from '../components/CarteraPorEdades';
 import { usePaginacion, Paginador } from '../components/Paginador';
+import { linkWhatsApp, mensajePedido, mensajeEstadoDeCuenta } from '../lib/whatsapp';
 import {
   leerEstadoUrl, escribirEstadoUrl, valorInicialDeUrl, pedidoInicialDeUrl,
   TABS_VALIDAS, FINANZAS_SUBTABS_VALIDAS, COM_SUBTABS_VALIDAS,
@@ -5676,17 +5678,41 @@ export default function AppHome() {
 
                               return (
                                 <div className="flex flex-col gap-4">
-                                  <div className="border-2 border-black p-4 bg-neutral-50 flex items-center gap-4">
+                                  <div className="border-2 border-black p-4 bg-neutral-50 flex items-center gap-4 flex-wrap">
                                     <DollarSign className="text-brand-red shrink-0" size={28} />
-                                    <div>
+                                    <div className="flex-1 min-w-0">
                                       <div className="font-mono text-[11px] text-neutral-500 font-bold">SALDO PENDIENTE (CxC)</div>
                                       <div className={`font-mono text-sm font-black mt-0.5 ${saldoCliente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
-                                        ${saldoCliente.toLocaleString('es-CO')} COP
+                                        {money(saldoCliente)} COP
                                       </div>
                                       <div className="text-[11px] text-neutral-500 mt-1">
                                         De {facturasCliente.length} {facturasCliente.length === 1 ? 'factura emitida' : 'facturas emitidas'}
                                       </div>
                                     </div>
+                                    {/* Cobrar es la razón por la que se abre esta pantalla:
+                                        el estado de cuenta sale armado hacia WhatsApp. */}
+                                    {saldoCliente > 0 && (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          const pendientes = facturasCliente.filter(f => f.saldo_pendiente > 0);
+                                          const mensaje = mensajeEstadoDeCuenta({
+                                            empresa: configEmpresa?.nombreDisplay || tenant?.name || 'Mi empresa',
+                                            cliente: client.nombre,
+                                            facturas: pendientes.map(f => ({
+                                              numero: f.numero,
+                                              fechaVencimiento: f.fecha_vencimiento,
+                                              saldo: f.saldo_pendiente,
+                                            })),
+                                            total: saldoCliente,
+                                          });
+                                          window.open(linkWhatsApp(client.telefono, mensaje), '_blank', 'noopener');
+                                        }}
+                                        className="neo-btn flex items-center gap-1.5 px-3 py-2 text-xs font-mono font-bold bg-green-600 text-white hover:bg-green-700 border-black shrink-0"
+                                      >
+                                        <MessageCircle size={13} /> Cobrar por WhatsApp
+                                      </button>
+                                    )}
                                   </div>
 
                                   <div className="flex flex-col gap-2">
@@ -8623,8 +8649,35 @@ export default function AppHome() {
                   <HistorialEntidad entidadTipo="pedidos" entidadId={ord.id} />
                 </div>
 
-                {/* Footer: editar y eliminar */}
-                <div className="p-4 border-t-2 border-black flex gap-3">
+                {/* Footer: compartir, editar y eliminar */}
+                <div className="p-4 border-t-2 border-black flex gap-3 flex-wrap">
+                  {/* Compartir por WhatsApp: es el canal por el que estos
+                      negocios coordinan con sus clientes. Abre el chat con el
+                      mensaje escrito — enviarlo lo decide la persona. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const cxcPedido = invoices.find(i => i.tipo === 'cxc' && i.pedido_id === ord.id);
+                      const mensaje = mensajePedido({
+                        empresa: configEmpresa?.nombreDisplay || tenant?.name || 'Mi empresa',
+                        numero: ord.numero,
+                        cliente: client?.nombre ?? null,
+                        items: ord.items.map((it) => ({
+                          nombre: products.find(p => p.id === it.producto_id)?.nombre ?? it.concepto ?? 'Ítem',
+                          cantidad: it.cantidad,
+                          precioUnitario: it.precio,
+                        })),
+                        total: ord.total,
+                        saldoPendiente: cxcPedido?.saldo_pendiente ?? null,
+                        estado: ord.estado,
+                        url: `${window.location.origin}/?tab=pedidos&pedido=${ord.id}`,
+                      });
+                      window.open(linkWhatsApp(client?.telefono, mensaje), '_blank', 'noopener');
+                    }}
+                    className="neo-btn flex items-center gap-1.5 px-4 py-2 text-xs font-mono font-bold bg-green-600 text-white hover:bg-green-700 border-black"
+                  >
+                    <MessageCircle size={13} /> Enviar por WhatsApp
+                  </button>
                   <button
                     type="button"
                     onClick={() => { openEditOrder(ord); setOrderManager(null); }}
