@@ -741,6 +741,11 @@ export default function AppHome() {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [stockFilter, setStockFilter] = useState<'all' | 'critical' | 'instock'>('all');
+  // Fila de inventario expandida para ver el stock de cada variante (talla/color/etc.)
+  // sin salir de la tabla ni abrir el modal de "Gestionar variantes".
+  const [inventarioVariantesExpandido, setInventarioVariantesExpandido] = useState<Set<string>>(new Set());
+  const [inventarioVariantesPorProducto, setInventarioVariantesPorProducto] = useState<Record<string, VarianteProducto[]>>({});
+  const [inventarioVariantesCargando, setInventarioVariantesCargando] = useState<Set<string>>(new Set());
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
   const [crmTypeFilter, setCrmTypeFilter] = useState<'all' | 'clientes' | 'proveedores'>('clientes');
 
@@ -861,7 +866,11 @@ export default function AppHome() {
       await api.generarVariantesProducto(variantesProduct.id, combinaciones, parseInt(stockInicialGenerar) || 0);
       setValoresGenerar({});
       setStockInicialGenerar('0');
-      await fetchVariantesProducto(variantesProduct.id);
+      await Promise.all([
+        fetchVariantesProducto(variantesProduct.id),
+        fetchInventario(),
+        refrescarVariantesInventario(variantesProduct.id),
+      ]);
     } catch (e) {
       setVariantesError(e instanceof ApiError ? e.message : 'No se pudieron generar las variantes.');
     } finally {
@@ -873,7 +882,11 @@ export default function AppHome() {
     if (!variantesProduct) return;
     try {
       await api.eliminarVarianteProducto(varianteId);
-      await fetchVariantesProducto(variantesProduct.id);
+      await Promise.all([
+        fetchVariantesProducto(variantesProduct.id),
+        fetchInventario(),
+        refrescarVariantesInventario(variantesProduct.id),
+      ]);
     } catch (e) {
       setVariantesError(e instanceof ApiError ? e.message : 'No se pudo eliminar la variante.');
     }
@@ -1157,6 +1170,50 @@ export default function AppHome() {
       return next;
     });
   };
+
+  const toggleInventarioVariantes = async (productoId: string) => {
+    const yaAbierta = inventarioVariantesExpandido.has(productoId);
+    setInventarioVariantesExpandido((prev) => {
+      const next = new Set(prev);
+      if (yaAbierta) next.delete(productoId); else next.add(productoId);
+      return next;
+    });
+    if (yaAbierta || inventarioVariantesPorProducto[productoId]) return;
+    setInventarioVariantesCargando((prev) => new Set(prev).add(productoId));
+    try {
+      const res = await api.listarVariantesProducto(productoId);
+      setInventarioVariantesPorProducto((prev) => ({ ...prev, [productoId]: res.variantes }));
+    } catch {
+      // Si falla, la fila queda expandida pero vacía; el usuario puede
+      // colapsar y reintentar — no vale la pena un estado de error dedicado
+      // para un panel secundario dentro de una tabla.
+    } finally {
+      setInventarioVariantesCargando((prev) => {
+        const next = new Set(prev);
+        next.delete(productoId);
+        return next;
+      });
+    }
+  };
+
+  // Se llama después de generar/eliminar variantes desde el modal "Gestionar
+  // variantes": invalida la caché de la fila expandible del inventario (si no,
+  // seguiría mostrando el estado previo — ej. "sin variantes generadas" después
+  // de generarlas) y, si la fila está abierta en ese momento, la recarga ya mismo.
+  const refrescarVariantesInventario = useCallback(async (productoId: string) => {
+    setInventarioVariantesPorProducto((prev) => {
+      const next = { ...prev };
+      delete next[productoId];
+      return next;
+    });
+    if (!inventarioVariantesExpandido.has(productoId)) return;
+    try {
+      const res = await api.listarVariantesProducto(productoId);
+      setInventarioVariantesPorProducto((prev) => ({ ...prev, [productoId]: res.variantes }));
+    } catch {
+      // deja la caché vacía; el usuario puede colapsar/expandir para reintentar
+    }
+  }, [inventarioVariantesExpandido]);
 
   useEffect(() => {
     if (!usuario?.tenantId) return;
@@ -4077,12 +4134,38 @@ export default function AppHome() {
                               {grupo.productos.map((p) => {
                                 const stock = productStocks[p.id] ?? 0;
                                 const isCrit = stock <= p.stock_minimo;
+                                const variantesAbiertas = p.tiene_variantes && inventarioVariantesExpandido.has(p.id);
+                                const variantesDelProducto = inventarioVariantesPorProducto[p.id];
+                                const cargandoVariantes = inventarioVariantesCargando.has(p.id);
 
                                 return (
-                                  <tr key={p.id} className="border-b border-neutral-200 hover:bg-neutral-50/50">
+                                  <React.Fragment key={p.id}>
+                                  <tr className="border-b border-neutral-200 hover:bg-neutral-50/50">
                                     <td className="p-3 font-semibold text-black">
-                                      <div>{p.nombre}</div>
-                                      <div className="text-[11px] text-neutral-500 font-normal mt-0.5">{p.descripcion}</div>
+                                      <div className="flex items-start gap-1.5">
+                                        {p.tiene_variantes && (
+                                          <button
+                                            type="button"
+                                            onClick={() => void toggleInventarioVariantes(p.id)}
+                                            className="mt-0.5 shrink-0 text-neutral-500 hover:text-black"
+                                            aria-label={variantesAbiertas ? 'Ocultar existencia por variante' : 'Ver existencia por variante'}
+                                            aria-expanded={variantesAbiertas}
+                                          >
+                                            <ChevronDown size={14} className={`transition-transform ${variantesAbiertas ? '' : '-rotate-90'}`} />
+                                          </button>
+                                        )}
+                                        <div>
+                                          <div className="flex items-center gap-1.5">
+                                            <span>{p.nombre}</span>
+                                            {p.tiene_variantes && (
+                                              <span className="inline-block border border-neutral-300 text-[10px] font-mono font-bold px-1 py-0 text-neutral-500 uppercase tracking-wide">
+                                                variantes
+                                              </span>
+                                            )}
+                                          </div>
+                                          <div className="text-[11px] text-neutral-500 font-normal mt-0.5">{p.descripcion}</div>
+                                        </div>
+                                      </div>
                                     </td>
                                     <td className="p-3 text-right font-mono text-neutral-600">${p.precio_costo.toLocaleString('es-CO')}</td>
                                     <td className="p-3 text-right font-mono text-black font-semibold">${p.precio_venta.toLocaleString('es-CO')}</td>
@@ -4114,6 +4197,54 @@ export default function AppHome() {
                                       </div>
                                     </td>
                                   </tr>
+                                  {variantesAbiertas && (
+                                    <tr className="border-b border-neutral-200 bg-neutral-50">
+                                      <td colSpan={7} className="p-0">
+                                        <div className="pl-9 pr-3 py-2">
+                                          {cargandoVariantes && (
+                                            <p className="text-[11px] font-mono text-neutral-500">Cargando variantes...</p>
+                                          )}
+                                          {!cargandoVariantes && variantesDelProducto && variantesDelProducto.length === 0 && (
+                                            <p className="text-[11px] font-mono text-neutral-500">
+                                              Este producto todavía no tiene variantes generadas.{' '}
+                                              <button type="button" onClick={() => { setVariantesProduct(p); }} className="underline hover:text-black">
+                                                Generar variantes
+                                              </button>
+                                            </p>
+                                          )}
+                                          {!cargandoVariantes && variantesDelProducto && variantesDelProducto.length > 0 && (
+                                            <table className="text-[11px] w-full max-w-xl border-collapse">
+                                              <thead>
+                                                <tr className="text-neutral-500 font-mono">
+                                                  <th className="text-left font-bold pb-1 pr-3">VARIANTE</th>
+                                                  <th className="text-left font-bold pb-1 pr-3">SKU</th>
+                                                  <th className="text-right font-bold pb-1">DISPONIBLE</th>
+                                                </tr>
+                                              </thead>
+                                              <tbody>
+                                                {variantesDelProducto.map((v) => {
+                                                  const varianteCrit = v.stockDisponible <= p.stock_minimo;
+                                                  return (
+                                                    <tr key={v.id} className="border-t border-neutral-200">
+                                                      <td className="py-1 pr-3 font-semibold text-black">
+                                                        {Object.entries(v.valores).map(([k, val]) => `${k}: ${val}`).join(' · ')}
+                                                        {!v.activo && <span className="ml-1.5 text-[10px] text-neutral-400 font-normal">(inactiva)</span>}
+                                                      </td>
+                                                      <td className="py-1 pr-3 font-mono text-neutral-500">{v.sku || '—'}</td>
+                                                      <td className={`py-1 text-right font-mono font-bold ${varianteCrit ? 'text-brand-red' : 'text-black'}`}>
+                                                        {v.stockDisponible}
+                                                      </td>
+                                                    </tr>
+                                                  );
+                                                })}
+                                              </tbody>
+                                            </table>
+                                          )}
+                                        </div>
+                                      </td>
+                                    </tr>
+                                  )}
+                                  </React.Fragment>
                                 );
                               })}
                             </tbody>
