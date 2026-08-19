@@ -139,6 +139,7 @@ import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
 import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
 import { CarteraPorEdades } from '../components/CarteraPorEdades';
+import { FlujoDeCaja } from '../components/FlujoDeCaja';
 import { usePaginacion, Paginador } from '../components/Paginador';
 import { linkWhatsApp, mensajePedido, mensajeEstadoDeCuenta } from '../lib/whatsapp';
 import {
@@ -491,7 +492,7 @@ export default function AppHome() {
   // El estado de navegación se inicializa DESDE la URL (ver lib/urlState.ts):
   // así un link a un pedido abre directo en la pestaña correcta y refrescar no
   // devuelve al Dashboard.
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'crm' | 'comunicaciones' | 'reportes' | 'auditoria' | 'config'>(
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pedidos' | 'inventario' | 'finanzas' | 'flujocaja' | 'crm' | 'comunicaciones' | 'reportes' | 'auditoria' | 'config'>(
     () => valorInicialDeUrl('tab', TABS_VALIDAS, 'dashboard'),
   );
   // Drawer del menú lateral en mobile/tablet (< lg) — en lg+ el sidebar siempre está visible y este estado se ignora.
@@ -1084,6 +1085,14 @@ export default function AppHome() {
    */
   const esAdmin = usuario?.rol === 'admin' || usuario?.rol === 'superadmin';
   const puedeEditarConfigEmpresa = esAdmin;
+  /**
+   * Pausa temporal (decisión de producto, no un bug ni un permiso): oculta
+   * Calendario y Notas, Redes Sociales, Reportes y Actividad del sidebar —
+   * y el quick-link "Ver módulo de Comunicaciones →" del Dashboard — mientras
+   * el foco pasa a Flujo de Caja. El código y los datos de esas secciones
+   * quedan intactos; reactivarlas es volver esta constante a `false`.
+   */
+  const SECCIONES_PAUSADAS = true;
 
   // Captura visual del panel de Reportes (KPIs, mapas de calor, tablas) para exportar a PDF tal como se ve en pantalla.
   const reporteCapturaRef = useRef<HTMLDivElement>(null);
@@ -3347,6 +3356,16 @@ export default function AppHome() {
               </button>
 
               <button
+                onClick={() => { setActiveTab('flujocaja'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                  activeTab === 'flujocaja' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                }`}
+              >
+                <TrendingUp size={18} />
+                <span>Flujo de Caja</span>
+              </button>
+
+              <button
                 onClick={() => { setActiveTab('crm'); setSuperAdminMode(false); setSidebarOpen(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
                   activeTab === 'crm' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
@@ -3356,33 +3375,36 @@ export default function AppHome() {
                 <span>Clientes (CRM)</span>
               </button>
 
-              {/* Calendario y Notas estaban escondidos como sub-pestañas dentro
-                  de "Redes Sociales": nadie busca un calendario compartido bajo
-                  un ícono de Instagram. Ahora cada uno tiene su entrada. */}
-              <button
-                onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('calendario'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'comunicaciones' && comunicacionesSubTab !== 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <CalendarDays size={18} />
-                <span>Calendario y Notas</span>
-              </button>
+              {/* Calendario y Notas, Redes Sociales, Reportes y Actividad:
+                  pausadas (ver SECCIONES_PAUSADAS) — código y datos intactos. */}
+              {!SECCIONES_PAUSADAS && (
+                <>
+                  <button
+                    onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('calendario'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                    className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                      activeTab === 'comunicaciones' && comunicacionesSubTab !== 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                    }`}
+                  >
+                    <CalendarDays size={18} />
+                    <span>Calendario y Notas</span>
+                  </button>
 
-              <button
-                onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('redes'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'comunicaciones' && comunicacionesSubTab === 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <Instagram size={18} />
-                <span>Redes Sociales</span>
-              </button>
+                  <button
+                    onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('redes'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                    className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
+                      activeTab === 'comunicaciones' && comunicacionesSubTab === 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                    }`}
+                  >
+                    <Instagram size={18} />
+                    <span>Redes Sociales</span>
+                  </button>
+                </>
+              )}
 
               {/* Reportes y Actividad son admin-only en el backend (márgenes,
                   utilidad, log de auditoría): se ocultan para que un empleado
                   no entre a una pantalla que le va a responder 403. */}
-              {esAdmin && (
+              {!SECCIONES_PAUSADAS && esAdmin && (
                 <button
                   onClick={() => { setActiveTab('reportes'); setSuperAdminMode(false); setSidebarOpen(false); }}
                   className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
@@ -3394,7 +3416,7 @@ export default function AppHome() {
                 </button>
               )}
 
-              {esAdmin && (
+              {!SECCIONES_PAUSADAS && esAdmin && (
                 <button
                   onClick={() => { setActiveTab('auditoria'); setSuperAdminMode(false); setSidebarOpen(false); }}
                   className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
@@ -3738,12 +3760,14 @@ export default function AppHome() {
                           );
                         })()}
 
-                        <button
-                          onClick={() => setActiveTab('comunicaciones')}
-                          className="neo-btn self-start text-[11px] px-3 py-1.5 hover:bg-neutral-100"
-                        >
-                          Ver módulo de Comunicaciones →
-                        </button>
+                        {!SECCIONES_PAUSADAS && (
+                          <button
+                            onClick={() => setActiveTab('comunicaciones')}
+                            className="neo-btn self-start text-[11px] px-3 py-1.5 hover:bg-neutral-100"
+                          >
+                            Ver módulo de Comunicaciones →
+                          </button>
+                        )}
                       </div>
 
                       {/* Panel derecho: Slider automático — Alertas / Pedidos por entregar / CxC */}
@@ -5511,6 +5535,13 @@ export default function AppHome() {
                       </div>
                     )}
 
+                  </div>
+                )}
+
+                {/* --- FLUJO DE CAJA TAB --- */}
+                {activeTab === 'flujocaja' && (
+                  <div className="flex flex-col gap-4">
+                    <FlujoDeCaja />
                   </div>
                 )}
 

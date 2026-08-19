@@ -24,6 +24,29 @@ export interface FilaCartera {
   diasMasVieja: number
 }
 
+/** Un valor con su parte ya confirmada y su parte todavía pendiente (CxC/CxP por vencer). */
+export interface MontoActualProyectado {
+  actual: number
+  proyectado: number
+}
+
+/** Un período quincenal del flujo de caja — ver GET /finanzas/flujo-caja. */
+export interface PeriodoFlujoCaja {
+  label: string
+  desde: string
+  hasta: string
+  costosOperativos: MontoActualProyectado
+  gastosAdministrativos: MontoActualProyectado
+  ingresos: MontoActualProyectado
+  totalEgresos: number
+  totalIngresos: number
+  saldoDelPeriodo: number
+  /** Saldo bancario real corrido — solo se mueve con columnas "actual", nunca con lo proyectado. */
+  saldoEnBanco: number
+  /** Suma corrida de saldoDelPeriodo (actual+proyectado) desde el primer período visible. */
+  flujoAcumulado: number
+}
+
 export interface Cartera {
   tipo: 'cxc' | 'cxp'
   filas: FilaCartera[]
@@ -171,6 +194,15 @@ export const api = {
 
   /** Cartera por edades: quién debe, cuánto y hace cuánto. */
   cartera: (tipo: 'cxc' | 'cxp') => request<Cartera>(`/finanzas/cartera?tipo=${tipo}`),
+
+  /** Flujo de caja proyectado por período quincenal. `desde` es opcional (YYYY-MM-DD); por defecto arranca en el período que contiene hoy. */
+  flujoCaja: (desde?: string, periodos?: number) => {
+    const params = new URLSearchParams()
+    if (desde) params.set('desde', desde)
+    if (periodos) params.set('periodos', String(periodos))
+    const qs = params.toString()
+    return request<{ periodos: PeriodoFlujoCaja[] }>(`/finanzas/flujo-caja${qs ? `?${qs}` : ''}`)
+  },
 
   crearTenant: (data: { name: string; slug: string; plan?: PlanId }) =>
     request<{ tenant: Tenant }>('/admin/tenants', {

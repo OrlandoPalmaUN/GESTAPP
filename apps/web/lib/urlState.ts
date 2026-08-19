@@ -23,7 +23,7 @@
 /** Valores aceptados en la URL. Un link editado a mano con un valor que no
  *  esté acá cae al default en vez de dejar la app en un estado inexistente. */
 export const TABS_VALIDAS = [
-  'dashboard', 'pedidos', 'inventario', 'finanzas', 'crm',
+  'dashboard', 'pedidos', 'inventario', 'finanzas', 'flujocaja', 'crm',
   'comunicaciones', 'reportes', 'auditoria', 'config',
 ] as const
 

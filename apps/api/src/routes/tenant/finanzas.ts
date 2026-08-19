@@ -489,6 +489,240 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     },
   )
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // GET /finanzas/flujo-caja — ingresos y egresos por período quincenal,
+  // separando lo YA CONFIRMADO (actual) de lo TODAVÍA PENDIENTE (proyectado).
+  //
+  // "Proyectado" viene únicamente de CxC/CxP con saldo pendiente, bucketeado
+  // por su fecha_vencimiento (mismo criterio que /finanzas/cartera) — no
+  // inventa datos: si no hay una factura pendiente, no hay proyección. Un
+  // gasto o ingreso manual con fecha futura también cuenta como proyectado
+  // hasta que su fecha llega; ningún campo de estado se guarda para eso, se
+  // deriva de comparar la fecha contra CURRENT_DATE en cada consulta — mismo
+  // principio que calcularEstadoFactura (nunca persistir estado derivado).
+  //
+  // Dos renglones corridos:
+  //   saldoEnBanco    — anclado al saldo bancario REAL de hoy, y de ahí en
+  //                      adelante solo se mueve con columnas "actual" (nunca
+  //                      con lo proyectado) — es lo que de verdad hay en el banco.
+  //   flujoAcumulado  — suma corrida de "saldo del período" (actual+proyectado)
+  //                      desde el primer período visible — la proyección hacia
+  //                      adelante si todo lo pendiente se cobra/paga en fecha.
+  interface FilaFlujoCaja { fecha: string; monto: number }
+
+  function generarPeriodosQuincenales(
+    desdeStr: string,
+    cantidad: number,
+  ): { label: string; desde: string; hasta: string }[] {
+    const periodos: { label: string; desde: string; hasta: string }[] = []
+    const inicial = new Date(`${desdeStr}T00:00:00Z`)
+    let year = inicial.getUTCFullYear()
+    let month = inicial.getUTCMonth()
+    let day: 1 | 16 = inicial.getUTCDate() <= 15 ? 1 : 16
+
+    for (let i = 0; i < cantidad; i++) {
+      let desde: Date, hasta: Date
+      if (day === 1) {
+        desde = new Date(Date.UTC(year, month, 1))
+        hasta = new Date(Date.UTC(year, month, 15))
+      } else {
+        desde = new Date(Date.UTC(year, month, 16))
+        hasta = new Date(Date.UTC(year, month + 1, 0)) // día 0 del mes siguiente = último día de este mes
+      }
+      const mesNombre = desde.toLocaleDateString('es-CO', { month: 'short', timeZone: 'UTC' })
+      periodos.push({
+        label: `${hasta.getUTCDate()} de ${mesNombre}`,
+        desde: desde.toISOString().slice(0, 10),
+        hasta: hasta.toISOString().slice(0, 10),
+      })
+      if (day === 1) {
+        day = 16
+      } else {
+        day = 1
+        month += 1
+        if (month > 11) { month = 0; year += 1 }
+      }
+    }
+    return periodos
+  }
+
+  /** Índice del período que contiene la fecha `hoy` (YYYY-MM-DD), o -1 si ninguno la contiene. */
+  function indicePeriodoDeHoy(periodos: { desde: string; hasta: string }[], hoy: string): number {
+    return periodos.findIndex((p) => hoy >= p.desde && hoy <= p.hasta)
+  }
+
+  /** Suma, por período, los montos cuya fecha cae dentro de [periodo.desde, periodo.hasta]. */
+  function bucketearPorPeriodo(
+    filas: FilaFlujoCaja[],
+    periodos: { desde: string; hasta: string }[],
+  ): number[] {
+    const totales = periodos.map(() => 0)
+    for (const fila of filas) {
+      const idx = periodos.findIndex((p) => fila.fecha >= p.desde && fila.fecha <= p.hasta)
+      if (idx !== -1) totales[idx] = totales[idx]! + fila.monto
+    }
+    return totales
+  }
+
+  fastify.get<{ Querystring: { desde?: string; periodos?: string } }>(
+    '/finanzas/flujo-caja',
+    conSesion,
+    async (request, reply) => {
+      if (!exigirTenant(request, reply)) return
+
+      const hoy = new Date().toISOString().slice(0, 10)
+      const desdeParam = request.query.desde ?? hoy
+      const cantidadParam = Math.min(Math.max(Number(request.query.periodos) || 8, 1), 24)
+      const periodos = generarPeriodosQuincenales(desdeParam, cantidadParam)
+      const rangoDesde = periodos[0]!.desde
+      const rangoHasta = periodos[periodos.length - 1]!.hasta
+      const db = request.tenantDb
+
+      const [
+        abonosCxpRes, pendienteCxpRes,
+        gastosRes,
+        abonosCxcRes, pendienteCxcRes,
+        ingresosRes,
+      ] = await Promise.all([
+        // Costos operativos — actual: plata que ya se pagó a proveedores.
+        db.query<{ fecha: string; monto: string }>(
+          `SELECT a.fecha::text AS fecha, a.monto::text AS monto
+           FROM abonos a
+           JOIN facturas_compra fc ON fc.id = a.documento_id
+           WHERE a.tipo_documento = 'factura_compra' AND a.deleted_at IS NULL
+             AND fc.deleted_at IS NULL AND a.fecha BETWEEN $1 AND $2`,
+          [rangoDesde, rangoHasta],
+        ),
+        // Costos operativos — proyectado: saldo pendiente de CxP por su vencimiento (igual que /cartera).
+        db.query<{ fecha: string; monto: string }>(
+          `SELECT fc.fecha_vencimiento::text AS fecha,
+                  (fc.total - COALESCE((
+                    SELECT SUM(a.monto) FROM abonos a
+                    WHERE a.tipo_documento = 'factura_compra' AND a.documento_id = fc.id AND a.deleted_at IS NULL
+                  ), 0))::text AS monto
+           FROM facturas_compra fc
+           WHERE fc.deleted_at IS NULL AND fc.fecha_vencimiento BETWEEN $1 AND $2
+             AND (fc.total - COALESCE((
+                    SELECT SUM(a.monto) FROM abonos a
+                    WHERE a.tipo_documento = 'factura_compra' AND a.documento_id = fc.id AND a.deleted_at IS NULL
+                  ), 0)) > 0`,
+          [rangoDesde, rangoHasta],
+        ),
+        // Gastos administrativos — actual y proyectado se separan después por fecha vs. hoy.
+        db.query<{ fecha: string; monto: string }>(
+          `SELECT fecha::text AS fecha, monto::text AS monto FROM gastos_operativos
+           WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+          [rangoDesde, rangoHasta],
+        ),
+        // Ingresos — actual: cobros ya recibidos de clientes.
+        db.query<{ fecha: string; monto: string }>(
+          `SELECT a.fecha::text AS fecha, a.monto::text AS monto
+           FROM abonos a
+           JOIN facturas_venta fv ON fv.id = a.documento_id
+           WHERE a.tipo_documento = 'factura_venta' AND a.deleted_at IS NULL
+             AND fv.deleted_at IS NULL AND a.fecha BETWEEN $1 AND $2`,
+          [rangoDesde, rangoHasta],
+        ),
+        // Ingresos — proyectado: saldo pendiente de CxC por su vencimiento.
+        db.query<{ fecha: string; monto: string }>(
+          `SELECT fv.fecha_vencimiento::text AS fecha,
+                  (fv.total - COALESCE((
+                    SELECT SUM(a.monto) FROM abonos a
+                    WHERE a.tipo_documento = 'factura_venta' AND a.documento_id = fv.id AND a.deleted_at IS NULL
+                  ), 0))::text AS monto
+           FROM facturas_venta fv
+           WHERE fv.deleted_at IS NULL AND fv.fecha_vencimiento BETWEEN $1 AND $2
+             AND (fv.total - COALESCE((
+                    SELECT SUM(a.monto) FROM abonos a
+                    WHERE a.tipo_documento = 'factura_venta' AND a.documento_id = fv.id AND a.deleted_at IS NULL
+                  ), 0)) > 0`,
+          [rangoDesde, rangoHasta],
+        ),
+        // Ingresos manuales — actual y proyectado se separan después por fecha vs. hoy.
+        db.query<{ fecha: string; monto: string }>(
+          `SELECT fecha::text AS fecha, monto::text AS monto FROM ingresos_bancarios
+           WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+          [rangoDesde, rangoHasta],
+        ),
+      ])
+
+      const aFilas = (rows: { fecha: string; monto: string }[]): FilaFlujoCaja[] =>
+        rows.map((r) => ({ fecha: r.fecha, monto: Number(r.monto) }))
+
+      const gastosFilas = aFilas(gastosRes.rows)
+      const ingresosFilas = aFilas(ingresosRes.rows)
+
+      const costosOpActual = bucketearPorPeriodo(aFilas(abonosCxpRes.rows), periodos)
+      const costosOpProyectado = bucketearPorPeriodo(aFilas(pendienteCxpRes.rows), periodos)
+      const gastosActual = bucketearPorPeriodo(gastosFilas.filter((f) => f.fecha <= hoy), periodos)
+      const gastosProyectado = bucketearPorPeriodo(gastosFilas.filter((f) => f.fecha > hoy), periodos)
+      const ingresosCxcActual = bucketearPorPeriodo(aFilas(abonosCxcRes.rows), periodos)
+      const ingresosCxcProyectado = bucketearPorPeriodo(aFilas(pendienteCxcRes.rows), periodos)
+      const ingresosManualActual = bucketearPorPeriodo(ingresosFilas.filter((f) => f.fecha <= hoy), periodos)
+      const ingresosManualProyectado = bucketearPorPeriodo(ingresosFilas.filter((f) => f.fecha > hoy), periodos)
+
+      const { rows: saldoRows } = await db.query<{ total: string }>(
+        `SELECT COALESCE(SUM(saldo), 0)::text AS total FROM cuentas_bancarias WHERE deleted_at IS NULL`,
+      )
+      const saldoBancarioHoy = Number(saldoRows[0]!.total)
+      const idxHoy = indicePeriodoDeHoy(periodos, hoy)
+
+      const resultado = periodos.map((p, i) => {
+        const ingresosActual = ingresosCxcActual[i]! + ingresosManualActual[i]!
+        const ingresosProyectado = ingresosCxcProyectado[i]! + ingresosManualProyectado[i]!
+        const gAdminActual = gastosActual[i]!
+        const gAdminProyectado = gastosProyectado[i]!
+        const cOpActual = costosOpActual[i]!
+        const cOpProyectado = costosOpProyectado[i]!
+
+        const totalIngresos = ingresosActual + ingresosProyectado
+        const totalEgresos = cOpActual + cOpProyectado + gAdminActual + gAdminProyectado
+        const saldoDelPeriodo = totalIngresos - totalEgresos
+        const netoActual = ingresosActual - cOpActual - gAdminActual
+
+        return {
+          label: p.label, desde: p.desde, hasta: p.hasta,
+          costosOperativos: { actual: cOpActual, proyectado: cOpProyectado },
+          gastosAdministrativos: { actual: gAdminActual, proyectado: gAdminProyectado },
+          ingresos: { actual: ingresosActual, proyectado: ingresosProyectado },
+          totalEgresos, totalIngresos, saldoDelPeriodo, netoActual,
+        }
+      })
+
+      // Saldo en banco: anclado al saldo real de HOY, y de ahí para adelante y
+      // para atrás se mueve solo con lo "actual" — nunca con lo proyectado.
+      const saldoEnBanco = resultado.map(() => 0)
+      const flujoAcumulado = resultado.map(() => 0)
+      if (idxHoy !== -1) {
+        saldoEnBanco[idxHoy] = saldoBancarioHoy
+        for (let i = idxHoy + 1; i < resultado.length; i++) saldoEnBanco[i] = saldoEnBanco[i - 1]! + resultado[i]!.netoActual
+        for (let i = idxHoy - 1; i >= 0; i--) saldoEnBanco[i] = saldoEnBanco[i + 1]! - resultado[i + 1]!.netoActual
+      } else {
+        // La ventana pedida no incluye hoy (ej. `desde` en el pasado o muy en
+        // el futuro) — se ancla en el primer período como aproximación.
+        saldoEnBanco[0] = saldoBancarioHoy
+        for (let i = 1; i < resultado.length; i++) saldoEnBanco[i] = saldoEnBanco[i - 1]! + resultado[i]!.netoActual
+      }
+      for (let i = 0; i < resultado.length; i++) {
+        flujoAcumulado[i] = (i === 0 ? 0 : flujoAcumulado[i - 1]!) + resultado[i]!.saldoDelPeriodo
+      }
+
+      return reply.send({
+        periodos: resultado.map((r, i) => ({
+          label: r.label, desde: r.desde, hasta: r.hasta,
+          costosOperativos: r.costosOperativos,
+          gastosAdministrativos: r.gastosAdministrativos,
+          ingresos: r.ingresos,
+          totalEgresos: r.totalEgresos,
+          totalIngresos: r.totalIngresos,
+          saldoDelPeriodo: r.saldoDelPeriodo,
+          saldoEnBanco: saldoEnBanco[i],
+          flujoAcumulado: flujoAcumulado[i],
+        })),
+      })
+    },
+  )
+
   // POST /finanzas/facturas — registro manual (compras a proveedores, ventas de mostrador, etc.)
   fastify.post('/finanzas/facturas', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
