@@ -27,7 +27,7 @@ export const TABS_VALIDAS = [
   'comunicaciones', 'reportes', 'auditoria', 'config',
 ] as const
 
-export const FINANZAS_SUBTABS_VALIDAS = ['resumen', 'cxc', 'cxp', 'compras', 'gastos', 'ingresos'] as const
+export const FINANZAS_SUBTABS_VALIDAS = ['resumen', 'cxc', 'cxp', 'compras', 'gastos', 'ingresos', 'flujo'] as const
 export const COM_SUBTABS_VALIDAS = ['calendario', 'redes', 'notas'] as const
 
 export interface EstadoUrl {

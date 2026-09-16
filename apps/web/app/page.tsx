@@ -39,6 +39,7 @@ import {
   X,
   BarChart2,
   ChevronDown,
+  ChevronUp,
   Footprints,
   Menu,
 } from 'lucide-react';
@@ -733,7 +734,7 @@ export default function AppHome() {
   const [transicionandoCompra, setTransicionandoCompra] = useState(false);
 
   // --- SUB-TABS INTERNAS ---
-  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos'>(
+  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos' | 'flujo'>(
     () => valorInicialDeUrl('finanzas', FINANZAS_SUBTABS_VALIDAS, 'resumen'),
   );
 
@@ -743,6 +744,51 @@ export default function AppHome() {
   const [stockFilter, setStockFilter] = useState<'all' | 'critical' | 'instock'>('all');
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
   const [crmTypeFilter, setCrmTypeFilter] = useState<'all' | 'clientes' | 'proveedores'>('clientes');
+
+  // --- Inventario: colecciones (categorías) colapsables y con orden propio ---
+  // Preferencia por navegador (no por cuenta) — igual que un acordeón de UI,
+  // no tiene sentido sincronizarla entre dispositivos ni tenants.
+  const INVENTARIO_COLAPSADAS_KEY = 'gestapp_inventario_categorias_colapsadas';
+  const INVENTARIO_ORDEN_KEY = 'gestapp_inventario_orden_categorias';
+  const [categoriasColapsadas, setCategoriasColapsadas] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = window.localStorage.getItem(INVENTARIO_COLAPSADAS_KEY);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+  const [ordenCategorias, setOrdenCategorias] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem(INVENTARIO_ORDEN_KEY);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(INVENTARIO_COLAPSADAS_KEY, JSON.stringify([...categoriasColapsadas])); } catch { /* localStorage puede fallar en modo privado — la preferencia simplemente no persiste */ }
+  }, [categoriasColapsadas]);
+  useEffect(() => {
+    try { window.localStorage.setItem(INVENTARIO_ORDEN_KEY, JSON.stringify(ordenCategorias)); } catch { /* ídem */ }
+  }, [ordenCategorias]);
+  const toggleCategoriaColapsada = (key: string) => {
+    setCategoriasColapsadas(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+  /** Mueve una categoría un puesto arriba/abajo dentro del orden guardado, arrancando desde el orden visible actual si todavía no hay uno propio. */
+  const moverCategoria = (keysVisibles: string[], key: string, direccion: -1 | 1) => {
+    setOrdenCategorias(prev => {
+      const base = prev.length > 0 ? [...prev] : [...keysVisibles];
+      for (const k of keysVisibles) if (!base.includes(k)) base.push(k);
+      const i = base.indexOf(key);
+      const j = i + direccion;
+      if (i === -1 || j < 0 || j >= base.length) return prev;
+      [base[i], base[j]] = [base[j] as string, base[i] as string];
+      return base;
+    });
+  };
 
   // --- ESTADOS DE DIÁLOGOS Y WIZARDS ---
   // 1. Crear producto
@@ -1670,6 +1716,39 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
 
   useEffect(() => { void fetchResumen(); }, [fetchResumen]);
+
+  // --- Flujo de caja quincenal --- (día 1-15 y 16-fin de mes, cada uno
+  // calculado con el mismo endpoint de resumen financiero que usa un rango
+  // de fechas propio, así no se duplica la lógica de ingresos/egresos).
+  const hoyFlujo = new Date();
+  const [flujoAño, setFlujoAño] = useState(hoyFlujo.getFullYear());
+  const [flujoMes, setFlujoMes] = useState(hoyFlujo.getMonth() + 1);
+  const [flujoQ1, setFlujoQ1] = useState<ResumenFinanciero | null>(null);
+  const [flujoQ2, setFlujoQ2] = useState<ResumenFinanciero | null>(null);
+  const [flujoCargando, setFlujoCargando] = useState(false);
+  const [flujoError, setFlujoError] = useState<string | null>(null);
+  const fetchFlujoCaja = useCallback(async (año: number, mes: number) => {
+    if (!usuario?.tenantId) return;
+    setFlujoCargando(true);
+    setFlujoError(null);
+    try {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const ultimoDia = new Date(año, mes, 0).getDate();
+      const [{ resumen: q1 }, { resumen: q2 }] = await Promise.all([
+        api.resumenFinanciero(`${año}-${pad(mes)}-01`, `${año}-${pad(mes)}-15`),
+        api.resumenFinanciero(`${año}-${pad(mes)}-16`, `${año}-${pad(mes)}-${pad(ultimoDia)}`),
+      ]);
+      setFlujoQ1(q1);
+      setFlujoQ2(q2);
+    } catch (error) {
+      setFlujoError(error instanceof ApiError ? error.message : 'No se pudo calcular el flujo de caja quincenal.');
+    } finally {
+      setFlujoCargando(false);
+    }
+  }, [usuario?.tenantId]);
+  useEffect(() => {
+    if (activeTab === 'finanzas' && financeSubTab === 'flujo') void fetchFlujoCaja(flujoAño, flujoMes);
+  }, [activeTab, financeSubTab, flujoAño, flujoMes, fetchFlujoCaja]);
 
   // --- Reportes ---
 
@@ -3364,28 +3443,9 @@ export default function AppHome() {
                 <span>Clientes (CRM)</span>
               </button>
 
-              {/* Calendario y Notas estaban escondidos como sub-pestañas dentro
-                  de "Redes Sociales": nadie busca un calendario compartido bajo
-                  un ícono de Instagram. Ahora cada uno tiene su entrada. */}
-              <button
-                onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('calendario'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'comunicaciones' && comunicacionesSubTab !== 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <CalendarDays size={18} />
-                <span>Calendario y Notas</span>
-              </button>
-
-              <button
-                onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('redes'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'comunicaciones' && comunicacionesSubTab === 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <Instagram size={18} />
-                <span>Redes Sociales</span>
-              </button>
+              {/* Calendario, Notas y Redes Sociales ocultos del menú lateral a
+                  pedido — el módulo de Comunicaciones sigue funcionando, solo
+                  no tiene entrada visible en la navegación. */}
 
               {/* Reportes y Actividad son admin-only en el backend (márgenes,
                   utilidad, log de auditoría): se ocultan para que un empleado
@@ -4021,8 +4081,10 @@ export default function AppHome() {
                             return matchSearch && matchCat && matchStock;
                           });
 
-                          // Agrupamos por categoría (orden alfabético; "Sin categoría" siempre al final)
-                          // así la tabla refleja la organización del inventario en vez de una lista plana.
+                          // Agrupamos por categoría — orden: primero el orden propio guardado
+                          // (`ordenCategorias`, editable con las flechas del encabezado), luego
+                          // alfabético para las que aún no se han reordenado; "Sin categoría"
+                          // siempre al final. Cada grupo se puede colapsar independientemente.
                           const SIN_CATEGORIA = '__sin_categoria__';
                           const grupos = new Map<string, { nombre: string; productos: typeof visibles }>();
                           for (const p of visibles) {
@@ -4034,8 +4096,14 @@ export default function AppHome() {
                           const gruposOrdenados = [...grupos.entries()].sort(([keyA, a], [keyB, b]) => {
                             if (keyA === SIN_CATEGORIA) return 1;
                             if (keyB === SIN_CATEGORIA) return -1;
+                            const iA = ordenCategorias.indexOf(keyA);
+                            const iB = ordenCategorias.indexOf(keyB);
+                            if (iA !== -1 && iB !== -1) return iA - iB;
+                            if (iA !== -1) return -1;
+                            if (iB !== -1) return 1;
                             return a.nombre.localeCompare(b.nombre);
                           });
+                          const keysReordenables = gruposOrdenados.map(([key]) => key).filter((key) => key !== SIN_CATEGORIA);
 
                           if (gruposOrdenados.length === 0) {
                             return (
@@ -4049,16 +4117,51 @@ export default function AppHome() {
                             );
                           }
 
-                          return gruposOrdenados.map(([key, grupo]) => (
+                          return gruposOrdenados.map(([key, grupo]) => {
+                            const colapsada = categoriasColapsadas.has(key);
+                            const posReordenable = keysReordenables.indexOf(key);
+                            return (
                             <tbody key={key}>
                               <tr className="bg-brand-sage/40 border-y border-black">
-                                <td colSpan={7} className="px-3 py-1.5 font-mono font-bold text-[11px] uppercase tracking-wide text-black flex items-center gap-2">
-                                  <Tag size={12} />
-                                  <span>{grupo.nombre}</span>
-                                  <span className="text-neutral-500 font-normal normal-case">({grupo.productos.length} {grupo.productos.length === 1 ? 'producto' : 'productos'})</span>
+                                <td colSpan={7} className="px-3 py-1.5 font-mono font-bold text-[11px] uppercase tracking-wide text-black">
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleCategoriaColapsada(key)}
+                                      className="p-0.5 hover:bg-black/10 rounded shrink-0"
+                                      title={colapsada ? 'Expandir colección' : 'Colapsar colección'}
+                                    >
+                                      <ChevronDown size={13} className={`transition-transform ${colapsada ? '-rotate-90' : ''}`} />
+                                    </button>
+                                    <Tag size={12} />
+                                    <span>{grupo.nombre}</span>
+                                    <span className="text-neutral-500 font-normal normal-case">({grupo.productos.length} {grupo.productos.length === 1 ? 'producto' : 'productos'})</span>
+                                    {posReordenable !== -1 && (
+                                      <div className="flex items-center gap-0.5 ml-auto">
+                                        <button
+                                          type="button"
+                                          disabled={posReordenable === 0}
+                                          onClick={() => moverCategoria(keysReordenables, key, -1)}
+                                          className="p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
+                                          title="Subir en el orden"
+                                        >
+                                          <ChevronUp size={13} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={posReordenable === keysReordenables.length - 1}
+                                          onClick={() => moverCategoria(keysReordenables, key, 1)}
+                                          className="p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
+                                          title="Bajar en el orden"
+                                        >
+                                          <ChevronDown size={13} />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
-                              {grupo.productos.map((p) => {
+                              {!colapsada && grupo.productos.map((p) => {
                                 const stock = productStocks[p.id] ?? 0;
                                 const isCrit = stock <= p.stock_minimo;
 
@@ -4101,7 +4204,8 @@ export default function AppHome() {
                                 );
                               })}
                             </tbody>
-                          ));
+                            );
+                          });
                         })()}
                       </table>
                     </div>
@@ -4784,7 +4888,7 @@ export default function AppHome() {
                     
                     {/* Tabs de Finanzas */}
                     <div className="flex flex-wrap border-b-2 border-black bg-white">
-                      {(['resumen', 'cxc', 'cxp', 'gastos', 'ingresos'] as const).map((tab) => (
+                      {(['resumen', 'cxc', 'cxp', 'gastos', 'ingresos', 'flujo'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setFinanceSubTab(tab)}
@@ -4798,6 +4902,7 @@ export default function AppHome() {
                           {tab === 'cxc' && 'CxC · Por Cobrar'}
                           {tab === 'cxp' && 'CxP · Por Pagar'}
                           {tab === 'gastos' && 'Gastos Op.'}
+                          {tab === 'flujo' && 'Flujo de Caja'}
                           {tab === 'ingresos' && 'Ingresos'}
                         </button>
                       ))}
@@ -5516,6 +5621,89 @@ export default function AppHome() {
                             <Paginador {...ingresosPag} etiqueta="ingresos" />
                           </div>
                         </div>
+                      </div>
+                    )}
+
+                    {/* FLUJO DE CAJA QUINCENAL — separa el mes en día 1-15 y 16-fin, cada
+                        quincena con su propio ingresos/egresos (mismo cálculo que el
+                        Resumen, pero acotado a la mitad del mes correspondiente). */}
+                    {financeSubTab === 'flujo' && (
+                      <div className="flex flex-col gap-4">
+                        <div className="flex items-center gap-3 bg-white border-2 border-black p-3">
+                          <span className="font-mono text-xs font-bold text-neutral-500 uppercase">Mes</span>
+                          <div className="flex items-center gap-2 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (flujoMes === 1) { setFlujoMes(12); setFlujoAño(a => a - 1); }
+                                else setFlujoMes(m => m - 1);
+                              }}
+                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                            ><ChevronLeft size={16} /></button>
+                            <span className="font-mono text-sm font-bold w-40 text-center capitalize">
+                              {new Date(flujoAño, flujoMes - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (flujoMes === 12) { setFlujoMes(1); setFlujoAño(a => a + 1); }
+                                else setFlujoMes(m => m + 1);
+                              }}
+                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                            ><ChevronRight size={16} /></button>
+                            <button type="button" onClick={() => void fetchFlujoCaja(flujoAño, flujoMes)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
+                          </div>
+                        </div>
+
+                        {flujoCargando && <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 p-2"><RefreshCw size={13} className="animate-spin" /> Calculando flujo de caja…</div>}
+                        {flujoError && <p className="text-xs font-mono text-brand-red p-2">{flujoError}</p>}
+
+                        {!flujoCargando && flujoQ1 && flujoQ2 && (() => {
+                          const flujoMesTotal = flujoQ1.flujoNeto + flujoQ2.flujoNeto;
+                          const quincenas = [
+                            { titulo: '1RA QUINCENA (1 – 15)', d: flujoQ1 },
+                            { titulo: '2DA QUINCENA (16 – fin de mes)', d: flujoQ2 },
+                          ];
+                          return (
+                            <>
+                              <div className={`neo-card ${flujoMesTotal >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">FLUJO NETO DEL MES</span>
+                                <span className={`text-2xl font-black block mt-1 ${flujoMesTotal >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
+                                  {moneySigned(flujoMesTotal)}
+                                </span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Suma de las dos quincenas</span>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {quincenas.map(({ titulo, d }) => {
+                                  const ingresosQ = d.ingresosCxC + d.ingresosManuales;
+                                  const egresosQ = d.egresosCxP + d.egresosGastos;
+                                  return (
+                                    <div key={titulo} className="neo-card bg-white flex flex-col gap-3">
+                                      <h4 className="font-mono text-xs font-bold border-b border-black pb-2">{titulo}</h4>
+                                      <div className={`p-2 border ${d.flujoNeto >= 0 ? 'border-green-400 bg-green-50' : 'border-red-400 bg-red-50'}`}>
+                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">FLUJO NETO</span>
+                                        <span className={`text-lg font-black block ${d.flujoNeto >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{moneySigned(d.flujoNeto)}</span>
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-2 text-xs">
+                                        <div className="border border-black p-2">
+                                          <span className="font-mono text-[11px] text-neutral-500 font-bold block">INGRESOS</span>
+                                          <span className="font-black text-green-700">+{money(ingresosQ)}</span>
+                                          <span className="block text-[11px] font-mono text-neutral-500">CxC {money(d.ingresosCxC)} · Manual {money(d.ingresosManuales)}</span>
+                                        </div>
+                                        <div className="border border-black p-2">
+                                          <span className="font-mono text-[11px] text-neutral-500 font-bold block">EGRESOS</span>
+                                          <span className="font-black text-brand-red">-{money(egresosQ)}</span>
+                                          <span className="block text-[11px] font-mono text-neutral-500">CxP {money(d.egresosCxP)} · Gastos {money(d.egresosGastos)}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -6687,23 +6875,37 @@ export default function AppHome() {
                                   ))}
                                 </div>
 
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                                  <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">CxC COBRADA</span>
-                                    <span className="text-lg font-black text-green-700 block mt-1">${d.cxcCobrada.toLocaleString('es-CO')}</span>
-                                    <span className="text-[11px] font-mono text-neutral-600">Abonos de clientes</span>
-                                  </div>
-                                  <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
-                                    <span className="text-lg font-black text-black block mt-1">${d.ingresosManuales.toLocaleString('es-CO')}</span>
-                                    <span className="text-[11px] font-mono text-neutral-600">Capital, préstamos, etc.</span>
-                                  </div>
-                                  <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
-                                    <span className="text-lg font-black text-black block mt-1">${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
-                                    <span className="text-[11px] font-mono text-neutral-600">Por pedido</span>
-                                  </div>
-                                </div>
+                                {/* Ingresos totales vs Egresos totales — ingresos = CxC cobrada +
+                                    ingresos manuales; egresos = compras/OC + gastos operativos. */}
+                                {(() => {
+                                  const ingresosTotales = d.cxcCobrada + d.ingresosManuales;
+                                  const egresosTotales = d.compras.total + d.gastos.total;
+                                  const balance = ingresosTotales - egresosTotales;
+                                  return (
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                      <div className="border border-black p-3 bg-neutral-50">
+                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS TOTALES</span>
+                                        <span className="text-lg font-black text-green-700 block mt-1">${ingresosTotales.toLocaleString('es-CO')}</span>
+                                        <span className="text-[11px] font-mono text-neutral-600">CxC cobrada ${d.cxcCobrada.toLocaleString('es-CO')} + ingresos ${d.ingresosManuales.toLocaleString('es-CO')}</span>
+                                      </div>
+                                      <div className="border border-black p-3 bg-neutral-50">
+                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">EGRESOS TOTALES</span>
+                                        <span className="text-lg font-black text-brand-red block mt-1">${egresosTotales.toLocaleString('es-CO')}</span>
+                                        <span className="text-[11px] font-mono text-neutral-600">OC ${d.compras.total.toLocaleString('es-CO')} + gastos ${d.gastos.total.toLocaleString('es-CO')}</span>
+                                      </div>
+                                      <div className={`border border-black p-3 ${balance >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">BALANCE</span>
+                                        <span className={`text-lg font-black block mt-1 ${balance >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{moneySigned(balance)}</span>
+                                        <span className="text-[11px] font-mono text-neutral-600">Ingresos − egresos</span>
+                                      </div>
+                                      <div className="border border-black p-3 bg-neutral-50">
+                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
+                                        <span className="text-lg font-black text-black block mt-1">${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
+                                        <span className="text-[11px] font-mono text-neutral-600">Por pedido</span>
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
 
                                 {d.topProductos.length > 0 && (
                                   <div>
