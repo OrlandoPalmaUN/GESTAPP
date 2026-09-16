@@ -143,6 +143,7 @@ import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
 import { CarteraPorEdades } from '../components/CarteraPorEdades';
 import { usePaginacion, Paginador } from '../components/Paginador';
+import { Combobox } from '../components/Combobox';
 import { linkWhatsApp, mensajePedido, mensajeEstadoDeCuenta } from '../lib/whatsapp';
 import {
   leerEstadoUrl, escribirEstadoUrl, valorInicialDeUrl, pedidoInicialDeUrl,
@@ -2904,7 +2905,12 @@ export default function AppHome() {
   const facturasVencidas = useMemo(() => invoices.filter((i) => i.estado === 'vencida'), [invoices]);
 
   // Indicador de carga del dashboard — se muestra skeleton en las métricas hasta que todos los datos lleguen.
-  const dashboardCargando = inventarioCargando || finanzasCargando || bankAccountsCargando || pedidosCargando;
+  const dashboardCargando = inventarioCargando || finanzasCargando || bankAccountsCargando || pedidosCargando || resumenCargando;
+
+  // Ingresos del mes — misma lógica que Reportes/Flujo de Caja: CxC cobrada +
+  // ingresos manuales. `resumenFinanciero` ya llega acotado al mes en curso
+  // (fetchResumen() sin fechas → el backend usa el mes actual por defecto).
+  const ingresosMes = resumenFinanciero ? resumenFinanciero.ingresosCxC + resumenFinanciero.ingresosManuales : 0;
 
   // Cuadrícula del calendario mensual — semanas completas (puede incluir días
   // del mes anterior/siguiente para rellenar la primera/última semana) y un
@@ -3632,15 +3638,21 @@ export default function AppHome() {
                       </div>
 
                       <div className="neo-card bg-white">
-                        <span className="font-mono text-[11px] text-neutral-500 font-bold">VENTAS DEL MES</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS DEL MES</span>
                         {dashboardCargando ? (
                           <div className="h-8 w-36 bg-neutral-100 border border-neutral-300 mt-2 animate-pulse" />
                         ) : (
-                          <span className="text-2xl font-black text-black tracking-tight mt-2 block">${ventasMetrics.totalMes.toLocaleString('es-CO')} COP</span>
+                          <span className="text-2xl font-black text-black tracking-tight mt-2 block">${ingresosMes.toLocaleString('es-CO')} COP</span>
                         )}
                         <div className="flex items-center gap-1 text-[11px] text-green-600 font-bold mt-1">
                           <TrendingUp size={12} />
-                          {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : <span>{ventasMetrics.countMes} {ventasMetrics.countMes === 1 ? 'pedido' : 'pedidos'} este mes</span>}
+                          {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : (
+                            <span>
+                              {ventasMetrics.countMes} {ventasMetrics.countMes === 1 ? 'pedido' : 'pedidos'} este mes
+                              {' · '}
+                              <span className="italic font-normal text-neutral-500">&quot;Ventas: ${ventasMetrics.totalMes.toLocaleString('es-CO')}&quot;</span>
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -7762,16 +7774,13 @@ export default function AppHome() {
 
                 {!showInlineNewClient ? (
                   <>
-                    <select
+                    <Combobox
                       value={selectedCustomerId}
-                      onChange={(e) => setSelectedCustomerId(e.target.value)}
-                      className="neo-input"
-                    >
-                      <option value="">— Sin cliente —</option>
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>{c.nombre}{c.nit ? ` (${c.nit})` : ''}</option>
-                      ))}
-                    </select>
+                      onChange={setSelectedCustomerId}
+                      emptyOptionLabel="— Sin cliente —"
+                      placeholder="Buscar cliente por nombre o NIT…"
+                      options={customers.map((c) => ({ value: c.id, label: c.nombre, sublabel: c.nit ?? undefined }))}
+                    />
                     {/* Condiciones de crédito del cliente elegido. El aviso de
                         cupo AVISA, no bloquea: seguir vendiéndole a alguien que
                         ya debe es decisión del dueño, no del software. */}
@@ -7881,27 +7890,25 @@ export default function AppHome() {
                     return (
                       <div key={idx} className="border border-black/10 bg-neutral-50/60 p-2 flex flex-col gap-1.5">
                         <div className="flex gap-2 items-center">
-                          <select
+                          <Combobox
                             value={item.producto_id}
-                            onChange={(e) => {
+                            onChange={(productoId) => {
                               const updated = [...orderItems];
                               const target = updated[idx];
                               if (target) {
-                                target.producto_id = e.target.value;
+                                target.producto_id = productoId;
                                 target.variante_id = null; // nuevo producto → hay que elegir variante de nuevo si aplica
                                 target.precio_excepcional = null; // nuevo producto → vuelve al precio de catálogo
                                 setOrderItems(updated);
-                                const nuevoProd = products.find((p) => p.id === e.target.value);
+                                const nuevoProd = products.find((p) => p.id === productoId);
                                 if (nuevoProd?.tiene_variantes) void cargarVariantesParaItem(nuevoProd.id);
                               }
                             }}
-                            className="neo-input flex-1 py-1.5"
-                          >
-                            <option value="">Seleccionar producto…</option>
-                            {products.map((p) => (
-                              <option key={p.id} value={p.id}>{p.nombre} (Dispo: {productStocks[p.id] ?? 0})</option>
-                            ))}
-                          </select>
+                            emptyOptionLabel="Seleccionar producto…"
+                            placeholder="Buscar producto por nombre o SKU…"
+                            options={products.map((p) => ({ value: p.id, label: p.nombre, sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0}` }))}
+                            className="flex-1"
+                          />
 
                           <div className="w-20 flex flex-col">
                             <input
