@@ -42,6 +42,7 @@ import {
   ChevronUp,
   Footprints,
   Menu,
+  KanbanSquare,
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, Tenant, TransferenciaBancaria } from '@antigravity/shared';
@@ -699,6 +700,8 @@ export default function AppHome() {
 
   // --- Vista de pedidos ---
   const [pedidosVista, setPedidosVista] = useState<'lista' | 'kanban'>('lista');
+  /** Kanban de "Pendientes" — agrupa por etapa de flujo (no por estado individual) y excluye entregado/cancelado, a diferencia del Kanban de arriba. */
+  const [showPendientesKanban, setShowPendientesKanban] = useState(false);
   const [pedidoExpandido, setPedidoExpandido] = useState<string | null>(null);
   const [pedidosOrden, setPedidosOrden] = useState<'fecha_desc' | 'fecha_asc' | 'total_desc' | 'total_asc' | 'estado' | 'cliente'>('fecha_desc');
   const [pedidosAgrupacion, setPedidosAgrupacion] = useState<'dia' | 'semana' | 'mes'>('dia');
@@ -4509,6 +4512,17 @@ export default function AppHome() {
                             </div>
 
                             <button
+                              onClick={() => setShowPendientesKanban(true)}
+                              className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
+                            >
+                              <KanbanSquare size={14} />
+                              <span>Pendientes</span>
+                              <span className="bg-brand-blue text-white text-[11px] px-1.5 py-0.5 rounded font-sans">
+                                {orders.filter(o => ['borrador', 'confirmado', 'en_preparacion', 'despachado'].includes(o.estado)).length}
+                              </span>
+                            </button>
+
+                            <button
                               onClick={() => setShowCreateOrder(true)}
                               className="neo-btn-primary text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
                             >
@@ -7627,6 +7641,101 @@ export default function AppHome() {
         </div>
       )}
 
+
+      {/* Modal: Kanban de Pedidos Pendientes — agrupado en 2 etapas de flujo
+          (a diferencia del Kanban de la vista Lista/Kanban, que tiene una
+          columna por cada estado individual): "Borrador + Confirmado" es lo
+          que todavía no arranca preparación; "En preparación + Despachado"
+          es lo que ya está en movimiento. Entregado/cancelado quedan fuera
+          a propósito — ya no son "pendientes". */}
+      {showPendientesKanban && (() => {
+        const columnas: { titulo: string; estados: Order['estado'][]; cls: string }[] = [
+          { titulo: 'BORRADOR + CONFIRMADO', estados: ['borrador', 'confirmado'], cls: 'bg-neutral-50 border-neutral-400' },
+          { titulo: 'EN PREPARACIÓN + DESPACHADO', estados: ['en_preparacion', 'despachado'], cls: 'bg-blue-50 border-blue-400' },
+        ];
+        const estadoBadge: Record<string, string> = {
+          borrador: 'bg-neutral-200 text-neutral-700',
+          confirmado: 'bg-blue-200 text-blue-800',
+          en_preparacion: 'bg-yellow-200 text-yellow-800',
+          despachado: 'bg-blue-500 text-white',
+        };
+        const estadoLabel: Record<string, string> = {
+          borrador: 'Borrador', confirmado: 'Confirmado', en_preparacion: 'En prep.', despachado: 'Despachado',
+        };
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div className="neo-card bg-white w-full max-w-4xl flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center border-b border-black pb-2">
+                <h3 className="font-mono text-sm font-bold text-black flex items-center gap-2">
+                  <KanbanSquare size={16} /> PEDIDOS PENDIENTES
+                </h3>
+                <button onClick={() => setShowPendientesKanban(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {columnas.map(col => {
+                  const items = orders
+                    .filter(o => col.estados.includes(o.estado))
+                    .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+                  return (
+                    <div key={col.titulo} className={`border-2 ${col.cls} flex flex-col`}>
+                      <div className="px-3 py-2 border-b-2 border-black bg-white/80">
+                        <div className="font-mono text-[11px] font-bold uppercase">{col.titulo}</div>
+                        <div className="font-mono text-xs text-neutral-500">{items.length} pedido{items.length !== 1 ? 's' : ''}</div>
+                      </div>
+                      <div className="flex flex-col gap-2 p-2 flex-1 overflow-y-auto max-h-[60vh]">
+                        {items.length === 0 && (
+                          <p className="text-[11px] text-neutral-600 font-mono italic text-center py-4">Vacío</p>
+                        )}
+                        {items.map(ord => {
+                          const client = customers.find(c => c.id === ord.cliente_id);
+                          const dias = Math.max(0, Math.floor((Date.now() - new Date(ord.fecha).getTime()) / (1000 * 60 * 60 * 24)));
+                          return (
+                            <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[11px]">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-black leading-tight truncate">{client?.nombre ?? 'Sin cliente'}</span>
+                                <span className={`shrink-0 inline-block border border-black text-[10px] font-mono font-bold px-1.5 py-0.5 ${estadoBadge[ord.estado] ?? ''}`}>
+                                  {estadoLabel[ord.estado] ?? ord.estado}
+                                </span>
+                              </div>
+                              <div className="font-mono text-neutral-600">{ord.numero}</div>
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono font-bold">${ord.total.toLocaleString('es-CO')}</span>
+                                <span className={`font-mono ${dias >= 3 ? 'text-brand-red font-bold' : 'text-neutral-500'}`}>
+                                  {dias === 0 ? 'Hoy' : dias === 1 ? 'Hace 1 día' : `Hace ${dias} días`}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <select
+                                  defaultValue=""
+                                  onChange={(e) => { if (e.target.value) { handleTransitionOrder(ord.id, e.target.value as Order['estado']); e.target.value = ''; } }}
+                                  className="flex-1 border border-black bg-white font-mono text-[11px] py-0.5 px-1 cursor-pointer hover:bg-neutral-50"
+                                >
+                                  <option value="" disabled>Mover a…</option>
+                                  {(['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'] as Order['estado'][])
+                                    .filter(e => e !== ord.estado)
+                                    .map(e => (
+                                      <option key={e} value={e}>{e.replace('_', ' ')}</option>
+                                    ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => { setShowPendientesKanban(false); setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
+                                  className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-blue hover:text-white"
+                                >Gestionar</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* 3. Modal: Crear Pedido */}
       {showCreateOrder && (
