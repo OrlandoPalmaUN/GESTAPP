@@ -2,6 +2,7 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { IgDashboard } from '../components/redes/IgDashboard';
+import { LoadingScreen } from '../components/LoadingScreen';
 import { AiChat } from '../components/ai/AiChat';
 import { AiNotasHelper } from '../components/ai/AiNotasHelper';
 import { useRouter } from 'next/navigation';
@@ -3178,6 +3179,13 @@ export default function AppHome() {
       }
     })();
   };
+
+  // Sin usuario autenticado: el guard de arriba ya disparó el redirect a
+  // /login — no renderizamos el dashboard mientras eso ocurre, si no se ve
+  // el tablero vacío ("Sin empresa", $0 en todo) antes de salir de la página.
+  if (!usuario) {
+    return <LoadingScreen />;
+  }
 
   // 9. WhatsApp - Enviar mensaje de prueba
   return (
