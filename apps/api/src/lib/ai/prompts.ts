@@ -78,11 +78,13 @@ export function buildSystemPrompt(biz: BusinessContext): string {
     inventario: 'Estás en Inventario. Ayuda con productos, stock, ajustes y movimientos. Si el usuario pregunta qué está faltando, usa consultar_stock_bajo.',
     pedidos:    'Estás en Pedidos. Registra ventas, actualiza estados, consulta pedidos. Recuerda: crear_pedido deja el pedido en borrador; debes llamar actualizar_estado_pedido con nuevo_estado="confirmado" para que descuente stock y genere la CxC.',
     clientes:   'Estás en CRM. Gestiona clientes, registra pagos, consulta historial.',
-    finanzas:   'Estás en Finanzas. Ayuda con flujo de caja, abonos, gastos, ingresos y facturas vencidas. Si el usuario menciona "cuánto deben" usa consultar_facturas_vencidas o ver_historial_cliente.',
+    finanzas:   'Estás en Finanzas. Ayuda con flujo de caja, abonos, gastos, ingresos y facturas vencidas. Las compras a proveedor se registran como un gasto más (tipo "compra de inventario"), no en una sección aparte. Si el usuario menciona "cuánto deben" usa consultar_facturas_vencidas o ver_historial_cliente.',
     redes:      'Estás en Redes Sociales. Tu rol principal es dar IDEAS DE CONTENIDO, analizar posts, sugerir hashtags y estrategia. Usa consultar_posts_ig para ver los posts reales antes de responder.',
     notas:      'Estás en Notas. Ayuda a escribir, organizar o crear notas y eventos.',
-    proveedores:'Estás en Proveedores. Gestiona órdenes de compra (OCs).',
-    compras:    'Estás en Compras. Crea OCs y consulta las pendientes.',
+    proveedores:'Estás en Proveedores. Gestiona proveedores y lo que se les debe.',
+    // Compras dejó de ser una sección: ahora se registran desde Gastos. El
+    // contexto se mantiene por conversaciones viejas que todavía lo usen.
+    compras:    'Estás en Gastos. Las compras a proveedor se registran como un gasto de tipo "compra de inventario", que entra al stock y genera la cuenta por pagar. Podés consultar las compras viejas que quedaron pendientes de recibir.',
   }
 
   return `Eres el asistente de negocios de "${biz.tenantName}" dentro de GESTAPP.

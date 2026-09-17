@@ -28,6 +28,7 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 
 import { aAbono, registrarAbonoEnTx, type FilaAbono } from '../../lib/abonos.js'
+import { generarNumeroFacturaCompra } from '../../lib/numeracion.js'
 
 interface FilaFacturaVenta {
   id: string
@@ -82,6 +83,8 @@ interface FilaGasto {
   medio_pago: string | null
   cuenta_bancaria_id: string | null
   notas: string | null
+  proveedor_id: string | null
+  factura_compra_id: string | null
   usuario_id: string | null
   created_at: Date
 }
@@ -133,6 +136,8 @@ function aGasto(row: FilaGasto): GastoOperativo {
     medioPago: row.medio_pago,
     cuentaBancariaId: row.cuenta_bancaria_id,
     notas: row.notas,
+    proveedorId: row.proveedor_id,
+    facturaCompraId: row.factura_compra_id,
     usuarioId: row.usuario_id,
     createdAt: row.created_at.toISOString(),
   }
@@ -930,7 +935,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/finanzas/gastos', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaGasto>(
-      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
        FROM gastos_operativos WHERE deleted_at IS NULL ORDER BY fecha DESC, created_at DESC`,
     )
     return reply.send({ gastos: rows.map(aGasto) })
@@ -964,10 +969,39 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const fecha = body.data.fecha ?? new Date().toISOString().slice(0, 10)
+
+      // A crédito: en vez de mover el banco, el gasto queda como cuenta por
+      // pagar al proveedor y se salda después con abonos. El gasto igual se
+      // registra (la contabilidad es por causación: el arriendo de este mes es
+      // gasto de este mes, se haya pagado o no); lo que cambia es de dónde sale
+      // la plata y cuándo.
+      let facturaCompraId: string | null = null
+      if (body.data.aCredito) {
+        const proveedorRes = await client.query<{ id: string }>(
+          'SELECT id FROM proveedores WHERE id = $1 AND deleted_at IS NULL',
+          [body.data.proveedorId],
+        )
+        if (proveedorRes.rowCount === 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest('El proveedor indicado no existe.')
+        }
+
+        const fechaVenc = body.data.fechaVencimiento ?? (() => {
+          const d = new Date(fecha); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10)
+        })()
+        const numeroFC = await generarNumeroFacturaCompra(client)
+        const { rows: [fc] } = await client.query<{ id: string }>(
+          `INSERT INTO facturas_compra (numero, proveedor_id, fecha_emision, fecha_vencimiento, total, notas)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [numeroFC, body.data.proveedorId, fecha, fechaVenc, body.data.monto, `Gasto a crédito — ${body.data.descripcion}`],
+        )
+        facturaCompraId = fc!.id
+      }
+
       const { rows } = await client.query<FilaGasto>(
-        `INSERT INTO gastos_operativos (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+        `INSERT INTO gastos_operativos (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
         [
           body.data.descripcion,
           body.data.categoria,
@@ -976,6 +1010,8 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
           body.data.medioPago ?? null,
           body.data.cuentaBancariaId ?? null,
           body.data.notas ?? null,
+          body.data.proveedorId ?? null,
+          facturaCompraId,
           request.user.sub,
         ],
       )
@@ -1012,7 +1048,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('BEGIN')
 
       const actualRes = await client.query<FilaGasto>(
-        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
          FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [request.params.id],
       )
@@ -1081,7 +1117,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const { rows } = await client.query<FilaGasto>(
         `UPDATE gastos_operativos SET ${sets.join(', ')}
          WHERE id = $${valores.length} AND deleted_at IS NULL
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
         valores,
       )
 
@@ -1102,8 +1138,8 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       await client.query('BEGIN')
 
-      const { rows, rowCount } = await client.query<{ monto: string; cuenta_bancaria_id: string | null }>(
-        'SELECT monto, cuenta_bancaria_id FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      const { rows, rowCount } = await client.query<{ monto: string; cuenta_bancaria_id: string | null; factura_compra_id: string | null }>(
+        'SELECT monto, cuenta_bancaria_id, factura_compra_id FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
         [request.params.id],
       )
       if (rowCount === 0) {
@@ -1111,9 +1147,29 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.notFound('Gasto no encontrado.')
       }
 
+      const gasto = rows[0]!
+
+      // Si el gasto quedó a crédito, borrarlo debe llevarse también su cuenta
+      // por pagar — si no, quedaría una deuda sin gasto que la explique. Pero
+      // no si ya se abonó: esos pagos salieron de una cuenta bancaria y hay que
+      // revertirlos por su propia vía, que es la que devuelve la plata.
+      if (gasto.factura_compra_id) {
+        const { rows: [ab] } = await client.query<{ total: string }>(
+          `SELECT COALESCE(SUM(monto), 0)::text AS total FROM abonos
+           WHERE tipo_documento = 'factura_compra' AND documento_id = $1 AND deleted_at IS NULL`,
+          [gasto.factura_compra_id],
+        )
+        if (Number(ab?.total ?? 0) > 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            'Este gasto quedó a crédito y ya tiene pagos registrados. Eliminá primero los abonos (eso devuelve la plata a la cuenta) y después el gasto.',
+          )
+        }
+        await client.query('UPDATE facturas_compra SET deleted_at = NOW() WHERE id = $1', [gasto.factura_compra_id])
+      }
+
       await client.query('UPDATE gastos_operativos SET deleted_at = NOW() WHERE id = $1', [request.params.id])
 
-      const gasto = rows[0]!
       if (gasto.cuenta_bancaria_id) {
         // Al crear: se restó el monto. Al eliminar: se devuelve.
         await client.query(
@@ -1136,7 +1192,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/finanzas/ingresos', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaIngreso>(
-      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
        FROM ingresos_bancarios WHERE deleted_at IS NULL ORDER BY fecha DESC, created_at DESC`,
     )
     return reply.send({ ingresos: rows.map(aIngreso) })
@@ -1165,7 +1221,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const { rows } = await client.query<FilaIngreso>(
         `INSERT INTO ingresos_bancarios (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
         [
           body.data.descripcion,
           body.data.categoria,
@@ -1205,7 +1261,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('BEGIN')
 
       const actualRes = await client.query<FilaIngreso>(
-        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
          FROM ingresos_bancarios WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [request.params.id],
       )
@@ -1261,7 +1317,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const { rows } = await client.query<FilaIngreso>(
         `UPDATE ingresos_bancarios SET ${sets.join(', ')}
          WHERE id = $${valores.length} AND deleted_at IS NULL
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
         valores,
       )
 
@@ -1332,10 +1388,19 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
          WHERE tipo_documento = 'factura_compra' AND deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
         [desde, hasta],
       ),
-      // Gastos operativos del periodo
+      // Gastos operativos del periodo que SALIERON DE CAJA.
+      //
+      // Se excluyen los que quedaron a crédito (`factura_compra_id IS NOT NULL`):
+      // esos todavía no movieron plata, y cuando se paguen van a entrar acá
+      // igual por `egresosCxP`, que suma los abonos a facturas de compra.
+      // Contarlos en ambos lados inflaría el egreso del flujo de caja al doble.
+      //
+      // OJO: este filtro va SOLO acá. `reportes.ts` (utilidad neta) es por
+      // causación — el arriendo de este mes es gasto de este mes, se haya
+      // pagado o no — y ahí el gasto debe contarse una vez, sin filtrar.
       db.query<{ total: string }>(
         `SELECT COALESCE(SUM(monto), 0)::text AS total FROM gastos_operativos
-         WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+         WHERE deleted_at IS NULL AND factura_compra_id IS NULL AND fecha BETWEEN $1 AND $2`,
         [desde, hasta],
       ),
       // Ingresos manuales del periodo

@@ -306,13 +306,18 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
 
     // ── Compras / OC ──────────────────────────────────────────────────────
+    // Se filtra por `fecha` (date), no por `created_at` (timestamptz): los
+    // gastos siempre usaron `fecha`, así que comparar una contra la otra corría
+    // el límite del mes ~5 horas en UTC-5 y dos registros cargados la misma
+    // noche podían caer en meses distintos según de qué tabla vinieran. Ahora
+    // que comparten pantalla, tienen que compartir eje de tiempo.
     const comprasQ = await db.query<{
       totalOC: string; totalCompras: string; totalComprasPrev: string;
     }>(`
       SELECT
-        COUNT(*) FILTER (WHERE created_at >= $1 AND created_at < $2)                 AS "totalOC",
-        COALESCE(SUM(total) FILTER (WHERE created_at >= $1 AND created_at < $2), 0)  AS "totalCompras",
-        COALESCE(SUM(total) FILTER (WHERE created_at >= $3 AND created_at < $4), 0)  AS "totalComprasPrev"
+        COUNT(*) FILTER (WHERE fecha >= $1 AND fecha < $2)                 AS "totalOC",
+        COALESCE(SUM(total) FILTER (WHERE fecha >= $1 AND fecha < $2), 0)  AS "totalCompras",
+        COALESCE(SUM(total) FILTER (WHERE fecha >= $3 AND fecha < $4), 0)  AS "totalComprasPrev"
       FROM pedidos_proveedor
       WHERE estado != 'cancelado' AND deleted_at IS NULL
     `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])

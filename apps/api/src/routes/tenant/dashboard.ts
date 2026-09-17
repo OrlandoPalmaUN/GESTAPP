@@ -90,7 +90,9 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
           GROUP BY c.id, c.nombre
           ORDER BY monto DESC LIMIT 5
         `, [diasNum]),
-        // OCs pendientes (no recibidas)
+        // Compras pendientes de recibir. Desde que Compras se fusionó con
+        // Gastos, las compras nuevas nacen ya recibidas (POST /compras/directa),
+        // así que este contador solo cuenta las OCs viejas que quedaron en vuelo.
         request.tenantDb.query<{ total: number }>(`
           SELECT COUNT(*)::int AS total FROM pedidos_proveedor
           WHERE estado IN ('borrador','enviado','recibido_parcial') AND deleted_at IS NULL
