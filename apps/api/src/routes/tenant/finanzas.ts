@@ -27,6 +27,8 @@ import {
 } from '@antigravity/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 
+import { aAbono, registrarAbonoEnTx, type FilaAbono } from '../../lib/abonos.js'
+
 interface FilaFacturaVenta {
   id: string
   numero: string
@@ -50,17 +52,6 @@ interface FilaFacturaCompra {
   created_at: Date
 }
 
-interface FilaAbono {
-  id: string
-  tipo_documento: string
-  documento_id: string
-  monto: string
-  fecha: Date
-  medio_pago: string | null
-  referencia: string | null
-  usuario_id: string | null
-  created_at: Date
-}
 
 interface FilaCuentaBancaria {
   id: string
@@ -115,20 +106,6 @@ function aCuentaBancaria(row: FilaCuentaBancaria): CuentaBancaria {
     numero: row.numero,
     tipo: row.tipo as CuentaBancaria['tipo'],
     saldo: Number(row.saldo),
-    createdAt: row.created_at.toISOString(),
-  }
-}
-
-function aAbono(row: FilaAbono): Abono {
-  return {
-    id: row.id,
-    facturaId: row.documento_id,
-    tipoDocumento: row.tipo_documento as Abono['tipoDocumento'],
-    monto: Number(row.monto),
-    fecha: row.fecha.toISOString().slice(0, 10),
-    medioPago: row.medio_pago,
-    referencia: row.referencia,
-    usuarioId: row.usuario_id,
     createdAt: row.created_at.toISOString(),
   }
 }
@@ -563,72 +540,20 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
 
     const client = request.tenantDb
-    const tipoDocumento = TIPO_DOCUMENTO_POR_TIPO_FACTURA[body.data.tipo]
-    const tablaFactura = body.data.tipo === 'cxc' ? 'facturas_venta' : 'facturas_compra'
 
     try {
       await client.query('BEGIN')
 
-      const facturaRes = await client.query<{ id: string; numero: string; total: string }>(
-        `SELECT id, numero, total FROM ${tablaFactura} WHERE id = $1 FOR UPDATE`,
-        [body.data.facturaId],
-      )
-      if (facturaRes.rowCount === 0) {
+      const resultado = await registrarAbonoEnTx(client, body.data, request.user.sub)
+      if (!resultado.ok) {
         await client.query('ROLLBACK')
-        return reply.notFound('La factura indicada no existe.')
-      }
-      const factura = facturaRes.rows[0]!
-
-      const abonosRes = await client.query<FilaAbono>(
-        `SELECT id, tipo_documento, documento_id, monto, fecha, medio_pago, referencia, usuario_id, created_at
-         FROM abonos WHERE tipo_documento = $1 AND documento_id = $2 AND deleted_at IS NULL FOR UPDATE`,
-        [tipoDocumento, factura.id],
-      )
-      const saldoActual = calcularSaldoPendiente(Number(factura.total), abonosRes.rows.map(aAbono))
-
-      if (body.data.monto > saldoActual) {
-        await client.query('ROLLBACK')
-        return reply.badRequest(
-          `El abono ($${body.data.monto.toLocaleString('es-CO')}) excede el saldo pendiente de la factura ${factura.numero} ($${saldoActual.toLocaleString('es-CO')}).`,
-        )
-      }
-
-      // Si se especificó cuenta bancaria, validarla y hacer lock antes de insertar.
-      if (body.data.cuentaBancariaId) {
-        const cuentaRes = await client.query<{ id: string; saldo: string }>(
-          'SELECT id, saldo FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
-          [body.data.cuentaBancariaId],
-        )
-        if (cuentaRes.rowCount === 0) {
-          await client.query('ROLLBACK')
-          return reply.badRequest('La cuenta bancaria seleccionada no existe.')
-        }
-        if (body.data.tipo === 'cxp' && Number(cuentaRes.rows[0]!.saldo) < body.data.monto) {
-          await client.query('ROLLBACK')
-          return reply.badRequest(
-            `Saldo insuficiente en la cuenta bancaria ($${Number(cuentaRes.rows[0]!.saldo).toLocaleString('es-CO')} disponible, se requieren $${body.data.monto.toLocaleString('es-CO')}).`,
-          )
-        }
-      }
-
-      const { rows } = await client.query<FilaAbono>(
-        `INSERT INTO abonos (tipo_documento, documento_id, monto, medio_pago, referencia, usuario_id, cuenta_bancaria_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, tipo_documento, documento_id, monto, fecha, medio_pago, referencia, usuario_id, created_at`,
-        [tipoDocumento, factura.id, body.data.monto, body.data.medioPago ?? null, body.data.referencia ?? null, request.user.sub, body.data.cuentaBancariaId ?? null],
-      )
-
-      // CxC: el dinero ENTRA → suma al saldo. CxP: el dinero SALE → resta del saldo.
-      if (body.data.cuentaBancariaId) {
-        const operacion = body.data.tipo === 'cxc' ? '+' : '-'
-        await client.query(
-          `UPDATE cuentas_bancarias SET saldo = saldo ${operacion} $1 WHERE id = $2`,
-          [body.data.monto, body.data.cuentaBancariaId],
-        )
+        return resultado.motivo === 'no_encontrado'
+          ? reply.notFound(resultado.mensaje)
+          : reply.badRequest(resultado.mensaje)
       }
 
       await client.query('COMMIT')
-      return reply.status(201).send({ abono: aAbono(rows[0]!) })
+      return reply.status(201).send({ abono: aAbono(resultado.fila) })
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined)
       throw error

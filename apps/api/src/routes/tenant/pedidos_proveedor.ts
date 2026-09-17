@@ -10,6 +10,8 @@ import {
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 
+import { generarNumeroFacturaCompra, generarNumeroOC } from '../../lib/numeracion.js'
+
 interface FilaPedidoProveedor {
   id: string
   numero: string
@@ -79,28 +81,6 @@ function exigirTenant(
     return false
   }
   return true
-}
-
-async function generarNumeroOC(tenantDb: NonNullable<FastifyRequest['tenantDb']>): Promise<string> {
-  const anio = new Date().getFullYear()
-  await tenantDb.query("SELECT pg_advisory_xact_lock(hashtext('numero_oc'))")
-  const { rows } = await tenantDb.query<{ total: string }>(
-    `SELECT COUNT(*)::text AS total FROM pedidos_proveedor WHERE EXTRACT(YEAR FROM created_at) = $1`,
-    [anio],
-  )
-  const n = Number(rows[0]?.total ?? 0) + 1
-  return `OC-${anio}-${String(n).padStart(4, '0')}`
-}
-
-async function generarNumeroFacturaCompra(tenantDb: NonNullable<FastifyRequest['tenantDb']>): Promise<string> {
-  const anio = new Date().getFullYear()
-  await tenantDb.query("SELECT pg_advisory_xact_lock(hashtext('numero_factura_compra'))")
-  const { rows } = await tenantDb.query<{ total: string }>(
-    `SELECT COUNT(*)::text AS total FROM facturas_compra WHERE EXTRACT(YEAR FROM created_at) = $1`,
-    [anio],
-  )
-  const n = Number(rows[0]?.total ?? 0) + 1
-  return `FC-${anio}-${String(n).padStart(4, '0')}`
 }
 
 function redondearMoneda(valor: number): number {
