@@ -92,7 +92,7 @@ describe('Compra de inventario registrada desde Gastos', () => {
     // La CxP existe y quedó en cero (el abono automático la saldó).
     const facturas = await facturasCxP()
     expect(facturas).toHaveLength(1)
-    expect(Number(facturas[0].saldoPendiente)).toBe(0)
+    expect(Number(facturas[0]!.saldoPendiente)).toBe(0)
   })
 
   it('una compra a crédito entra al stock pero no toca el banco', async () => {
@@ -117,7 +117,7 @@ describe('Compra de inventario registrada desde Gastos', () => {
 
     const facturas = await facturasCxP()
     expect(facturas).toHaveLength(1)
-    expect(Number(facturas[0].saldoPendiente)).toBe(45000)
+    expect(Number(facturas[0]!.saldoPendiente)).toBe(45000)
   })
 
   it('NUNCA se guarda como gasto operativo — si lo hiciera, el egreso se restaría dos veces', async () => {
@@ -188,6 +188,50 @@ describe('Revertir la recepción de una compra', () => {
 
     const rev = await admin.req(`/compras/${r.body.pedido.id}/revertir-recepcion`, { method: 'POST' })
     expect(rev.status).toBe(400)
+  })
+})
+
+describe('Ingresos manuales', () => {
+  /**
+   * Regresión: al agregar proveedor_id/factura_compra_id a gastos_operativos,
+   * esas columnas se colaron en las consultas de ingresos_bancarios, que no
+   * las tiene. La ruta devolvía 500 y ningún test lo cubría porque los
+   * ingresos no se tocaban en esta tanda.
+   */
+  it('registrar un ingreso suma al saldo de la cuenta', async () => {
+    const cuenta = await crearCuenta(100_000)
+
+    const r = await admin.req('/finanzas/ingresos', {
+      method: 'POST',
+      body: JSON.stringify({ descripcion: 'Aporte de socio', categoria: 'otro', monto: 400000, cuentaBancariaId: cuenta.id }),
+    })
+    expect(r.status).toBe(201)
+    expect(await saldoDe(cuenta.id)).toBe(500_000)
+
+    const listado = await admin.req('/finanzas/ingresos')
+    expect(listado.status).toBe(200)
+    expect(listado.body.ingresos).toHaveLength(1)
+  })
+
+  it('editar y borrar un ingreso deshacen el movimiento de saldo', async () => {
+    const cuenta = await crearCuenta(0)
+    const r = await admin.req('/finanzas/ingresos', {
+      method: 'POST',
+      body: JSON.stringify({ descripcion: 'Venta de contado', categoria: 'otro', monto: 200000, cuentaBancariaId: cuenta.id }),
+    })
+    expect(r.status).toBe(201)
+    expect(await saldoDe(cuenta.id)).toBe(200_000)
+
+    const patch = await admin.req(`/finanzas/ingresos/${r.body.ingreso.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ monto: 250000 }),
+    })
+    expect(patch.status).toBe(200)
+    expect(await saldoDe(cuenta.id)).toBe(250_000)
+
+    const del = await admin.req(`/finanzas/ingresos/${r.body.ingreso.id}`, { method: 'DELETE' })
+    expect([200, 204]).toContain(del.status)
+    expect(await saldoDe(cuenta.id)).toBe(0)
   })
 })
 

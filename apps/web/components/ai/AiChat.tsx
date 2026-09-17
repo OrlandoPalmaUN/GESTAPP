@@ -128,7 +128,7 @@ export function AiChat({ context = 'general' }: { context?: string }) {
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-20 right-5 z-40 w-80 bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col"
+        <div className="fixed bottom-20 left-5 right-5 sm:left-auto z-40 w-auto sm:w-80 bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] flex flex-col"
           style={{ maxHeight: '70vh' }}>
           {/* Header */}
           <div className="flex items-center gap-2 border-b-2 border-black px-3 py-2 bg-black text-white">

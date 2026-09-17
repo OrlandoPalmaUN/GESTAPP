@@ -1192,7 +1192,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/finanzas/ingresos', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaIngreso>(
-      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
+      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
        FROM ingresos_bancarios WHERE deleted_at IS NULL ORDER BY fecha DESC, created_at DESC`,
     )
     return reply.send({ ingresos: rows.map(aIngreso) })
@@ -1221,7 +1221,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const { rows } = await client.query<FilaIngreso>(
         `INSERT INTO ingresos_bancarios (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
         [
           body.data.descripcion,
           body.data.categoria,
@@ -1261,7 +1261,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('BEGIN')
 
       const actualRes = await client.query<FilaIngreso>(
-        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
+        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
          FROM ingresos_bancarios WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [request.params.id],
       )
@@ -1317,7 +1317,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const { rows } = await client.query<FilaIngreso>(
         `UPDATE ingresos_bancarios SET ${sets.join(', ')}
          WHERE id = $${valores.length} AND deleted_at IS NULL
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
         valores,
       )
 
