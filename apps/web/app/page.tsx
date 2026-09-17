@@ -3370,7 +3370,7 @@ export default function AppHome() {
               <span className="font-mono font-black text-sm tracking-tighter bg-black text-white px-2 py-1 select-none">
                 {"// GESTAPP"}
               </span>
-              <button onClick={() => setSidebarOpen(false)} className="neo-btn p-1.5" aria-label="Cerrar menú">
+              <button onClick={() => setSidebarOpen(false)} className="neo-btn p-2.5 sm:p-1.5" aria-label="Cerrar menú">
                 <X size={16} />
               </button>
             </div>
@@ -3737,7 +3737,7 @@ export default function AppHome() {
                             <button
                               type="button"
                               onClick={() => setDashboardWeekOffset((o) => o - 1)}
-                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                              className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"
                               title="1 día atrás"
                             >
                               <ChevronLeft size={14} />
@@ -3755,7 +3755,7 @@ export default function AppHome() {
                             <button
                               type="button"
                               onClick={() => setDashboardWeekOffset((o) => o + 1)}
-                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                              className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"
                               title="1 día adelante"
                             >
                               <ChevronRight size={14} />
@@ -4143,7 +4143,7 @@ export default function AppHome() {
                                     <button
                                       type="button"
                                       onClick={() => toggleCategoriaColapsada(key)}
-                                      className="p-0.5 hover:bg-black/10 rounded shrink-0"
+                                      className="p-2 sm:p-0.5 hover:bg-black/10 rounded shrink-0"
                                       title={colapsada ? 'Expandir colección' : 'Colapsar colección'}
                                     >
                                       <ChevronDown size={13} className={`transition-transform ${colapsada ? '-rotate-90' : ''}`} />
@@ -4152,12 +4152,12 @@ export default function AppHome() {
                                     <span>{grupo.nombre}</span>
                                     <span className="text-neutral-500 font-normal normal-case">({grupo.productos.length} {grupo.productos.length === 1 ? 'producto' : 'productos'})</span>
                                     {posReordenable !== -1 && (
-                                      <div className="flex items-center gap-0.5 ml-auto">
+                                      <div className="flex items-center gap-1.5 sm:gap-0.5 ml-auto">
                                         <button
                                           type="button"
                                           disabled={posReordenable === 0}
                                           onClick={() => moverCategoria(keysReordenables, key, -1)}
-                                          className="p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
+                                          className="p-2 sm:p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
                                           title="Subir en el orden"
                                         >
                                           <ChevronUp size={13} />
@@ -4166,7 +4166,7 @@ export default function AppHome() {
                                           type="button"
                                           disabled={posReordenable === keysReordenables.length - 1}
                                           onClick={() => moverCategoria(keysReordenables, key, 1)}
-                                          className="p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
+                                          className="p-2 sm:p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
                                           title="Bajar en el orden"
                                         >
                                           <ChevronDown size={13} />
@@ -4201,16 +4201,16 @@ export default function AppHome() {
                                     </td>
                                     <td className="p-3 text-center">
                                       <div className="flex items-center justify-center gap-1.5">
-                                        <button type="button" onClick={() => openStockEntry(p)} className="neo-btn p-1.5 hover:bg-emerald-50 hover:text-emerald-700" title="Registrar entrada de stock">
+                                        <button type="button" onClick={() => openStockEntry(p)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-emerald-50 hover:text-emerald-700" title="Registrar entrada de stock">
                                           <PackagePlus size={12} />
                                         </button>
-                                        <button type="button" onClick={() => { setStockAdjustProduct(p); setStockAdjustForm({ cantidad: '', motivo: 'merma', notas: '' }); setStockAdjustError(null); }} className="neo-btn p-1.5 hover:bg-orange-50 hover:text-orange-700" title="Registrar baja de stock">
+                                        <button type="button" onClick={() => { setStockAdjustProduct(p); setStockAdjustForm({ cantidad: '', motivo: 'merma', notas: '' }); setStockAdjustError(null); }} className="neo-btn p-2.5 sm:p-1.5 hover:bg-orange-50 hover:text-orange-700" title="Registrar baja de stock">
                                           <PackageMinus size={12} />
                                         </button>
-                                        <button type="button" onClick={() => openEditProduct(p)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar producto">
+                                        <button type="button" onClick={() => openEditProduct(p)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Editar producto">
                                           <Pencil size={12} />
                                         </button>
-                                        <button type="button" onClick={() => void handleDeleteProduct(p)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar producto">
+                                        <button type="button" onClick={() => void handleDeleteProduct(p)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar producto">
                                           <Trash2 size={12} />
                                         </button>
                                       </div>
@@ -5068,14 +5068,14 @@ export default function AppHome() {
                                     className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-sage/40"
                                     title="Transferir desde esta cuenta"
                                   >⇌ Transferir</button>
-                                  <button type="button" onClick={() => openEditBankAccountModal(ac)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar"><Pencil size={13} /></button>
+                                  <button type="button" onClick={() => openEditBankAccountModal(ac)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Editar"><Pencil size={13} /></button>
                                   {confirmDeleteBankAccountId === ac.id ? (
                                     <div className="flex items-center gap-1">
                                       <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn py-0.5 px-2 bg-brand-red text-white text-[11px] font-mono font-bold">Eliminar</button>
                                       <button type="button" onClick={() => setConfirmDeleteBankAccountId(null)} className="neo-btn py-0.5 px-2 text-[11px] font-mono">No</button>
                                     </div>
                                   ) : (
-                                    <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar"><Trash2 size={13} /></button>
+                                    <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar"><Trash2 size={13} /></button>
                                   )}
                                 </div>
                               </div>
@@ -5141,8 +5141,8 @@ export default function AppHome() {
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">
                                     <span className="font-mono text-[11px] text-neutral-500">{fechaCorta(ab.fecha)}</span>
-                                    <button type="button" onClick={() => openEditAbono(ab)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar abono"><Pencil size={12} /></button>
-                                    <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
+                                    <button type="button" onClick={() => openEditAbono(ab)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Editar abono"><Pencil size={12} /></button>
+                                    <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
                                   </div>
                                 </div>
                               );
@@ -5175,8 +5175,9 @@ export default function AppHome() {
                           </button>
                         </div>
 
-                        <div className="neo-card bg-white p-0">
-                          <table className="w-full text-left border-collapse text-xs">
+                        <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
+                        <div className="neo-card bg-white p-0 overflow-x-auto">
+                          <table className="w-full min-w-[700px] text-left border-collapse text-xs">
                             <thead>
                               <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
                                 <th className="p-3">FACTURA</th>
@@ -5217,12 +5218,12 @@ export default function AppHome() {
                                         <td className="p-3 text-center">
                                           <div className="flex items-center justify-center gap-1.5">
                                             {abonosInv.length > 0 && (
-                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver abonos">
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver abonos">
                                                 {expanded ? '▲' : `▼ ${abonosInv.length}`}
                                               </button>
                                             )}
-                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
-                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
+                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
+                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
                                           </div>
                                         </td>
                                       </tr>
@@ -5236,7 +5237,7 @@ export default function AppHome() {
                                                   <span className="text-neutral-500 w-24">{fechaCorta(ab.fecha)}</span>
                                                   <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
                                                   <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
-                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
+                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
                                                 </div>
                                               ))}
                                             </div>
@@ -5294,8 +5295,9 @@ export default function AppHome() {
                             <span className="font-mono text-xs text-neutral-500">Total saldo: <strong className="text-black">${invoices.filter(i => i.tipo === 'cxp').reduce((a, b) => a + b.saldo_pendiente, 0).toLocaleString('es-CO')}</strong></span>
                           </div>
                         </div>
-                        <div className="neo-card bg-white p-0">
-                          <table className="w-full text-left border-collapse text-xs">
+                        <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
+                        <div className="neo-card bg-white p-0 overflow-x-auto">
+                          <table className="w-full min-w-[700px] text-left border-collapse text-xs">
                             <thead>
                               <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
                                 <th className="p-3">CÓDIGO</th>
@@ -5336,7 +5338,7 @@ export default function AppHome() {
                                         <td className="p-3 text-center">
                                           <div className="flex items-center justify-center gap-1.5">
                                             {abonosInv.length > 0 && (
-                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver pagos">
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver pagos">
                                                 {expanded ? '▲' : `▼ ${abonosInv.length}`}
                                               </button>
                                             )}
@@ -5350,8 +5352,8 @@ export default function AppHome() {
                                                 $ Pagar
                                               </button>
                                             )}
-                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
-                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
+                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
+                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
                                           </div>
                                         </td>
                                       </tr>
@@ -5365,7 +5367,7 @@ export default function AppHome() {
                                                   <span className="text-neutral-500 w-24">{fechaCorta(ab.fecha)}</span>
                                                   <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
                                                   <span className="font-bold text-brand-red">-${ab.monto.toLocaleString('es-CO')}</span>
-                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar pago"><Trash2 size={12} /></button>
+                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar pago"><Trash2 size={12} /></button>
                                                 </div>
                                               ))}
                                             </div>
@@ -5474,7 +5476,7 @@ export default function AppHome() {
                                              est === 'cancelado' ? '✕' : est}
                                           </button>
                                         ))}
-                                        <button type="button" onClick={() => void handleEliminarCompra(oc)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar OC"><Trash2 size={11} /></button>
+                                        <button type="button" onClick={() => void handleEliminarCompra(oc)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar OC"><Trash2 size={11} /></button>
                                       </div>
                                     </td>
                                   </tr>
@@ -5550,7 +5552,7 @@ export default function AppHome() {
                                       <button
                                         type="button"
                                         onClick={() => void handleEliminarGasto(g)}
-                                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                        className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                                         title="Eliminar gasto"
                                       >
                                         <Trash2 size={12} />
@@ -5629,7 +5631,7 @@ export default function AppHome() {
                                       <button
                                         type="button"
                                         onClick={() => void handleEliminarIngreso(ing)}
-                                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                        className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                                         title="Eliminar ingreso"
                                       >
                                         <Trash2 size={12} />
@@ -5655,7 +5657,7 @@ export default function AppHome() {
                         Resumen, pero acotado a la mitad del mes correspondiente). */}
                     {financeSubTab === 'flujo' && (
                       <div className="flex flex-col gap-4">
-                        <div className="flex items-center gap-3 bg-white border-2 border-black p-3">
+                        <div className="flex flex-wrap items-center gap-3 bg-white border-2 border-black p-3">
                           <span className="font-mono text-xs font-bold text-neutral-500 uppercase">Mes</span>
                           <div className="flex items-center gap-2 ml-auto">
                             <button
@@ -5664,9 +5666,9 @@ export default function AppHome() {
                                 if (flujoMes === 1) { setFlujoMes(12); setFlujoAño(a => a - 1); }
                                 else setFlujoMes(m => m - 1);
                               }}
-                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                              className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"
                             ><ChevronLeft size={16} /></button>
-                            <span className="font-mono text-sm font-bold w-40 text-center capitalize">
+                            <span className="font-mono text-xs sm:text-sm font-bold w-28 sm:w-40 text-center capitalize">
                               {new Date(flujoAño, flujoMes - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}
                             </span>
                             <button
@@ -5675,9 +5677,9 @@ export default function AppHome() {
                                 if (flujoMes === 12) { setFlujoMes(1); setFlujoAño(a => a + 1); }
                                 else setFlujoMes(m => m + 1);
                               }}
-                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                              className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"
                             ><ChevronRight size={16} /></button>
-                            <button type="button" onClick={() => void fetchFlujoCaja(flujoAño, flujoMes)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
+                            <button type="button" onClick={() => void fetchFlujoCaja(flujoAño, flujoMes)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
                           </div>
                         </div>
 
@@ -5884,7 +5886,7 @@ export default function AppHome() {
                                 <button
                                   type="button"
                                   onClick={() => (client ? openEditCustomer(client) : supp ? openEditSupplier(supp) : undefined)}
-                                  className="neo-btn p-1.5 hover:bg-neutral-100"
+                                  className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"
                                   title={client ? 'Editar cliente' : 'Editar proveedor'}
                                 >
                                   <Pencil size={13} />
@@ -5892,7 +5894,7 @@ export default function AppHome() {
                                 <button
                                   type="button"
                                   onClick={() => (client ? void handleDeleteCustomer(client) : supp ? void handleDeleteSupplier(supp) : undefined)}
-                                  className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                  className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                                   title={client ? 'Eliminar cliente' : 'Eliminar proveedor'}
                                 >
                                   <Trash2 size={13} />
@@ -6048,7 +6050,7 @@ export default function AppHome() {
                   <div className="flex flex-col gap-4">
 
                     {/* Sub-tabs */}
-                    <div className="flex border-b-2 border-black bg-white">
+                    <div className="flex flex-wrap border-b-2 border-black bg-white">
                       {(['redes', 'calendario', 'notas'] as const).map((tab) => (
                         <button
                           key={tab}
@@ -6357,7 +6359,7 @@ export default function AppHome() {
                                               checklistItems: esLista ? parsearChecklist(nota.contenido) : [],
                                             });
                                           }}
-                                          className="neo-btn p-1.5 hover:bg-neutral-100"
+                                          className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"
                                           title="Editar"
                                         >
                                           <Pencil size={12} />
@@ -6365,7 +6367,7 @@ export default function AppHome() {
                                         <button
                                           type="button"
                                           onClick={() => void handleEliminarNota(nota)}
-                                          className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                          className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                                           title="Eliminar"
                                         >
                                           <Trash2 size={12} />
@@ -6402,7 +6404,7 @@ export default function AppHome() {
                                   <button type="button" onClick={() => setNotaForm(f => ({ ...f, tipoContenido: 'texto' }))} className={`px-3 py-1 ${!isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>Texto</button>
                                   <button type="button" onClick={() => setNotaForm(f => ({ ...f, tipoContenido: 'lista' }))} className={`px-3 py-1 border-l-2 border-black ${isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>☑ Lista</button>
                                 </div>
-                                <button onClick={() => setShowCreateNota(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                                <button onClick={() => setShowCreateNota(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
                               </div>
                             </div>
                             <form onSubmit={(e) => void handleCrearNota(e)} className="flex flex-col gap-3.5 text-xs">
@@ -6501,7 +6503,7 @@ export default function AppHome() {
                                   <button type="button" onClick={() => setNotaEditForm(f => ({ ...f, tipoContenido: 'texto' }))} className={`px-3 py-1 ${!isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>Texto</button>
                                   <button type="button" onClick={() => setNotaEditForm(f => ({ ...f, tipoContenido: 'lista' }))} className={`px-3 py-1 border-l-2 border-black ${isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>☑ Lista</button>
                                 </div>
-                                <button onClick={() => setEditingNota(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                                <button onClick={() => setEditingNota(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
                               </div>
                             </div>
                             <form onSubmit={(e) => void handleGuardarEdicionNota(e)} className="flex flex-col gap-3.5 text-xs">
@@ -6666,10 +6668,10 @@ export default function AppHome() {
                     <div className="flex items-center gap-3 bg-white border-2 border-black p-3">
                       <span className="font-mono text-xs font-bold text-neutral-500 uppercase">Año</span>
                       <div className="flex items-center gap-2 ml-auto">
-                        <button type="button" onClick={() => { const y = reportesAño - 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-1.5 hover:bg-neutral-100"><ChevronLeft size={16} /></button>
+                        <button type="button" onClick={() => { const y = reportesAño - 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"><ChevronLeft size={16} /></button>
                         <span className="font-mono text-sm font-bold w-16 text-center">{reportesAño}</span>
-                        <button type="button" onClick={() => { const y = reportesAño + 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-1.5 hover:bg-neutral-100"><ChevronRight size={16} /></button>
-                        <button type="button" onClick={() => void fetchReportesOverview(reportesAño)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
+                        <button type="button" onClick={() => { const y = reportesAño + 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100"><ChevronRight size={16} /></button>
+                        <button type="button" onClick={() => void fetchReportesOverview(reportesAño)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
                       </div>
                     </div>
 
@@ -6732,7 +6734,7 @@ export default function AppHome() {
                           <h3 className="font-mono text-sm font-black">
                             {reportesOverview?.find(p => p.mes === reportesMesSel)?.label ?? ''}
                           </h3>
-                          <button type="button" onClick={() => { setReportesMesSel(null); setReportesDetalleMes(null); setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                          <button type="button" onClick={() => { setReportesMesSel(null); setReportesDetalleMes(null); setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); }} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
                         </div>
 
                         {/* Filtro por semana */}
@@ -7233,7 +7235,7 @@ export default function AppHome() {
                     <div className="flex items-center gap-2 bg-white border-2 border-black p-3">
                       <Footprints size={16} />
                       <h2 className="font-mono text-sm font-bold uppercase">Historial de actividad</h2>
-                      <button type="button" onClick={() => void fetchAuditoria(1)} className="neo-btn p-1.5 hover:bg-neutral-100 ml-auto" title="Recargar"><RefreshCw size={14} /></button>
+                      <button type="button" onClick={() => void fetchAuditoria(1)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100 ml-auto" title="Recargar"><RefreshCw size={14} /></button>
                     </div>
 
                     {/* Filtros */}
@@ -7353,11 +7355,11 @@ export default function AppHome() {
                     {/* Paginación */}
                     {auditoriaTotal > AUDITORIA_PAGE_SIZE && (
                       <div className="flex items-center justify-center gap-3 py-2">
-                        <button type="button" disabled={auditoriaPage <= 1} onClick={() => void fetchAuditoria(auditoriaPage - 1)} className="neo-btn p-1.5 disabled:opacity-30"><ChevronLeft size={14} /></button>
+                        <button type="button" disabled={auditoriaPage <= 1} onClick={() => void fetchAuditoria(auditoriaPage - 1)} className="neo-btn p-2.5 sm:p-1.5 disabled:opacity-30"><ChevronLeft size={14} /></button>
                         <span className="font-mono text-xs text-neutral-500">
                           Página {auditoriaPage} de {Math.max(1, Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE))}
                         </span>
-                        <button type="button" disabled={auditoriaPage >= Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE)} onClick={() => void fetchAuditoria(auditoriaPage + 1)} className="neo-btn p-1.5 disabled:opacity-30"><ChevronRight size={14} /></button>
+                        <button type="button" disabled={auditoriaPage >= Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE)} onClick={() => void fetchAuditoria(auditoriaPage + 1)} className="neo-btn p-2.5 sm:p-1.5 disabled:opacity-30"><ChevronRight size={14} /></button>
                       </div>
                     )}
                   </div>
@@ -7500,7 +7502,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">REGISTRAR NUEVO PRODUCTO</h3>
-              <button onClick={() => setShowCreateProduct(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateProduct(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateProduct} className="flex flex-col gap-3.5 text-xs">
@@ -7681,7 +7683,7 @@ export default function AppHome() {
                 <h3 className="font-mono text-sm font-bold text-black flex items-center gap-2">
                   <KanbanSquare size={16} /> PEDIDOS PENDIENTES
                 </h3>
-                <button onClick={() => setShowPendientesKanban(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                <button onClick={() => setShowPendientesKanban(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -7755,7 +7757,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-lg w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR NUEVO PEDIDO</h3>
-              <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', email: '', telefono: '' }); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', email: '', telefono: '' }); }} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateOrder} className="flex flex-col gap-4 text-xs">
@@ -7970,8 +7972,8 @@ export default function AppHome() {
                         {/* Precio excepcional + margen — permite cobrar distinto al precio de
                             catálogo (p.ej. un descuento puntual) y ver de inmediato cuánto
                             margen queda con ese precio, comparado contra el costo del producto. */}
-                        <div className="flex gap-2 items-center pl-0.5">
-                          <label className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-neutral-600 whitespace-nowrap">
+                        <div className="flex flex-wrap gap-2 items-center pl-0.5">
+                          <label className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-neutral-600">
                             <input
                               type="checkbox"
                               checked={esExcepcional}
@@ -8126,7 +8128,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">REGISTRAR PAGO / ABONO</h3>
-              <button onClick={() => setShowCreateAbono(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateAbono(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateAbono} className="flex flex-col gap-3.5 text-xs">
@@ -8207,7 +8209,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">NUEVO EVENTO DE CALENDARIO</h3>
-              <button onClick={() => setShowCreateEvent(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateEvent(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateCalendarEvent} className="flex flex-col gap-3.5 text-xs">
@@ -8296,7 +8298,7 @@ export default function AppHome() {
           <div className="neo-card bg-white w-full max-w-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2 sticky top-0 bg-white z-10">
               <h3 className="font-mono text-sm font-bold">NUEVA ORDEN DE COMPRA</h3>
-              <button onClick={() => setShowCreateCompra(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateCompra(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={(e) => void handleCrearCompra(e)} className="flex flex-col gap-4 text-xs">
@@ -8385,7 +8387,7 @@ export default function AppHome() {
                       <button
                         type="button"
                         onClick={() => setCompraForm({ ...compraForm, items: compraForm.items.filter((_, i) => i !== idx) })}
-                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                        className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                       >
                         <Trash2 size={12} />
                       </button>
@@ -8489,7 +8491,7 @@ export default function AppHome() {
                     <Pencil size={12} /> Editar OC
                   </button>
                 )}
-                <button onClick={() => setSelectedCompra(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                <button onClick={() => setSelectedCompra(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
               </div>
             </div>
 
@@ -8582,7 +8584,7 @@ export default function AppHome() {
           <div className="neo-card bg-white w-full max-w-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2 sticky top-0 bg-white z-10">
               <h3 className="font-mono text-sm font-bold">EDITAR {editingCompra.numero}</h3>
-              <button onClick={() => setEditingCompra(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingCompra(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={(e) => void handleGuardarEditCompra(e)} className="flex flex-col gap-4 text-xs">
@@ -8642,7 +8644,7 @@ export default function AppHome() {
                       </label>
                       <button type="button"
                         onClick={() => setEditCompraForm({ ...editCompraForm, items: editCompraForm.items.filter((_, i) => i !== idx) })}
-                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red">
+                        className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red">
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -8869,7 +8871,7 @@ export default function AppHome() {
                               <span className="text-neutral-600">{new Date(ab.fecha).toLocaleDateString('es-CO')}</span>
                               <span className="flex-1 text-neutral-500 truncate">{ab.referencia || '—'}</span>
                               <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
-                              <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
+                              <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
                             </div>
                           ))}
                         </div>
@@ -9071,7 +9073,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR PRODUCTO</h3>
-              <button onClick={() => setEditingProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingProduct(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditProduct(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9145,7 +9147,7 @@ export default function AppHome() {
               <h3 className="font-mono text-sm font-bold text-black flex items-center gap-2">
                 <Tag size={16} /> VARIANTES — {variantesProduct.nombre}
               </h3>
-              <button onClick={() => setVariantesProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setVariantesProduct(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             {variantesError && <p className="text-brand-red font-mono text-[11px] border border-brand-red p-2">{variantesError}</p>}
@@ -9269,7 +9271,7 @@ export default function AppHome() {
                 <PackagePlus size={16} />
                 ENTRADA DE STOCK
               </h3>
-              <button onClick={() => setStockEntryProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setStockEntryProduct(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <p className="text-xs font-mono text-neutral-600">
               Producto: <span className="font-bold text-black">{stockEntryProduct.nombre}</span>
@@ -9323,7 +9325,7 @@ export default function AppHome() {
                 <PackageMinus size={16} />
                 BAJA DE STOCK
               </h3>
-              <button onClick={() => setStockAdjustProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setStockAdjustProduct(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <p className="text-xs font-mono text-neutral-600">
               Producto: <span className="font-bold text-black">{stockAdjustProduct.nombre}</span>
@@ -9382,7 +9384,7 @@ export default function AppHome() {
                 <Tag size={16} />
                 ADMINISTRAR CATEGORÍAS
               </h3>
-              <button onClick={() => setShowCategoryAdmin(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCategoryAdmin(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -9458,7 +9460,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR CLIENTE</h3>
-              <button onClick={() => setShowCreateCustomer(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateCustomer(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCreateCustomer(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9516,7 +9518,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR PROVEEDOR</h3>
-              <button onClick={() => setShowCreateSupplier(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateSupplier(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCreateSupplier(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9568,7 +9570,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR CLIENTE</h3>
-              <button onClick={() => setEditingCustomer(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingCustomer(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditCustomer(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9641,7 +9643,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR PROVEEDOR</h3>
-              <button onClick={() => setEditingSupplier(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingSupplier(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditSupplier(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9684,7 +9686,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR PEDIDO {editingOrder.numero}</h3>
-              <button onClick={() => setEditingOrder(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingOrder(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditOrder(e)} className="flex flex-col gap-3.5 text-xs">
               <p className="text-[11px] text-neutral-500 font-mono">El estado, los ítems y el total se gestionan desde sus propios flujos — aquí solo puedes ajustar el cliente asociado y las notas.</p>
@@ -9711,7 +9713,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR FACTURA {editingInvoice.numero}</h3>
-              <button onClick={() => setEditingInvoice(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingInvoice(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditInvoice(e)} className="flex flex-col gap-3.5 text-xs">
               <p className="text-[11px] text-neutral-500 font-mono">El total, el saldo y el estado los recalcula siempre el servidor — aquí solo puedes ajustar la fecha de vencimiento y las notas.</p>
@@ -9735,7 +9737,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR ABONO</h3>
-              <button onClick={() => setEditingAbono(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingAbono(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditAbono(e)} className="flex flex-col gap-3.5 text-xs">
               <p className="text-[11px] text-neutral-500 font-mono">El monto de un abono no se puede editar — si fue un error, elimínalo (puedes deshacerlo) y registra uno nuevo.</p>
@@ -9769,7 +9771,7 @@ export default function AppHome() {
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <h3 className="font-mono text-sm font-bold">REGISTRAR PAGO · {selectedCxpInvoice.numero}</h3>
-              <button onClick={() => setShowCxpAbonoModal(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCxpAbonoModal(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCxpAbono(e)} className="p-4 flex flex-col gap-3">
               <div className="flex justify-between text-xs font-mono bg-neutral-50 border border-neutral-200 p-3">
@@ -9830,7 +9832,7 @@ export default function AppHome() {
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <h3 className="font-mono text-sm font-bold">TRANSFERENCIA ENTRE CUENTAS</h3>
-              <button onClick={() => { setShowTransferenciaModal(false); setTransferenciaError(null); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => { setShowTransferenciaModal(false); setTransferenciaError(null); }} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCrearTransferencia(e)} className="p-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1">
@@ -9900,7 +9902,7 @@ export default function AppHome() {
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <h3 className="font-mono text-sm font-bold">REGISTRAR GASTO OPERATIVO</h3>
-              <button onClick={() => setShowGastoModal(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowGastoModal(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCrearGasto(e)} className="p-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1">
@@ -9982,7 +9984,7 @@ export default function AppHome() {
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <h3 className="font-mono text-sm font-bold">REGISTRAR INGRESO BANCARIO</h3>
-              <button onClick={() => setShowIngresoModal(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowIngresoModal(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCrearIngreso(e)} className="p-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1">
@@ -10067,7 +10069,7 @@ export default function AppHome() {
                 <h3 className="font-mono text-sm font-bold">RECEPCIÓN {recepcionTarget.estado === 'recibido_parcial' ? 'PARCIAL' : 'TOTAL'}</h3>
                 <p className="text-[11px] text-neutral-500 font-mono">OC {recepcionTarget.compra.numero} — Ingresa las cantidades recibidas</p>
               </div>
-              <button onClick={() => { setShowRecepcionModal(false); setRecepcionTarget(null); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => { setShowRecepcionModal(false); setRecepcionTarget(null); }} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="p-4 flex flex-col gap-4">
               <table className="w-full text-xs border-collapse">
@@ -10134,7 +10136,7 @@ export default function AppHome() {
                 <h3 className="font-mono text-sm font-bold">🗑 PAPELERA</h3>
                 <p className="text-[11px] text-neutral-500 font-mono">Elementos eliminados recientemente — puedes restaurarlos.</p>
               </div>
-              <button onClick={() => setShowPapelera(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowPapelera(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="p-4 overflow-y-auto flex-1">
               {!papeleraCargando && papeleraItems.length === 0 && (
@@ -10167,7 +10169,7 @@ export default function AppHome() {
       {/* ── POPUP: Evento de calendario ── */}
       {eventoPopup && (
         <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4" onClick={() => setEventoPopup(null)}>
-          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col gap-0 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
+          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col gap-0 max-h-[90vh] overflow-y-auto shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className={`flex items-center justify-between px-4 py-3 border-b-2 border-black ${
               eventoPopup.tipo === 'nota' ? 'bg-brand-yellow/30' :
@@ -10180,7 +10182,7 @@ export default function AppHome() {
                 {eventoPopup.canal === 'tiktok' && <TikTokIcon size={14} />}
                 <span className="font-mono text-xs text-neutral-500">{new Date(eventoPopup.fecha).toLocaleDateString('es-CO')}</span>
               </div>
-              <button type="button" onClick={() => setEventoPopup(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button type="button" onClick={() => setEventoPopup(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="px-4 py-4 flex flex-col gap-4">
               {/* Título */}
@@ -10243,13 +10245,13 @@ export default function AppHome() {
       {/* ── POPUP: Nota interna (desde dashboard) ── */}
       {notaPopup && (
         <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4" onClick={() => setNotaPopup(null)}>
-          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
+          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col max-h-[90vh] overflow-y-auto shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b-2 border-black bg-brand-yellow/20">
               <div className="flex items-center gap-2">
                 <StickyNote size={14} />
                 <span className="font-mono text-xs font-bold">NOTA</span>
               </div>
-              <button type="button" onClick={() => setNotaPopup(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button type="button" onClick={() => setNotaPopup(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="px-4 py-4 flex flex-col gap-3">
               <div className="flex items-center gap-2">
@@ -10275,7 +10277,7 @@ export default function AppHome() {
 
       {/* Toast global de "deshacer" — aparece tras eliminar cualquier elemento de cualquier módulo */}
       {undoToast && (
-        <div className="fixed bottom-6 right-6 z-[60] neo-card bg-black text-white max-w-sm w-full sm:w-auto flex items-center gap-4 py-3 px-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.4)]">
+        <div className="fixed bottom-3 left-3 right-3 sm:bottom-6 sm:left-auto sm:right-6 z-[60] neo-card bg-black text-white sm:max-w-sm w-auto flex items-center gap-4 py-3 px-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.4)]">
           <span className="text-xs font-mono leading-snug">{undoToast.mensaje}</span>
           <button
             type="button"

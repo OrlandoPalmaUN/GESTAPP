@@ -120,7 +120,24 @@
   .neo-shadow-blue {
     box-shadow: 4px 4px 0px 0px var(--brand-blue, #5092A9);
   }
-  
+}
+
+/**
+ * Los componentes van en `@layer components`, NO en `utilities`.
+ *
+ * Tailwind emite `components` ANTES que `utilities`. Teniéndolos en
+ * `utilities` (como estaban), `.neo-input` se emitía DESPUÉS de `pl-8` y,
+ * con la misma especificidad, ganaba el último — además `px-3 py-2.5`
+ * compila al shorthand `padding: .625rem .75rem`, que pisa cualquier
+ * `padding-left` longhand. Resultado: TODO input con `.neo-input` tenía
+ * `padding-left: 12px` sin importar su `pl-*`, y el `$` de MoneyInput
+ * (en `left: 10px`) quedaba encima del número. Lo mismo con los íconos
+ * de lupa del Combobox y del buscador global.
+ *
+ * Acá los `pl-*`/`pr-*`/`py-*` de cada uso vuelven a mandar, que es lo
+ * que el marcado siempre asumió.
+ */
+@layer components {
   .neo-btn {
     @apply border-2 border-black bg-white text-black font-bold px-4 py-2
            shadow-[3px_3px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[-1px] hover:translate-y-[-1px]
@@ -143,13 +160,29 @@
            active:shadow-none transition-all duration-100 cursor-pointer select-none outline-none;
   }
 
+  /* `p-6` en celular se comía 48px de 375px — junto al `p-4` del overlay
+     eran 80px (21% de la pantalla) en puro padding antes del contenido. */
   .neo-card {
-    @apply border-2 border-black bg-white p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)];
+    @apply border-2 border-black bg-white p-4 sm:p-6 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)];
   }
 
   .neo-input {
     @apply border-2 border-black bg-white text-black px-3 py-2.5 outline-none
            focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-all duration-100;
+  }
+}
+
+/**
+ * Safari en iOS hace zoom al enfocar cualquier input de menos de 16px, y deja
+ * la página corrida sin forma obvia de volver. Muchos inputs de la app usan
+ * `text-xs`/`text-[11px]`, así que en celular se fuerza 16px — el tamaño
+ * visual de escritorio no cambia.
+ */
+@media (max-width: 640px) {
+  .neo-input,
+  select.neo-input,
+  textarea.neo-input {
+    font-size: 16px;
   }
 }
 
