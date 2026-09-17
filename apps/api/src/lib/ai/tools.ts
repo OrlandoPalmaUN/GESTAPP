@@ -33,10 +33,13 @@ const TOOLS_BY_CONTEXT: Record<string, string[]> = {
     'buscar_cliente', 'crear_cliente', 'ver_historial_cliente',
     'registrar_abono', 'consultar_facturas_vencidas',
   ],
+  // Compras dejó de ser una sección aparte: ahora se registran desde Gastos,
+  // así que las herramientas de proveedor/compra viven también en finanzas.
   finanzas: [
     'buscar_cliente', 'registrar_abono', 'registrar_gasto', 'registrar_ingreso_manual',
     'ver_historial_cliente', 'consultar_resumen_negocio', 'consultar_facturas_vencidas',
-    'consultar_cuentas_bancarias',
+    'consultar_cuentas_bancarias', 'buscar_proveedor', 'crear_proveedor',
+    'buscar_producto', 'crear_compra', 'consultar_compras_pendientes',
   ],
   redes: ['consultar_posts_ig', 'consultar_metricas_ig'],
   notas: ['crear_nota', 'crear_evento_calendario'],
@@ -336,7 +339,7 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
         properties: {
           descripcion: { type: 'string' },
           monto: { type: 'number', description: 'En COP' },
-          categoria: { type: 'string', description: 'Ej: nomina, servicios, transporte, materia_prima' },
+          categoria: { type: 'string', description: 'Uno de: arriendo, servicios, nomina, comisiones, marketing, transporte, impuestos, mantenimiento, honorarios, financieros, otros. Para una compra de mercancía NO uses un gasto: usa crear_compra, que sí entra al inventario.' },
           cuenta_bancaria_id: { type: 'string', description: 'Opcional — descuenta del saldo' },
           fecha: { type: 'string', description: 'YYYY-MM-DD (default hoy)' },
         },

@@ -527,6 +527,34 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  /**
+   * Compra de mercancía YA RECIBIDA, registrada desde Gastos. El backend hace
+   * todo en una transacción: OC + ítems + CxP + entrada de inventario + abono
+   * si se pagó de contado.
+   */
+  crearCompraDirecta: (data: {
+    proveedorId: string
+    descripcion: string
+    fecha?: string
+    items: (
+      | { productoId: string; cantidad: number; precioUnitario?: number }
+      | { concepto: string; cantidad: number; precioUnitario?: number }
+    )[]
+    pagado?: boolean
+    cuentaBancariaId?: string
+    medioPago?: string
+    fechaVencimientoCxP?: string
+    totalManual?: number
+  }) =>
+    request<{ pedido: PedidoProveedor }>('/compras/directa', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  /** Deshace una compra recibida: saca el stock con movimientos compensatorios y anula la CxP. */
+  revertirRecepcionCompra: (id: string) =>
+    request<{ pedido: PedidoProveedor }>(`/compras/${id}/revertir-recepcion`, { method: 'POST' }),
+
   actualizarCompra: (
     id: string,
     data: Partial<{
@@ -632,7 +660,19 @@ export const api = {
 
   listarGastos: () => request<{ gastos: GastoOperativo[] }>('/finanzas/gastos'),
 
-  crearGasto: (data: { descripcion: string; categoria?: CategoriaGasto; monto: number; fecha?: string; medioPago?: string; cuentaBancariaId?: string; notas?: string }) =>
+  crearGasto: (data: {
+    descripcion: string
+    categoria?: CategoriaGasto
+    monto: number
+    fecha?: string
+    medioPago?: string
+    cuentaBancariaId?: string
+    notas?: string
+    /** `true` = queda debiendo: genera una CxP al proveedor en vez de mover el banco. */
+    aCredito?: boolean
+    proveedorId?: string
+    fechaVencimiento?: string
+  }) =>
     request<{ gasto: GastoOperativo }>('/finanzas/gastos', {
       method: 'POST',
       body: JSON.stringify(data),

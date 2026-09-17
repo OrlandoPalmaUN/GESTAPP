@@ -43,6 +43,7 @@ import {
   Footprints,
   Menu,
   KanbanSquare,
+  Undo2,
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, Tenant, TransferenciaBancaria } from '@antigravity/shared';
@@ -80,7 +81,7 @@ function tiempoRelativo(iso: string): string {
 
 const ENTIDAD_LABELS: Record<string, string> = {
   productos: 'Producto', categorias: 'Categoría', clientes: 'Cliente', proveedores: 'Proveedor',
-  pedidos: 'Pedido', pedido_items: 'Ítem de pedido', pedidos_proveedor: 'Orden de compra', pedidos_proveedor_items: 'Ítem de OC',
+  pedidos: 'Pedido', pedido_items: 'Ítem de pedido', pedidos_proveedor: 'Compra de inventario', pedidos_proveedor_items: 'Ítem de compra',
   facturas_venta: 'Factura de venta', facturas_compra: 'Factura de compra', abonos: 'Abono', gastos_operativos: 'Gasto',
   ingresos_bancarios: 'Ingreso bancario', cuentas_bancarias: 'Cuenta bancaria', transferencias_bancarias: 'Transferencia',
   eventos_calendario: 'Evento de calendario', notas_crm: 'Nota CRM', notas_internas: 'Nota interna',
@@ -131,11 +132,23 @@ const TRANSICIONES_VALIDAS_PROVEEDOR: Record<EstadoPedidoProveedor, EstadoPedido
 };
 
 // Local copy of CATEGORIAS_GASTO (mirrors shared) — avoids value import from @antigravity/shared.
-const CATEGORIAS_GASTO_LOCAL: CategoriaGasto[] = ['arriendo', 'servicios', 'nomina', 'comisiones', 'marketing', 'otros'];
+// Fuente de verdad: CATEGORIAS_GASTO en packages/shared/src/types/finanzas.ts
+// (copia local para no forzar un import de valor desde @antigravity/shared).
+// Agregar uno acá exige agregarlo también allá y en el CHECK de la migración.
+const CATEGORIAS_GASTO_LOCAL: CategoriaGasto[] = [
+  'arriendo', 'servicios', 'nomina', 'comisiones', 'marketing',
+  'transporte', 'impuestos', 'mantenimiento', 'honorarios', 'financieros', 'otros',
+];
 const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
   arriendo: 'Arriendo', servicios: 'Servicios', nomina: 'Nómina',
-  comisiones: 'Comisiones', marketing: 'Marketing', otros: 'Otros',
+  comisiones: 'Comisiones', marketing: 'Marketing', transporte: 'Transporte',
+  impuestos: 'Impuestos', mantenimiento: 'Mantenimiento', honorarios: 'Honorarios',
+  financieros: 'Financieros', otros: 'Otros',
 };
+
+/** Tipo de "compra de inventario" en el selector del formulario. NO es una categoría persistida:
+ *  esas filas viven en `pedidos_proveedor`, no en `gastos_operativos`. */
+const TIPO_COMPRA_INVENTARIO = '__compra_inventario__';
 
 import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type ResultadoBusqueda, type VarianteProducto } from '../lib/api';
 import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
@@ -607,11 +620,30 @@ export default function AppHome() {
   const [gastosCargando, setGastosCargando] = useState(false);
   const [gastosError, setGastosError] = useState<string | null>(null);
   const [showGastoModal, setShowGastoModal] = useState(false);
-  const [gastoForm, setGastoForm] = useState<{ descripcion: string; categoria: CategoriaGasto; monto: string; fecha: string; medioPago: string; cuentaBancariaId: string; notas: string }>({
-    descripcion: '', categoria: 'otros', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '',
+  /**
+   * Formulario único de Gastos. `tipo` es o una CategoriaGasto o
+   * TIPO_COMPRA_INVENTARIO — en ese caso el gasto se registra como compra
+   * (entra al stock y genera CxP) en vez de como gasto operativo.
+   */
+  const [gastoForm, setGastoForm] = useState<{
+    tipo: string; descripcion: string; monto: string; fecha: string; medioPago: string;
+    cuentaBancariaId: string; notas: string; aCredito: boolean; proveedorId: string; fechaVencimiento: string;
+    items: { productoId: string; cantidad: string; precioUnitario: string }[];
+  }>({
+    tipo: 'otros', descripcion: '', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '',
+    notas: '', aCredito: false, proveedorId: '', fechaVencimiento: '',
+    items: [{ productoId: '', cantidad: '1', precioUnitario: '' }],
   });
   const [guardandoGasto, setGuardandoGasto] = useState(false);
   const [gastoFormError, setGastoFormError] = useState<string | null>(null);
+  const [revirtiendoCompra, setRevirtiendoCompra] = useState<string | null>(null);
+  /** Edición de gasto: el PATCH existía en el API desde siempre pero no tenía UI,
+   *  así que corregir un typo obligaba a borrar y volver a crear — y eso ensucia
+   *  la auditoría con un borrado que en realidad fue una corrección. */
+  const [editandoGasto, setEditandoGasto] = useState<GastoOperativo | null>(null);
+  const [editGastoForm, setEditGastoForm] = useState({ descripcion: '', categoria: 'otros' as CategoriaGasto, monto: '', fecha: '', notas: '' });
+  const [guardandoEditGasto, setGuardandoEditGasto] = useState(false);
+  const [editGastoError, setEditGastoError] = useState<string | null>(null);
 
   // --- Ingresos bancarios manuales ---
   const [ingresos, setIngresos] = useState<IngresoBancario[]>([]);
@@ -628,7 +660,6 @@ export default function AppHome() {
   // ingresos. Antes se renderizaba cada fila existente en cada re-render de
   // la página — y como casi no hay useMemo, eso pasaba en cada tecleo.
   const movimientosPag = usePaginacion(movements, 25);
-  const gastosPag = usePaginacion(gastos, 25);
   const ingresosPag = usePaginacion(ingresos, 25);
   const [ingresoFormError, setIngresoFormError] = useState<string | null>(null);
 
@@ -715,16 +746,6 @@ export default function AppHome() {
   const [compras, setCompras] = useState<PedidoProveedor[]>([]);
   const [comprasCargando, setComprasCargando] = useState(false);
   const [comprasError, setComprasError] = useState<string | null>(null);
-  const [showCreateCompra, setShowCreateCompra] = useState(false);
-  const [compraForm, setCompraForm] = useState<{
-    proveedorId: string;
-    fechaEsperada: string;
-    notas: string;
-    totalManual: string;
-    items: { productoId: string; concepto: string; esLibre: boolean; cantidad: string; precioUnitario: string }[];
-  }>({ proveedorId: '', fechaEsperada: '', notas: '', totalManual: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
-  const [guardandoCompra, setGuardandoCompra] = useState(false);
-  const [compraFormError, setCompraFormError] = useState<string | null>(null);
   const [selectedCompra, setSelectedCompra] = useState<PedidoProveedor | null>(null);
   const [editingCompra, setEditingCompra] = useState<PedidoProveedor | null>(null);
   const [editCompraForm, setEditCompraForm] = useState<{
@@ -737,9 +758,68 @@ export default function AppHome() {
   const [editCompraError, setEditCompraError] = useState<string | null>(null);
   const [transicionandoCompra, setTransicionandoCompra] = useState(false);
 
+  /**
+   * Listado unificado de Gastos: mezcla los gastos operativos con las compras a
+   * proveedor en una sola línea de tiempo.
+   *
+   * Las dos siguen siendo tablas distintas en la base (una compra mueve stock y
+   * genera CxP; un gasto no), pero para el dueño ambas son lo mismo: plata que
+   * sale. Tener dos secciones separadas hacía que la de Compras quedara sin
+   * usar. Acá se juntan solo para mostrar — nada se migró ni se borró, y las
+   * compras viejas siguen abriendo su propio detalle con sus recepciones.
+   */
+  type FilaGastoUnificada = {
+    id: string
+    tipo: 'gasto' | 'compra'
+    fecha: string
+    descripcion: string
+    etiquetaTipo: string
+    monto: number
+    proveedorNombre: string | null
+    /** Solo compras: permite mostrar el estado y decidir si se puede revertir. */
+    compra?: PedidoProveedor
+    gasto?: GastoOperativo
+  };
+
+  const gastosUnificados = useMemo<FilaGastoUnificada[]>(() => {
+    const deGastos: FilaGastoUnificada[] = gastos.map((g) => ({
+      id: `g-${g.id}`,
+      tipo: 'gasto',
+      fecha: g.fecha,
+      descripcion: g.descripcion,
+      etiquetaTipo: LABEL_CATEGORIA_GASTO[g.categoria] ?? g.categoria,
+      monto: g.monto,
+      proveedorNombre: g.proveedorId ? (suppliers.find((s) => s.id === g.proveedorId)?.nombre ?? null) : null,
+      gasto: g,
+    }));
+
+    const deCompras: FilaGastoUnificada[] = compras
+      .filter((c) => c.estado !== 'cancelado')
+      .map((c) => ({
+        id: `c-${c.id}`,
+        tipo: 'compra',
+        fecha: c.fecha,
+        descripcion: c.notas?.trim() || `Compra ${c.numero}`,
+        etiquetaTipo: 'Compra de inventario',
+        monto: c.total,
+        proveedorNombre: c.proveedorId ? (suppliers.find((s) => s.id === c.proveedorId)?.nombre ?? null) : null,
+        compra: c,
+      }));
+
+    return [...deGastos, ...deCompras].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  }, [gastos, compras, suppliers]);
+
+  const gastosPag = usePaginacion(gastosUnificados, 25);
+
   // --- SUB-TABS INTERNAS ---
+  // `'compras'` sigue siendo un valor válido en la URL para no romper links y
+  // marcadores viejos, pero ya no tiene pestaña propia: cae en Gastos, que es
+  // donde ahora se registran y se ven las compras.
   const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos' | 'flujo'>(
-    () => valorInicialDeUrl('finanzas', FINANZAS_SUBTABS_VALIDAS, 'resumen'),
+    () => {
+      const inicial = valorInicialDeUrl('finanzas', FINANZAS_SUBTABS_VALIDAS, 'resumen');
+      return inicial === 'compras' ? 'gastos' : inicial;
+    },
   );
 
   // --- BUSCADORES Y FILTROS ---
@@ -1497,7 +1577,8 @@ export default function AppHome() {
         setActiveTab(e.tab as typeof TABS_VALIDAS[number]);
       }
       if (e.finanzas && (FINANZAS_SUBTABS_VALIDAS as readonly string[]).includes(e.finanzas)) {
-        setFinanceSubTab(e.finanzas as typeof FINANZAS_SUBTABS_VALIDAS[number]);
+        const sub = e.finanzas as typeof FINANZAS_SUBTABS_VALIDAS[number];
+        setFinanceSubTab(sub === 'compras' ? 'gastos' : sub);
       }
       if (e.com && (COM_SUBTABS_VALIDAS as readonly string[]).includes(e.com)) {
         setComunicacionesSubTab(e.com as typeof COM_SUBTABS_VALIDAS[number]);
@@ -1608,32 +1689,153 @@ export default function AppHome() {
 
   useEffect(() => { void fetchGastos(); }, [fetchGastos]);
 
+  const gastoFormVacio = {
+    tipo: 'otros', descripcion: '', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '',
+    notas: '', aCredito: false, proveedorId: '', fechaVencimiento: '',
+    items: [{ productoId: '', cantidad: '1', precioUnitario: '' }],
+  };
+
+  /**
+   * Una sola puerta de entrada para todo lo que sale de plata. Según el tipo,
+   * el registro va a `gastos_operativos` (gasto operativo) o a
+   * `pedidos_proveedor` (compra de mercancía, que además entra al stock).
+   */
   const handleCrearGasto = async (e: React.FormEvent) => {
     e.preventDefault();
-    const monto = parseFloat(gastoForm.monto);
-    if (!gastoForm.descripcion.trim() || !monto || monto <= 0) {
-      setGastoFormError('Descripción y monto son obligatorios.');
+    setGastoFormError(null);
+
+    const esCompra = gastoForm.tipo === TIPO_COMPRA_INVENTARIO;
+
+    if (!gastoForm.descripcion.trim()) {
+      setGastoFormError('Escribí de qué se trata.');
       return;
     }
+    if (gastoForm.aCredito && !gastoForm.proveedorId) {
+      setGastoFormError('Para dejarlo debiendo, elegí a qué proveedor.');
+      return;
+    }
+    if (!gastoForm.aCredito && !gastoForm.cuentaBancariaId && esCompra) {
+      setGastoFormError('Indicá de qué cuenta salió el dinero, o marcalo como que quedó debiendo.');
+      return;
+    }
+
     setGuardandoGasto(true);
-    setGastoFormError(null);
     try {
-      await api.crearGasto({
-        descripcion: gastoForm.descripcion.trim(),
-        categoria: gastoForm.categoria,
-        monto,
-        fecha: gastoForm.fecha || undefined,
-        medioPago: gastoForm.medioPago || undefined,
-        cuentaBancariaId: gastoForm.cuentaBancariaId || undefined,
-        notas: gastoForm.notas || undefined,
-      });
+      if (esCompra) {
+        if (!gastoForm.proveedorId) {
+          setGastoFormError('Elegí el proveedor al que le compraste.');
+          setGuardandoGasto(false);
+          return;
+        }
+        const items = gastoForm.items
+          .filter((it) => it.productoId && parseFloat(it.cantidad) > 0)
+          .map((it) => ({
+            productoId: it.productoId,
+            cantidad: parseFloat(it.cantidad),
+            ...(it.precioUnitario ? { precioUnitario: parseFloat(it.precioUnitario) } : {}),
+          }));
+        if (items.length === 0) {
+          setGastoFormError('Agregá al menos un producto con su cantidad.');
+          setGuardandoGasto(false);
+          return;
+        }
+        const totalManual = gastoForm.monto ? parseFloat(gastoForm.monto) : undefined;
+        await api.crearCompraDirecta({
+          proveedorId: gastoForm.proveedorId,
+          descripcion: gastoForm.descripcion.trim(),
+          fecha: gastoForm.fecha || undefined,
+          items,
+          pagado: !gastoForm.aCredito,
+          cuentaBancariaId: !gastoForm.aCredito ? gastoForm.cuentaBancariaId : undefined,
+          medioPago: gastoForm.medioPago || undefined,
+          fechaVencimientoCxP: gastoForm.aCredito ? (gastoForm.fechaVencimiento || undefined) : undefined,
+          totalManual,
+        });
+      } else {
+        const monto = parseFloat(gastoForm.monto);
+        if (!monto || monto <= 0) {
+          setGastoFormError('El monto debe ser mayor que cero.');
+          setGuardandoGasto(false);
+          return;
+        }
+        await api.crearGasto({
+          descripcion: gastoForm.descripcion.trim(),
+          categoria: gastoForm.tipo as CategoriaGasto,
+          monto,
+          fecha: gastoForm.fecha || undefined,
+          medioPago: gastoForm.medioPago || undefined,
+          cuentaBancariaId: !gastoForm.aCredito ? (gastoForm.cuentaBancariaId || undefined) : undefined,
+          notas: gastoForm.notas || undefined,
+          aCredito: gastoForm.aCredito,
+          proveedorId: gastoForm.aCredito ? gastoForm.proveedorId : undefined,
+          fechaVencimiento: gastoForm.aCredito ? (gastoForm.fechaVencimiento || undefined) : undefined,
+        });
+      }
       setShowGastoModal(false);
-      setGastoForm({ descripcion: '', categoria: 'otros', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '' });
-      await Promise.all([fetchGastos(), fetchCuentasBancarias(), fetchResumen()]);
+      setGastoForm(gastoFormVacio);
+      await Promise.all([fetchGastos(), fetchCompras(), fetchCuentasBancarias(), fetchResumen(), fetchInventario(), fetchFinanzas()]);
     } catch (error) {
-      setGastoFormError(error instanceof ApiError ? error.message : 'No se pudo registrar el gasto.');
+      setGastoFormError(error instanceof ApiError ? error.message : 'No se pudo registrar.');
     } finally {
       setGuardandoGasto(false);
+    }
+  };
+
+  /** Deshace una compra recibida: saca el stock que entró y anula la CxP. */
+  const handleRevertirCompra = async (compra: PedidoProveedor) => {
+    const ok = window.confirm(
+      `¿Revertir la compra ${compra.numero}?\n\n` +
+      `Se descuenta del inventario la mercancía que había entrado y se anula la cuenta por pagar.\n` +
+      `El historial de movimientos queda: se agregan ajustes negativos, no se borra nada.`,
+    );
+    if (!ok) return;
+    setRevirtiendoCompra(compra.id);
+    try {
+      await api.revertirRecepcionCompra(compra.id);
+      await Promise.all([fetchCompras(), fetchInventario(), fetchFinanzas(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setGastosError(error instanceof ApiError ? error.message : 'No se pudo revertir la compra.');
+    } finally {
+      setRevirtiendoCompra(null);
+    }
+  };
+
+  const openEditGasto = (gasto: GastoOperativo) => {
+    setEditandoGasto(gasto);
+    setEditGastoForm({
+      descripcion: gasto.descripcion,
+      categoria: gasto.categoria,
+      monto: String(gasto.monto),
+      fecha: gasto.fecha,
+      notas: gasto.notas ?? '',
+    });
+    setEditGastoError(null);
+  };
+
+  const handleGuardarEditGasto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editandoGasto) return;
+    const monto = parseFloat(editGastoForm.monto);
+    if (!editGastoForm.descripcion.trim() || !monto || monto <= 0) {
+      setEditGastoError('Descripción y monto son obligatorios.');
+      return;
+    }
+    setGuardandoEditGasto(true);
+    setEditGastoError(null);
+    try {
+      await api.actualizarGasto(editandoGasto.id, {
+        descripcion: editGastoForm.descripcion.trim(),
+        categoria: editGastoForm.categoria,
+        monto,
+        fecha: editGastoForm.fecha || undefined,
+        notas: editGastoForm.notas || null,
+      });
+      setEditandoGasto(null);
+      await Promise.all([fetchGastos(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setEditGastoError(error instanceof ApiError ? error.message : 'No se pudo guardar el gasto.');
+    } finally {
+      setGuardandoEditGasto(false);
     }
   };
 
@@ -2213,36 +2415,6 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
 
   useEffect(() => { void fetchCompras(); }, [fetchCompras]);
-
-  const handleCrearCompra = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCompraFormError(null);
-    if (compraForm.items.length === 0) { setCompraFormError('Agrega al menos un ítem.'); return; }
-    setGuardandoCompra(true);
-    try {
-      const items = compraForm.items.map(item => {
-        if (item.esLibre) {
-          return { concepto: item.concepto, cantidad: parseFloat(item.cantidad) || 1, precioUnitario: parseFloat(item.precioUnitario) || 0 };
-        }
-        return { productoId: item.productoId, cantidad: parseFloat(item.cantidad) || 1, precioUnitario: parseFloat(item.precioUnitario) || 0 };
-      });
-      const totalManual = compraForm.totalManual ? parseFloat(compraForm.totalManual) : undefined;
-      await api.crearCompra({
-        proveedorId: compraForm.proveedorId || null,
-        fechaEsperada: compraForm.fechaEsperada || undefined,
-        notas: compraForm.notas || undefined,
-        totalManual,
-        items,
-      });
-      setShowCreateCompra(false);
-      setCompraForm({ proveedorId: '', fechaEsperada: '', notas: '', totalManual: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
-      await fetchCompras();
-    } catch (error) {
-      setCompraFormError(error instanceof ApiError ? error.message : 'No se pudo crear la orden de compra.');
-    } finally {
-      setGuardandoCompra(false);
-    }
-  };
 
   const handleTransicionarCompra = async (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
     // Sin proveedor no hay a quién registrarle la deuda — el backend ya lo
@@ -3403,18 +3575,18 @@ export default function AppHome() {
                 </span>
               </button>
 
-              {/* Compras/OC vive en el mismo panel que Finanzas, pero se entra
-                  desde acá: el dueño piensa "pedidos que me hacen" (Pedidos) y
-                  "pedidos que yo hago" (Compras). Tenerlo tres clics adentro de
-                  contabilidad no correspondía a cómo se usa. */}
+              {/* "Compras / OC" dejó de ser una sección propia: para el dueño una
+                  orden de compra y un gasto son lo mismo (plata que sale), y tener
+                  dos lugares hacía que este quedara sin usar. Ahora se registra
+                  desde Gastos, eligiendo el tipo "Compra de inventario". */}
               <button
-                onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('compras'); setSuperAdminMode(false); setSidebarOpen(false); }}
+                onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('gastos'); setSuperAdminMode(false); setSidebarOpen(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'finanzas' && financeSubTab === 'compras' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  activeTab === 'finanzas' && financeSubTab === 'gastos' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
                 }`}
               >
                 <PackagePlus size={18} />
-                <span>Compras / OC</span>
+                <span>Gastos y Compras</span>
               </button>
 
               <button
@@ -3435,7 +3607,7 @@ export default function AppHome() {
               <button
                 onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('resumen'); setSuperAdminMode(false); setSidebarOpen(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'finanzas' && financeSubTab !== 'compras' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  activeTab === 'finanzas' && financeSubTab !== 'gastos' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
                 }`}
               >
                 <DollarSign size={18} />
@@ -4924,10 +5096,10 @@ export default function AppHome() {
                               : 'text-black hover:bg-neutral-50'
                           }`}
                         >
-                          {tab === 'resumen' && 'Resumen Financiero'}
+                          {tab === 'resumen' && 'Resumen'}
                           {tab === 'cxc' && 'CxC · Por Cobrar'}
                           {tab === 'cxp' && 'CxP · Por Pagar'}
-                          {tab === 'gastos' && 'Gastos Op.'}
+                          {tab === 'gastos' && 'Gastos y Compras'}
                           {tab === 'flujo' && 'Flujo de Caja'}
                           {tab === 'ingresos' && 'Ingresos'}
                         </button>
@@ -5386,188 +5558,141 @@ export default function AppHome() {
                       </div>
                     )}
 
-                    {/* COMPRAS / ÓRDENES DE COMPRA TAB */}
-                    {financeSubTab === 'compras' && (
-                      <div className="flex flex-col gap-4">
-                        <div className="flex justify-between items-center bg-white border-2 border-black p-3">
-                          <div>
-                            <span className="font-mono text-xs font-bold">ÓRDENES DE COMPRA</span>
-                            <span className="ml-2 text-xs text-neutral-500">({compras.length} en total)</span>
-                          </div>
-                          <button
-                            onClick={() => setShowCreateCompra(true)}
-                            className="neo-btn-secondary text-xs py-1.5 flex items-center gap-1.5"
-                          >
-                            <Plus size={14} /> Nueva Orden de Compra
-                          </button>
-                        </div>
+                    {/* La pestaña de Compras se eliminó: las compras ahora viven
+                        dentro de Gastos, en la lista unificada de abajo. */}
 
-                        {comprasError && (
-                          <div className="bg-red-50 border-2 border-red-600 text-red-700 p-3 text-xs font-mono">
-                            {comprasError}
-                            <button type="button" onClick={() => void fetchCompras()} className="ml-2 underline">Reintentar</button>
-                          </div>
-                        )}
-
-                        {comprasCargando && (
-                          <div className="bg-white border-2 border-black p-3 text-xs font-mono text-neutral-500">Cargando órdenes de compra...</div>
-                        )}
-
-                        <div className="neo-card bg-white p-0">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
-                                <th className="p-3">OC NÚM.</th>
-                                <th className="p-3">PROVEEDOR</th>
-                                <th className="p-3 text-right">TOTAL</th>
-                                <th className="p-3 text-center">FECHA ESP.</th>
-                                <th className="p-3 text-center">ESTADO</th>
-                                <th className="p-3 text-center">CxP</th>
-                                <th className="p-3 text-center">ACCIONES</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {compras.map((oc) => {
-                                const prov = suppliers.find(s => s.id === oc.proveedorId);
-                                const cxpFactura = oc.facturaCompraId ? invoices.find(i => i.id === oc.facturaCompraId) : null;
-                                const transicionesValidas = TRANSICIONES_VALIDAS_PROVEEDOR[oc.estado];
-                                return (
-                                  <tr key={oc.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                    <td className="p-3 font-mono font-bold text-black">
-                                      <button type="button" onClick={() => setSelectedCompra(oc)} className="hover:underline text-brand-blue">{oc.numero}</button>
-                                    </td>
-                                    <td className="p-3 font-semibold text-black">{prov?.nombre ?? <span className="text-neutral-600 italic">Sin proveedor</span>}</td>
-                                    <td className="p-3 text-right font-mono text-neutral-700">${oc.total.toLocaleString('es-CO')}</td>
-                                    <td className="p-3 text-center font-mono text-neutral-500">{oc.fechaEsperada ?? '—'}</td>
-                                    <td className="p-3 text-center">
-                                      <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
-                                        oc.estado === 'recibido' ? 'bg-green-100 text-green-800 border-green-400' :
-                                        oc.estado === 'cancelado' ? 'bg-neutral-100 text-neutral-500 border-neutral-400' :
-                                        oc.estado === 'enviado' ? 'bg-brand-blue/10 text-brand-blue border-brand-blue' :
-                                        oc.estado === 'recibido_parcial' ? 'bg-brand-yellow/20 text-neutral-700 border-brand-yellow' :
-                                        'bg-white text-neutral-700 border-neutral-400'
-                                      }`}>
-                                        {oc.estado.replace('_', ' ').toUpperCase()}
-                                      </span>
-                                    </td>
-                                    <td className="p-3 text-center font-mono text-xs">
-                                      {cxpFactura ? (
-                                        <span className={`text-[11px] font-bold ${cxpFactura.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
-                                          {cxpFactura.numero}
-                                        </span>
-                                      ) : (
-                                        <span className="text-neutral-600 text-[11px]">—</span>
-                                      )}
-                                    </td>
-                                    <td className="p-3 text-center">
-                                      <div className="flex items-center justify-center gap-1">
-                                        {transicionesValidas.map(est => (
-                                          <button
-                                            key={est}
-                                            type="button"
-                                            disabled={transicionandoCompra}
-                                            onClick={() => void handleTransicionarCompra(oc, est)}
-                                            className="neo-btn px-1.5 py-1 text-[11px] font-mono hover:bg-brand-blue/10 disabled:opacity-50"
-                                            title={`Pasar a ${est}`}
-                                          >
-                                            {est === 'enviado' ? '→ Enviado' :
-                                             est === 'recibido_parcial' ? '→ Parcial' :
-                                             est === 'recibido' ? '→ Recibido' :
-                                             est === 'cancelado' ? '✕' : est}
-                                          </button>
-                                        ))}
-                                        <button type="button" onClick={() => void handleEliminarCompra(oc)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar OC"><Trash2 size={11} /></button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                              {compras.length === 0 && !comprasCargando && (
-                                <tr>
-                                  <td colSpan={7} className="p-6 text-center font-mono text-xs text-neutral-600">
-                                    No hay órdenes de compra registradas.
-                                    <button type="button" onClick={() => setShowCreateCompra(true)} className="ml-1 underline text-brand-blue">Crear la primera</button>
-                                  </td>
-                                </tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
 
                     {/* BANCOS TAB */}
 
                     {/* GASTOS OPERATIVOS TAB */}
                     {financeSubTab === 'gastos' && (
                       <div className="flex flex-col gap-4">
-                        <div className="flex items-center justify-between bg-white border-2 border-black p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 bg-white border-2 border-black p-3">
                           <div>
-                            <span className="font-mono text-xs font-bold">GASTOS OPERATIVOS</span>
-                            <span className="ml-2 text-xs text-neutral-500">Total del período: <strong>${gastos.reduce((a, g) => a + g.monto, 0).toLocaleString('es-CO')}</strong></span>
+                            <span className="font-mono text-xs font-bold">GASTOS Y COMPRAS</span>
+                            <span className="ml-2 text-xs text-neutral-500">Total del período: <strong>${gastosUnificados.reduce((a, g) => a + g.monto, 0).toLocaleString('es-CO')}</strong></span>
                           </div>
                           <button
-                            onClick={() => setShowGastoModal(true)}
+                            onClick={() => { setGastoForm(gastoFormVacio); setGastoFormError(null); setShowGastoModal(true); }}
                             className="neo-btn-secondary text-xs py-1.5 flex items-center gap-1.5"
                           >
                             <Plus size={14} /> Registrar Gasto
                           </button>
                         </div>
 
-                        {gastosCargando && <p className="text-xs text-neutral-500 font-mono p-4">Cargando gastos…</p>}
+                        {(gastosCargando || comprasCargando) && <p className="text-xs text-neutral-500 font-mono p-4">Cargando…</p>}
                         {gastosError && <p className="text-xs text-brand-red font-mono p-4">{gastosError}</p>}
+                        {comprasError && <p className="text-xs text-brand-red font-mono p-4">{comprasError}</p>}
+
+                        {/* Compras viejas que quedaron sin recibir. Ya no se crean así
+                            (una compra nueva nace recibida), pero las que estaban en
+                            vuelo se pueden terminar de recibir desde acá. */}
+                        {compras.filter(c => c.estado === 'borrador' || c.estado === 'enviado' || c.estado === 'recibido_parcial').length > 0 && (
+                          <div className="neo-card bg-brand-yellow/15 border-brand-yellow flex flex-col gap-2">
+                            <h3 className="font-mono text-xs font-bold flex items-center gap-2">
+                              <AlertTriangle size={14} className="text-brand-yellow" />
+                              COMPRAS PENDIENTES DE RECIBIR
+                            </h3>
+                            <p className="text-[11px] font-mono text-neutral-600">
+                              Pediste esta mercancía pero todavía no la marcaste como recibida, así que no entró al inventario.
+                            </p>
+                            <div className="flex flex-col gap-1.5">
+                              {compras.filter(c => c.estado === 'borrador' || c.estado === 'enviado' || c.estado === 'recibido_parcial').map(c => (
+                                <div key={c.id} className="bg-white border border-black px-3 py-2 flex flex-wrap items-center gap-2 text-xs">
+                                  <span className="font-bold">{c.numero}</span>
+                                  <span className="text-neutral-600">{suppliers.find(s => s.id === c.proveedorId)?.nombre ?? 'Sin proveedor'}</span>
+                                  <span className="font-mono font-bold">${c.total.toLocaleString('es-CO')}</span>
+                                  <span className="font-mono text-[11px] uppercase border border-black px-1.5 py-0.5 bg-neutral-100">{c.estado.replace('_', ' ')}</span>
+                                  <button type="button" onClick={() => setSelectedCompra(c)} className="neo-btn px-2 py-1 text-[11px] font-mono font-bold ml-auto">Gestionar</button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
 
                         <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
                         <div className="neo-card bg-white p-0 overflow-x-auto">
-                          <table className="w-full min-w-[700px] text-left border-collapse text-xs">
+                          <table className="w-full min-w-[760px] text-left border-collapse text-xs">
                             <thead>
                               <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
                                 <th className="p-3">DESCRIPCIÓN</th>
-                                <th className="p-3">CATEGORÍA</th>
+                                <th className="p-3">TIPO</th>
                                 <th className="p-3 text-right">MONTO</th>
                                 <th className="p-3 text-center">FECHA</th>
-                                <th className="p-3">MEDIO PAGO</th>
-                                <th className="p-3">CUENTA</th>
+                                <th className="p-3">PROVEEDOR / CUENTA</th>
+                                <th className="p-3 text-center">ESTADO</th>
                                 <th className="p-3 text-center">ACCIONES</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {gastosPag.visibles.map((g) => {
-                                const cuenta = bankAccounts.find(b => b.id === g.cuentaBancariaId);
+                              {gastosPag.visibles.map((fila) => {
+                                const g = fila.gasto;
+                                const cuenta = g ? bankAccounts.find(b => b.id === g.cuentaBancariaId) : undefined;
+                                const aCredito = g ? !!g.facturaCompraId : !!fila.compra?.facturaCompraId;
                                 return (
-                                  <tr key={g.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                    <td className="p-3 font-semibold text-black">{g.descripcion}</td>
+                                  <tr key={fila.id} className="border-b border-neutral-200 hover:bg-neutral-50">
+                                    <td className="p-3 font-semibold text-black">{fila.descripcion}</td>
                                     <td className="p-3">
-                                      <span className="inline-block border border-neutral-300 text-[11px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
-                                        {LABEL_CATEGORIA_GASTO[g.categoria]}
+                                      <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
+                                        fila.tipo === 'compra' ? 'border-black bg-brand-sage/40' : 'border-neutral-300 bg-neutral-50'
+                                      }`}>
+                                        {fila.etiquetaTipo}
                                       </span>
                                     </td>
                                     <td className="p-3 text-right font-mono font-bold text-brand-red">
-                                      -${g.monto.toLocaleString('es-CO')}
+                                      -${fila.monto.toLocaleString('es-CO')}
                                     </td>
-                                    <td className="p-3 text-center font-mono text-neutral-600">{fechaCorta(g.fecha)}</td>
-                                    <td className="p-3 text-neutral-600">{g.medioPago ?? '—'}</td>
-                                    <td className="p-3 text-neutral-600">{cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—'}</td>
+                                    <td className="p-3 text-center font-mono text-neutral-600">{fechaCorta(fila.fecha)}</td>
+                                    <td className="p-3 text-neutral-600">
+                                      {fila.proveedorNombre ?? (cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—')}
+                                    </td>
                                     <td className="p-3 text-center">
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleEliminarGasto(g)}
-                                        className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
-                                        title="Eliminar gasto"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
+                                      <span className={`inline-block text-[11px] font-mono font-bold px-1.5 py-0.5 border ${
+                                        aCredito ? 'border-amber-500 bg-amber-50 text-amber-800' : 'border-green-400 bg-green-50 text-green-800'
+                                      }`}>
+                                        {aCredito ? 'Debiendo' : 'Pagado'}
+                                      </span>
+                                    </td>
+                                    <td className="p-3">
+                                      <div className="flex items-center justify-center gap-1.5">
+                                        {fila.tipo === 'compra' && fila.compra && (
+                                          <>
+                                            <button type="button" onClick={() => setSelectedCompra(fila.compra!)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Ver detalle">
+                                              <Search size={12} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={revirtiendoCompra === fila.compra.id}
+                                              onClick={() => void handleRevertirCompra(fila.compra!)}
+                                              className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red disabled:opacity-50"
+                                              title="Revertir: saca el stock que entró y anula la cuenta por pagar"
+                                            >
+                                              {revirtiendoCompra === fila.compra.id ? '…' : <Undo2 size={12} />}
+                                            </button>
+                                          </>
+                                        )}
+                                        {fila.tipo === 'gasto' && g && (
+                                          <>
+                                            <button type="button" onClick={() => openEditGasto(g)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-100" title="Editar gasto">
+                                              <Pencil size={12} />
+                                            </button>
+                                            <button type="button" onClick={() => void handleEliminarGasto(g)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar gasto">
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
                                     </td>
                                   </tr>
                                 );
                               })}
-                              {gastos.length === 0 && !gastosCargando && (
-                                <tr><td colSpan={7} className="p-8 text-center text-xs text-neutral-500 font-mono">No hay gastos operativos registrados.</td></tr>
+                              {gastosUnificados.length === 0 && !gastosCargando && !comprasCargando && (
+                                <tr><td colSpan={7} className="p-8 text-center text-xs text-neutral-500 font-mono">Todavía no registraste ningún gasto ni compra.</td></tr>
                               )}
                             </tbody>
                           </table>
                           <div className="px-3 pb-3">
-                            <Paginador {...gastosPag} etiqueta="gastos" />
+                            <Paginador {...gastosPag} etiqueta="registros" />
                           </div>
                         </div>
                       </div>
@@ -8293,180 +8418,6 @@ export default function AppHome() {
 
       {/* 5. Modal: WhatsApp Business Test */}
       {/* Modal: Nueva Orden de Compra */}
-      {showCreateCompra && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="neo-card bg-white w-full max-w-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-black pb-2 sticky top-0 bg-white z-10">
-              <h3 className="font-mono text-sm font-bold">NUEVA ORDEN DE COMPRA</h3>
-              <button onClick={() => setShowCreateCompra(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
-            </div>
-
-            <form onSubmit={(e) => void handleCrearCompra(e)} className="flex flex-col gap-4 text-xs">
-              {compraFormError && (
-                <div className="bg-red-50 border-2 border-red-500 text-red-700 p-2 font-mono text-xs">{compraFormError}</div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">PROVEEDOR</label>
-                  <select
-                    value={compraForm.proveedorId}
-                    onChange={(e) => setCompraForm({ ...compraForm, proveedorId: e.target.value })}
-                    className="neo-input font-mono"
-                  >
-                    <option value="">Sin proveedor asignado</option>
-                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">FECHA ESPERADA DE ENTREGA</label>
-                  <input
-                    type="date"
-                    value={compraForm.fechaEsperada}
-                    onChange={(e) => setCompraForm({ ...compraForm, fechaEsperada: e.target.value })}
-                    className="neo-input font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="font-mono font-bold">NOTAS (opcional)</label>
-                <textarea
-                  rows={2}
-                  value={compraForm.notas}
-                  onChange={(e) => setCompraForm({ ...compraForm, notas: e.target.value })}
-                  className="neo-input resize-y"
-                  placeholder="Instrucciones, referencias, condiciones..."
-                />
-              </div>
-
-              {/* Total real */}
-              <div className="flex flex-col gap-1">
-                <label className="font-mono font-bold">TOTAL REAL (opcional)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={compraForm.totalManual}
-                  onChange={(e) => setCompraForm({ ...compraForm, totalManual: e.target.value })}
-                  className="neo-input font-mono"
-                  placeholder="Deja vacío para calcular automáticamente desde los ítems"
-                />
-                <span className="font-mono text-[11px] text-neutral-600">Si el costo real difiere del precio de catálogo, ponlo aquí. Sobreescribe el total calculado.</span>
-              </div>
-
-              {/* Ítems */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between border-b border-black pb-1">
-                  <label className="font-mono font-bold">ÍTEMS DE LA ORDEN</label>
-                  <button
-                    type="button"
-                    onClick={() => setCompraForm({ ...compraForm, items: [...compraForm.items, { productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] })}
-                    className="neo-btn text-[11px] px-2 py-1 flex items-center gap-1"
-                  >
-                    <Plus size={10} /> Añadir ítem
-                  </button>
-                </div>
-
-                {compraForm.items.map((item, idx) => (
-                  <div key={idx} className="border border-neutral-200 p-3 flex flex-col gap-2 bg-neutral-50">
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="flex items-center gap-1.5 text-[11px] font-mono cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={item.esLibre}
-                          onChange={(e) => {
-                            const updated = [...compraForm.items];
-                            updated[idx] = { ...item, esLibre: e.target.checked };
-                            setCompraForm({ ...compraForm, items: updated });
-                          }}
-                          className="w-3 h-3 border border-black accent-black"
-                        />
-                        Ítem libre (sin producto del catálogo)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setCompraForm({ ...compraForm, items: compraForm.items.filter((_, i) => i !== idx) })}
-                        className="neo-btn p-2.5 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-
-                    {item.esLibre ? (
-                      <input
-                        type="text"
-                        placeholder="Descripción del ítem..."
-                        value={item.concepto}
-                        onChange={(e) => {
-                          const updated = [...compraForm.items];
-                          updated[idx] = { ...item, concepto: e.target.value };
-                          setCompraForm({ ...compraForm, items: updated });
-                        }}
-                        className="neo-input text-xs"
-                        required
-                      />
-                    ) : (
-                      <select
-                        value={item.productoId}
-                        onChange={(e) => {
-                          const updated = [...compraForm.items];
-                          updated[idx] = { ...item, productoId: e.target.value };
-                          setCompraForm({ ...compraForm, items: updated });
-                        }}
-                        className="neo-input font-mono text-xs"
-                        required
-                      >
-                        <option value="">Seleccionar producto...</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                      </select>
-                    )}
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[11px] font-bold">CANTIDAD</label>
-                        <input
-                          type="number" min="0.001" step="0.001" required
-                          value={item.cantidad}
-                          onChange={(e) => {
-                            const updated = [...compraForm.items];
-                            updated[idx] = { ...item, cantidad: e.target.value };
-                            setCompraForm({ ...compraForm, items: updated });
-                          }}
-                          className="neo-input font-mono text-xs"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[11px] font-bold">PRECIO UNITARIO (COP)</label>
-                        <input
-                          type="number" min="0" step="1" required
-                          value={item.precioUnitario}
-                          onChange={(e) => {
-                            const updated = [...compraForm.items];
-                            updated[idx] = { ...item, precioUnitario: e.target.value };
-                            setCompraForm({ ...compraForm, items: updated });
-                          }}
-                          className="neo-input font-mono text-xs"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Total estimado */}
-                <div className="flex justify-end text-xs font-mono font-bold border-t border-black pt-2">
-                  TOTAL ESTIMADO: $
-                  {compraForm.items.reduce((acc, item) => acc + ((parseFloat(item.cantidad) || 0) * (parseFloat(item.precioUnitario) || 0)), 0).toLocaleString('es-CO')}
-                </div>
-              </div>
-
-              <button type="submit" disabled={guardandoCompra} className="neo-btn bg-brand-blue text-white hover:opacity-90 py-2.5 disabled:opacity-50">
-                {guardandoCompra ? 'GUARDANDO...' : 'CREAR ORDEN DE COMPRA'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Modal: Detalle Orden de Compra */}
       {selectedCompra && (
@@ -8489,6 +8440,20 @@ export default function AppHome() {
                     className="neo-btn text-xs px-3 py-1.5 flex items-center gap-1.5 hover:bg-neutral-100"
                   >
                     <Pencil size={12} /> Editar OC
+                  </button>
+                )}
+                {/* Borrar solo tiene sentido en una compra que todavía no movió nada:
+                    el backend rechaza el DELETE si ya hay mercancía recibida o CxP. */}
+                {!['recibido', 'recibido_parcial'].includes(selectedCompra.estado) && !selectedCompra.facturaCompraId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!window.confirm(`¿Eliminar la compra ${selectedCompra.numero}? Queda en la papelera por 30 días.`)) return;
+                      void handleEliminarCompra(selectedCompra);
+                    }}
+                    className="neo-btn text-xs px-3 py-1.5 flex items-center gap-1.5 hover:bg-red-50 hover:text-brand-red"
+                  >
+                    <Trash2 size={12} /> Eliminar
                   </button>
                 )}
                 <button onClick={() => setSelectedCompra(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
@@ -9897,14 +9862,101 @@ export default function AppHome() {
       )}
 
       {/* ─── MODAL: GASTO OPERATIVO ───────────────────────────────────────── */}
+      {/* Modal: Editar Gasto — el PATCH del API existía sin UI, así que corregir
+          un typo obligaba a borrar y recrear, ensuciando la auditoría. */}
+      {editandoGasto && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
+            <div className="border-b-2 border-black p-4 flex justify-between items-center">
+              <h3 className="font-mono text-sm font-bold">EDITAR GASTO</h3>
+              <button onClick={() => setEditandoGasto(null)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+            <form onSubmit={(e) => void handleGuardarEditGasto(e)} className="p-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">DESCRIPCIÓN *</label>
+                <input type="text" value={editGastoForm.descripcion} onChange={e => setEditGastoForm(f => ({ ...f, descripcion: e.target.value }))} className="neo-input" required />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">TIPO</label>
+                  <select value={editGastoForm.categoria} onChange={e => setEditGastoForm(f => ({ ...f, categoria: e.target.value as CategoriaGasto }))} className="neo-input font-mono text-sm">
+                    {CATEGORIAS_GASTO_LOCAL.map(c => (<option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">MONTO *</label>
+                  <MoneyInput
+                    aria-label="Monto del gasto"
+                    value={editGastoForm.monto === '' ? '' : Number(editGastoForm.monto)}
+                    onChange={(v) => setEditGastoForm(f => ({ ...f, monto: v === '' ? '' : String(v) }))}
+                    className="neo-input font-mono w-full"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">FECHA</label>
+                <input type="date" value={editGastoForm.fecha} onChange={e => setEditGastoForm(f => ({ ...f, fecha: e.target.value }))} className="neo-input font-mono" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">NOTAS</label>
+                <textarea value={editGastoForm.notas} onChange={e => setEditGastoForm(f => ({ ...f, notas: e.target.value }))} className="neo-input resize-none h-16" />
+              </div>
+              <p className="text-[11px] font-mono text-neutral-600">
+                Si cambiás el monto y el gasto salió de una cuenta bancaria, el saldo se ajusta solo.
+              </p>
+              {editGastoError && <p className="text-xs text-brand-red font-mono">{editGastoError}</p>}
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                <button type="submit" disabled={guardandoEditGasto} className="neo-btn-secondary flex-1 py-2 font-bold">
+                  {guardandoEditGasto ? 'Guardando…' : 'Guardar cambios'}
+                </button>
+                <button type="button" onClick={() => setEditandoGasto(null)} className="neo-btn flex-1 py-2">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {showGastoModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
-              <h3 className="font-mono text-sm font-bold">REGISTRAR GASTO OPERATIVO</h3>
+              <h3 className="font-mono text-sm font-bold">REGISTRAR GASTO</h3>
               <button onClick={() => setShowGastoModal(false)} className="neo-btn p-2.5 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
+            {(() => {
+              const esCompra = gastoForm.tipo === TIPO_COMPRA_INVENTARIO;
+              const totalItems = gastoForm.items.reduce((acc, it) => {
+                const cant = parseFloat(it.cantidad) || 0;
+                const precio = it.precioUnitario
+                  ? parseFloat(it.precioUnitario)
+                  : (products.find(p => p.id === it.productoId)?.precio_costo ?? 0);
+                return acc + cant * precio;
+              }, 0);
+
+              return (
             <form onSubmit={(e) => void handleCrearGasto(e)} className="p-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">TIPO *</label>
+                <select
+                  value={gastoForm.tipo}
+                  onChange={e => setGastoForm(f => ({ ...f, tipo: e.target.value }))}
+                  className="neo-input font-mono text-sm"
+                >
+                  <option value={TIPO_COMPRA_INVENTARIO}>📦 Compra de inventario / mercancía</option>
+                  <optgroup label="Gastos del negocio">
+                    {CATEGORIAS_GASTO_LOCAL.map(c => (
+                      <option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>
+                    ))}
+                  </optgroup>
+                </select>
+                {esCompra && (
+                  <span className="text-[11px] text-neutral-600">
+                    La mercancía entra al inventario y se genera la cuenta por pagar al proveedor.
+                  </span>
+                )}
+              </div>
+
               <div className="flex flex-col gap-1">
                 <label className="font-mono text-xs font-bold">DESCRIPCIÓN *</label>
                 <input
@@ -9912,68 +9964,199 @@ export default function AppHome() {
                   value={gastoForm.descripcion}
                   onChange={e => setGastoForm(f => ({ ...f, descripcion: e.target.value }))}
                   className="neo-input"
-                  placeholder="Ej: Arriendo local mes de junio"
+                  placeholder={esCompra ? 'Ej: Compra de mercancía a Textiles SAS' : 'Ej: Arriendo local mes de junio'}
                   required
                 />
               </div>
+
+              {/* Ítems — solo para compras de inventario */}
+              {esCompra && (
+                <div className="flex flex-col gap-2 border border-black/20 bg-neutral-50 p-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-mono text-xs font-bold">PRODUCTOS QUE ENTRAN</label>
+                    <button
+                      type="button"
+                      onClick={() => setGastoForm(f => ({ ...f, items: [...f.items, { productoId: '', cantidad: '1', precioUnitario: '' }] }))}
+                      className="text-brand-blue hover:underline font-bold text-[11px]"
+                    >+ Agregar producto</button>
+                  </div>
+                  {gastoForm.items.map((item, idx) => (
+                    <div key={idx} className="flex flex-wrap gap-2 items-end">
+                      <div className="flex-1 min-w-[160px]">
+                        <Combobox
+                          value={item.productoId}
+                          onChange={(productoId) => setGastoForm(f => {
+                            const items = [...f.items];
+                            const prod = products.find(p => p.id === productoId);
+                            items[idx] = {
+                              ...items[idx]!,
+                              productoId,
+                              // Precarga el costo conocido — se puede editar si esta vez salió distinto.
+                              precioUnitario: items[idx]!.precioUnitario || (prod ? String(prod.precio_costo) : ''),
+                            };
+                            return { ...f, items };
+                          })}
+                          emptyOptionLabel="Seleccionar producto…"
+                          placeholder="Buscar por nombre o SKU…"
+                          options={products.map(p => ({ value: p.id, label: p.nombre, sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0}` }))}
+                        />
+                      </div>
+                      <div className="w-20">
+                        <label className="font-mono text-[11px] font-bold block">CANT.</label>
+                        <input
+                          type="number" min="0.001" step="0.001"
+                          value={item.cantidad}
+                          onChange={e => setGastoForm(f => {
+                            const items = [...f.items];
+                            items[idx] = { ...items[idx]!, cantidad: e.target.value };
+                            return { ...f, items };
+                          })}
+                          className="neo-input py-1.5 text-center font-mono w-full"
+                        />
+                      </div>
+                      <div className="w-32">
+                        <label className="font-mono text-[11px] font-bold block">COSTO UNIT.</label>
+                        <MoneyInput
+                          aria-label="Costo unitario"
+                          value={item.precioUnitario === '' ? '' : Number(item.precioUnitario)}
+                          onChange={(v) => setGastoForm(f => {
+                            const items = [...f.items];
+                            items[idx] = { ...items[idx]!, precioUnitario: v === '' ? '' : String(v) };
+                            return { ...f, items };
+                          })}
+                          className="neo-input font-mono py-1.5 w-full text-xs"
+                          placeholder="0"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setGastoForm(f => ({
+                          ...f,
+                          items: f.items.length === 1 ? f.items : f.items.filter((_, i) => i !== idx),
+                        }))}
+                        className="font-mono font-bold text-base hover:text-brand-red px-2 pb-1"
+                      >×</button>
+                    </div>
+                  ))}
+                  <div className="text-[11px] font-mono text-neutral-600 text-right">
+                    Suma de los productos: <strong className="text-black">${totalItems.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</strong>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-bold">CATEGORÍA</label>
-                  <select value={gastoForm.categoria} onChange={e => setGastoForm(f => ({ ...f, categoria: e.target.value as CategoriaGasto }))} className="neo-input font-mono text-sm">
-                    {CATEGORIAS_GASTO_LOCAL.map(c => (
-                      <option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-bold">MONTO *</label>
+                  <label className="font-mono text-xs font-bold">{esCompra ? 'TOTAL REAL (opcional)' : 'MONTO *'}</label>
                   <MoneyInput
-                    aria-label="Monto del gasto"
+                    aria-label={esCompra ? 'Total real de la compra' : 'Monto del gasto'}
                     value={gastoForm.monto === '' ? '' : Number(gastoForm.monto)}
                     onChange={(v) => setGastoForm(f => ({ ...f, monto: v === '' ? '' : String(v) }))}
                     className="neo-input font-mono w-full"
-                    required
-                    placeholder="0"
+                    required={!esCompra}
+                    placeholder={esCompra ? String(Math.round(totalItems)) : '0'}
                   />
+                  {esCompra && (
+                    <span className="text-[11px] text-neutral-600">Dejalo vacío si es igual a la suma de arriba. Útil si hubo flete o descuento.</span>
+                  )}
                 </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
                   <label className="font-mono text-xs font-bold">FECHA</label>
                   <input type="date" value={gastoForm.fecha} onChange={e => setGastoForm(f => ({ ...f, fecha: e.target.value }))} className="neo-input font-mono" />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-bold">MEDIO DE PAGO</label>
-                  <select value={gastoForm.medioPago} onChange={e => setGastoForm(f => ({ ...f, medioPago: e.target.value }))} className="neo-input font-mono text-sm">
-                    <option value="">— Sin especificar —</option>
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia</option>
-                    <option value="tarjeta">Tarjeta</option>
-                    <option value="cheque">Cheque</option>
-                  </select>
+              </div>
+
+              {/* Pagado vs a crédito */}
+              <div className="flex flex-col gap-2 border border-black/20 bg-neutral-50 p-2.5">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setGastoForm(f => ({ ...f, aCredito: false }))}
+                    className={`flex-1 min-w-[130px] font-mono text-xs font-bold px-3 py-2 border-2 border-black ${!gastoForm.aCredito ? 'bg-black text-white' : 'bg-white hover:bg-neutral-100'}`}
+                  >Ya lo pagué</button>
+                  <button
+                    type="button"
+                    onClick={() => setGastoForm(f => ({ ...f, aCredito: true }))}
+                    className={`flex-1 min-w-[130px] font-mono text-xs font-bold px-3 py-2 border-2 border-black ${gastoForm.aCredito ? 'bg-black text-white' : 'bg-white hover:bg-neutral-100'}`}
+                  >Quedé debiendo</button>
                 </div>
+
+                {gastoForm.aCredito ? (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">¿A QUIÉN LE DEBÉS? *</label>
+                      <Combobox
+                        value={gastoForm.proveedorId}
+                        onChange={(proveedorId) => setGastoForm(f => ({ ...f, proveedorId }))}
+                        emptyOptionLabel="Seleccionar proveedor…"
+                        placeholder="Buscar proveedor…"
+                        options={suppliers.map(s => ({ value: s.id, label: s.nombre, sublabel: s.nit ?? undefined }))}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">FECHA DE VENCIMIENTO</label>
+                      <input type="date" value={gastoForm.fechaVencimiento} onChange={e => setGastoForm(f => ({ ...f, fechaVencimiento: e.target.value }))} className="neo-input font-mono" />
+                      <span className="text-[11px] text-neutral-600">Si lo dejás vacío, vence en 30 días.</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">
+                        ¿DE QUÉ CUENTA SALIÓ? {esCompra ? '*' : ''}
+                      </label>
+                      <select value={gastoForm.cuentaBancariaId} onChange={e => setGastoForm(f => ({ ...f, cuentaBancariaId: e.target.value }))} className="neo-input font-mono">
+                        <option value="">{esCompra ? '— Elegí una cuenta —' : '— No descontar de ninguna —'}</option>
+                        {bankAccounts.map(b => (
+                          <option key={b.id} value={b.id}>{b.banco} · {b.numero} (${b.saldo.toLocaleString('es-CO')})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">MEDIO DE PAGO</label>
+                      <select value={gastoForm.medioPago} onChange={e => setGastoForm(f => ({ ...f, medioPago: e.target.value }))} className="neo-input font-mono text-sm">
+                        <option value="">— Sin especificar —</option>
+                        <option value="efectivo">Efectivo</option>
+                        <option value="transferencia">Transferencia</option>
+                        <option value="tarjeta">Tarjeta</option>
+                        <option value="cheque">Cheque</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {/* Una compra siempre necesita proveedor: genera la cuenta por pagar
+                    aunque se pague en el acto. */}
+                {esCompra && !gastoForm.aCredito && (
+                  <div className="flex flex-col gap-1">
+                    <label className="font-mono text-xs font-bold">PROVEEDOR *</label>
+                    <Combobox
+                      value={gastoForm.proveedorId}
+                      onChange={(proveedorId) => setGastoForm(f => ({ ...f, proveedorId }))}
+                      emptyOptionLabel="Seleccionar proveedor…"
+                      placeholder="Buscar proveedor…"
+                      options={suppliers.map(s => ({ value: s.id, label: s.nombre, sublabel: s.nit ?? undefined }))}
+                    />
+                  </div>
+                )}
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs font-bold">DESCONTAR DE CUENTA BANCARIA</label>
-                <select value={gastoForm.cuentaBancariaId} onChange={e => setGastoForm(f => ({ ...f, cuentaBancariaId: e.target.value }))} className="neo-input font-mono">
-                  <option value="">— No descontar —</option>
-                  {bankAccounts.map(b => (
-                    <option key={b.id} value={b.id}>{b.banco} · {b.numero} (${b.saldo.toLocaleString('es-CO')})</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs font-bold">NOTAS</label>
-                <textarea value={gastoForm.notas} onChange={e => setGastoForm(f => ({ ...f, notas: e.target.value }))} className="neo-input resize-none h-16" placeholder="Observaciones adicionales..." />
-              </div>
+
+              {!esCompra && (
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">NOTAS</label>
+                  <textarea value={gastoForm.notas} onChange={e => setGastoForm(f => ({ ...f, notas: e.target.value }))} className="neo-input resize-none h-16" placeholder="Observaciones adicionales..." />
+                </div>
+              )}
+
               {gastoFormError && <p className="text-xs text-brand-red font-mono">{gastoFormError}</p>}
-              <div className="flex gap-2 pt-2">
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
                 <button type="submit" disabled={guardandoGasto} className="neo-btn-secondary flex-1 py-2 font-bold">
-                  {guardandoGasto ? 'Registrando…' : '+ Registrar Gasto'}
+                  {guardandoGasto ? 'Registrando…' : esCompra ? '+ Registrar Compra' : '+ Registrar Gasto'}
                 </button>
                 <button type="button" onClick={() => setShowGastoModal(false)} className="neo-btn flex-1 py-2">Cancelar</button>
               </div>
             </form>
+              );
+            })()}
           </div>
         </div>
       )}
