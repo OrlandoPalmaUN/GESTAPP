@@ -1062,6 +1062,40 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const montoNuevo = body.data.monto ?? montoPrev
       const cuentaNueva = body.data.cuentaBancariaId !== undefined ? body.data.cuentaBancariaId : cuentaPrev
 
+      // Un gasto a crédito se paga con abonos contra su CxP, nunca descontando
+      // la cuenta acá. Si se permitiera, la plata saldría del banco, la CxP
+      // quedaría abierta, y el flujo de caja no vería el egreso por ningún
+      // lado: como gasto lo excluye el filtro `factura_compra_id IS NULL`, y
+      // como abono nunca existió.
+      if (prev.factura_compra_id && cuentaNueva) {
+        await client.query('ROLLBACK')
+        return reply.badRequest(
+          'Este gasto quedó a crédito: se paga registrando un abono contra su cuenta por pagar, no descontándolo de una cuenta bancaria.',
+        )
+      }
+
+      // El monto del gasto y el total de su CxP son el mismo número visto
+      // desde dos lados. Se mueven juntos — y no se mueven si ya hay abonos,
+      // porque bajar el total por debajo de lo abonado deja una factura
+      // sobrepagada (la invariante que `verificar-integridad` vigila).
+      if (prev.factura_compra_id && montoNuevo !== montoPrev) {
+        const { rows: [ab] } = await client.query<{ total: string }>(
+          `SELECT COALESCE(SUM(monto), 0)::text AS total FROM abonos
+           WHERE tipo_documento = 'factura_compra' AND documento_id = $1 AND deleted_at IS NULL`,
+          [prev.factura_compra_id],
+        )
+        if (Number(ab?.total ?? 0) > 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            'Este gasto ya tiene pagos registrados contra su cuenta por pagar. Eliminá primero los abonos si necesitás corregir el monto.',
+          )
+        }
+        await client.query(
+          'UPDATE facturas_compra SET total = $1 WHERE id = $2 AND deleted_at IS NULL',
+          [montoNuevo, prev.factura_compra_id],
+        )
+      }
+
       if (cuentaNueva !== cuentaPrev || montoNuevo !== montoPrev) {
         // Lock de todas las cuentas involucradas en orden determinístico.
         const involucradas = [...new Set([cuentaPrev, cuentaNueva].filter(Boolean) as string[])].sort()
@@ -1112,6 +1146,15 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       if (body.data.medioPago !== undefined) ag('medio_pago', body.data.medioPago)
       if (body.data.cuentaBancariaId !== undefined) ag('cuenta_bancaria_id', body.data.cuentaBancariaId)
       if (body.data.notas !== undefined) ag('notas', body.data.notas)
+
+      // Corregir la fecha del gasto corrige también la de emisión de su CxP,
+      // por el mismo motivo que el monto: son el mismo hecho.
+      if (prev.factura_compra_id && body.data.fecha !== undefined) {
+        await client.query(
+          'UPDATE facturas_compra SET fecha_emision = $1 WHERE id = $2 AND deleted_at IS NULL',
+          [body.data.fecha, prev.factura_compra_id],
+        )
+      }
 
       valores.push(request.params.id)
       const { rows } = await client.query<FilaGasto>(

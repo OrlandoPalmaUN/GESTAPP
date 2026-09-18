@@ -776,12 +776,27 @@ export default function AppHome() {
     etiquetaTipo: string
     monto: number
     proveedorNombre: string | null
+    /**
+     * Si todavía se debe plata por esta fila. Se mira el saldo REAL de la
+     * cuenta por pagar, no si existe: una compra pagada también genera su CxP
+     * (queda saldada por el abono automático), así que preguntar solo por la
+     * existencia marcaba "Debiendo" todo lo que se pagó al contado.
+     */
+    debiendo: boolean
     /** Solo compras: permite mostrar el estado y decidir si se puede revertir. */
     compra?: PedidoProveedor
     gasto?: GastoOperativo
   };
 
   const gastosUnificados = useMemo<FilaGastoUnificada[]>(() => {
+    // Se debe plata si la CxP que generó todavía tiene saldo. Sin CxP, el
+    // gasto salió de la cuenta en el momento: no se debe nada.
+    const seDebe = (facturaCompraId: string | null | undefined): boolean => {
+      if (!facturaCompraId) return false;
+      const cxp = invoices.find((i) => i.id === facturaCompraId);
+      return cxp ? cxp.saldo_pendiente > 0 : true;
+    };
+
     const deGastos: FilaGastoUnificada[] = gastos.map((g) => ({
       id: `g-${g.id}`,
       tipo: 'gasto',
@@ -790,11 +805,16 @@ export default function AppHome() {
       etiquetaTipo: LABEL_CATEGORIA_GASTO[g.categoria] ?? g.categoria,
       monto: g.monto,
       proveedorNombre: g.proveedorId ? (suppliers.find((s) => s.id === g.proveedorId)?.nombre ?? null) : null,
+      debiendo: seDebe(g.facturaCompraId),
       gasto: g,
     }));
 
+    // Solo las compras cuya mercancía efectivamente entró son un egreso. Una
+    // OC vieja en borrador o enviada no movió ni stock ni plata todavía: si se
+    // listara acá inflaría el total del período y aparecería dos veces en la
+    // pantalla, porque ya tiene su propio panel de "pendientes de recibir".
     const deCompras: FilaGastoUnificada[] = compras
-      .filter((c) => c.estado !== 'cancelado')
+      .filter((c) => c.estado === 'recibido' || c.estado === 'recibido_parcial')
       .map((c) => ({
         id: `c-${c.id}`,
         tipo: 'compra',
@@ -803,11 +823,12 @@ export default function AppHome() {
         etiquetaTipo: 'Compra de inventario',
         monto: c.total,
         proveedorNombre: c.proveedorId ? (suppliers.find((s) => s.id === c.proveedorId)?.nombre ?? null) : null,
+        debiendo: seDebe(c.facturaCompraId),
         compra: c,
       }));
 
     return [...deGastos, ...deCompras].sort((a, b) => b.fecha.localeCompare(a.fecha));
-  }, [gastos, compras, suppliers]);
+  }, [gastos, compras, suppliers, invoices]);
 
   const gastosPag = usePaginacion(gastosUnificados, 25);
 
@@ -5657,7 +5678,7 @@ export default function AppHome() {
                               {gastosPag.visibles.map((fila) => {
                                 const g = fila.gasto;
                                 const cuenta = g ? bankAccounts.find(b => b.id === g.cuentaBancariaId) : undefined;
-                                const aCredito = g ? !!g.facturaCompraId : !!fila.compra?.facturaCompraId;
+                                const aCredito = fila.debiendo;
                                 return (
                                   <tr key={fila.id} className="border-b border-neutral-200 hover:bg-neutral-50">
                                     <td data-label="Descripción" className="p-3 font-semibold text-black">{fila.descripcion}</td>

@@ -1,10 +1,12 @@
 import {
   actualizarPedidoProveedorSchema,
+  calcularStockDisponible,
   crearCompraDirectaSchema,
   crearPedidoProveedorSchema,
   TRANSICIONES_VALIDAS_PROVEEDOR,
   transicionarPedidoProveedorSchema,
   type EstadoPedidoProveedor,
+  type MovimientoInventario,
   type PedidoProveedor,
   type PedidoProveedorItem,
 } from '@antigravity/shared'
@@ -651,14 +653,18 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
       const totalFinal = redondearMoneda(body.data.totalManual ?? suma)
       await db.query('UPDATE pedidos_proveedor SET total = $1, updated_at = NOW() WHERE id = $2', [totalFinal, pedido!.id])
 
+      // La CxP se emite con la fecha de la COMPRA, no la de hoy: registrar el
+      // lunes una compra del viernes pasado no puede correrle el vencimiento
+      // tres días. Mismo criterio que el gasto a crédito en finanzas.ts.
+      const fechaCompra = pedido!.fecha.toISOString().slice(0, 10)
       const fechaVenc = body.data.fechaVencimientoCxP ?? (() => {
-        const d = new Date(); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10)
+        const d = new Date(fechaCompra); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10)
       })()
       const numeroFC = await generarNumeroFacturaCompra(db)
       const { rows: [fc] } = await db.query<{ id: string; total: string }>(
-        `INSERT INTO facturas_compra (numero, proveedor_id, fecha_vencimiento, total, notas, pedido_proveedor_id)
-         VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, total`,
-        [numeroFC, body.data.proveedorId, fechaVenc, totalFinal, `Compra ${numero} — ${body.data.descripcion}`, pedido!.id],
+        `INSERT INTO facturas_compra (numero, proveedor_id, fecha_emision, fecha_vencimiento, total, notas, pedido_proveedor_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, total`,
+        [numeroFC, body.data.proveedorId, fechaCompra, fechaVenc, totalFinal, `Compra ${numero} — ${body.data.descripcion}`, pedido!.id],
       )
 
       await db.query('UPDATE pedidos_proveedor SET factura_compra_id = $1 WHERE id = $2', [fc!.id, pedido!.id])
@@ -767,6 +773,33 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
         'SELECT id, pedido_proveedor_id, producto_id, concepto, cantidad, cantidad_recibida, precio_unitario, subtotal FROM pedidos_proveedor_items WHERE pedido_proveedor_id = $1',
         [idParsed.data],
       )
+
+      // La mercancía de esta compra pudo haberse vendido ya. Sacarla igual
+      // dejaría el stock en negativo — el mismo estado imposible que
+      // `POST /inventario/movimientos` y `ajustar_stock` bloquean. Se valida
+      // ANTES de insertar nada: revertir a medias sería peor que no revertir.
+      for (const item of items) {
+        if (item.producto_id === null) continue
+        const recibida = Number(item.cantidad_recibida)
+        if (recibida <= 0) continue
+        const { rows: movs } = await db.query<{ tipo: string; cantidad: string }>(
+          'SELECT tipo, cantidad FROM movimientos_inventario WHERE producto_id = $1',
+          [item.producto_id],
+        )
+        const disponible = calcularStockDisponible(
+          movs.map((m) => ({ tipo: m.tipo as MovimientoInventario['tipo'], cantidad: Number(m.cantidad) })),
+        )
+        if (recibida > disponible) {
+          const { rows: [prod] } = await db.query<{ nombre: string }>(
+            'SELECT nombre FROM productos WHERE id = $1',
+            [item.producto_id],
+          )
+          await db.query('ROLLBACK')
+          return reply.badRequest(
+            `No se puede revertir: de "${prod?.nombre ?? 'este producto'}" entraron ${recibida} unidades pero solo quedan ${disponible} disponibles (el resto ya salió en ventas). Anulá primero los pedidos que las consumieron.`,
+          )
+        }
+      }
 
       for (const item of items) {
         if (item.producto_id === null) continue

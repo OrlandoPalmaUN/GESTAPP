@@ -120,6 +120,32 @@ describe('Compra de inventario registrada desde Gastos', () => {
     expect(Number(facturas[0]!.saldoPendiente)).toBe(45000)
   })
 
+  it('una compra retro-fechada emite su CxP con la fecha de la compra, no la de hoy', async () => {
+    const proveedor = await crearProveedor()
+    const producto = await crearProducto(0)
+    const fechaCompra = hoyMas(-10)
+
+    const r = await admin.req('/compras/directa', {
+      method: 'POST',
+      body: JSON.stringify({
+        proveedorId: proveedor.id,
+        fecha: fechaCompra,
+        descripcion: 'Compra de la semana pasada',
+        pagado: false,
+        items: [{ productoId: producto.id, cantidad: 1, precioUnitario: 10000 }],
+      }),
+    })
+    expect(r.status).toBe(201)
+    expect(r.body.pedido.fecha).toBe(fechaCompra)
+
+    const cxp = (await facturasCxP())[0] as unknown as { fechaEmision: string; fechaVencimiento: string }
+    expect(cxp.fechaEmision).toBe(fechaCompra)
+    // El vencimiento por defecto son 30 días desde la compra, no desde hoy.
+    const esperado = new Date(fechaCompra)
+    esperado.setDate(esperado.getDate() + 30)
+    expect(cxp.fechaVencimiento).toBe(esperado.toISOString().slice(0, 10))
+  })
+
   it('NUNCA se guarda como gasto operativo — si lo hiciera, el egreso se restaría dos veces', async () => {
     const proveedor = await crearProveedor()
     const producto = await crearProducto(0)
@@ -167,6 +193,42 @@ describe('Revertir la recepción de una compra', () => {
     const tipos = movs.body.movimientos.map((m: { tipo: string }) => m.tipo)
     expect(tipos).toContain('entrada_compra')
     expect(tipos).toContain('ajuste_negativo')
+  })
+
+  it('se niega si la mercancía ya se vendió — el stock no puede quedar negativo', async () => {
+    const proveedor = await crearProveedor()
+    const producto = await crearProducto(0)
+    const cliente = (await admin.req('/clientes', { method: 'POST', body: JSON.stringify({ nombre: 'Cliente QA' }) })).body.cliente
+
+    const compra = await admin.req('/compras/directa', {
+      method: 'POST',
+      body: JSON.stringify({
+        proveedorId: proveedor.id,
+        descripcion: 'Mercancía que se vende rápido',
+        pagado: false,
+        items: [{ productoId: producto.id, cantidad: 10, precioUnitario: 1000 }],
+      }),
+    })
+    expect(compra.status).toBe(201)
+    expect(await stockDe(producto.id)).toBe(10)
+
+    // Se venden 8 de las 10 que entraron.
+    const ped = await admin.req('/pedidos', {
+      method: 'POST',
+      body: JSON.stringify({ clienteId: cliente.id, items: [{ productoId: producto.id, cantidad: 8 }] }),
+    })
+    expect(ped.status).toBe(201)
+    expect((await admin.req(`/pedidos/${ped.body.pedido.id}/estado`, {
+      method: 'PATCH', body: JSON.stringify({ estado: 'confirmado' }),
+    })).status).toBe(200)
+    expect(await stockDe(producto.id)).toBe(2)
+
+    // Revertir sacaría 10 de un stock de 2.
+    const rev = await admin.req(`/compras/${compra.body.pedido.id}/revertir-recepcion`, { method: 'POST' })
+    expect(rev.status).toBe(400)
+
+    // Y no debe haber movido nada: revertir a medias es peor que no revertir.
+    expect(await stockDe(producto.id)).toBe(2)
   })
 
   it('se niega si la cuenta por pagar ya recibió abonos', async () => {
@@ -232,6 +294,70 @@ describe('Ingresos manuales', () => {
     const del = await admin.req(`/finanzas/ingresos/${r.body.ingreso.id}`, { method: 'DELETE' })
     expect([200, 204]).toContain(del.status)
     expect(await saldoDe(cuenta.id)).toBe(0)
+  })
+})
+
+describe('Editar un gasto que quedó a crédito', () => {
+  /**
+   * El PATCH existía desde antes y era inofensivo mientras ningún gasto tenía
+   * CxP. Al permitir gastos a crédito —y al darle por fin una UI de edición—
+   * pasó a poder romper dos invariantes de golpe, así que quedan cubiertas.
+   */
+  async function gastoACredito(monto: number) {
+    const proveedor = await crearProveedor(`Proveedor ${Math.random()}`)
+    const r = await admin.req('/finanzas/gastos', {
+      method: 'POST',
+      body: JSON.stringify({ descripcion: 'Servicio contratado', monto, categoria: 'honorarios', aCredito: true, proveedorId: proveedor.id }),
+    })
+    expect(r.status).toBe(201)
+    return r.body.gasto
+  }
+
+  it('no deja pagarlo descontando una cuenta bancaria — para eso está el abono', async () => {
+    const cuenta = await crearCuenta(1_000_000)
+    const gasto = await gastoACredito(200000)
+
+    const r = await admin.req(`/finanzas/gastos/${gasto.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ cuentaBancariaId: cuenta.id }),
+    })
+    expect(r.status).toBe(400)
+    // Lo importante no es el 400 sino que el banco no se haya movido.
+    expect(await saldoDe(cuenta.id)).toBe(1_000_000)
+  })
+
+  it('corregir el monto corrige también el total de su cuenta por pagar', async () => {
+    const gasto = await gastoACredito(200000)
+
+    const r = await admin.req(`/finanzas/gastos/${gasto.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ monto: 350000 }),
+    })
+    expect(r.status).toBe(200)
+
+    const cxp = (await facturasCxP()).find(f => f.id === gasto.facturaCompraId)
+    expect(Number(cxp!.saldoPendiente)).toBe(350000)
+  })
+
+  it('no deja cambiar el monto si la CxP ya recibió abonos', async () => {
+    const cuenta = await crearCuenta(1_000_000)
+    const gasto = await gastoACredito(200000)
+
+    const abono = await admin.req('/finanzas/abonos', {
+      method: 'POST',
+      body: JSON.stringify({ facturaId: gasto.facturaCompraId, tipo: 'cxp', monto: 120000, cuentaBancariaId: cuenta.id }),
+    })
+    expect(abono.status).toBe(201)
+
+    // Bajarlo a 50.000 dejaría una factura con más abonado que su total.
+    const r = await admin.req(`/finanzas/gastos/${gasto.id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ monto: 50000 }),
+    })
+    expect(r.status).toBe(400)
+
+    const cxp = (await facturasCxP()).find(f => f.id === gasto.facturaCompraId)
+    expect(Number(cxp!.saldoPendiente)).toBe(80000)
   })
 })
 
