@@ -45,6 +45,7 @@ import {
   KanbanSquare,
   Undo2,
   Filter,
+  LogOut,
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, Tenant, TransferenciaBancaria } from '@antigravity/shared';
@@ -3476,9 +3477,11 @@ export default function AppHome() {
   return (
     <main className="w-screen h-screen h-[100dvh] bg-white flex flex-col font-sans overflow-hidden">
         
-        {/* NAVBAR SUPERIOR */}
-        <header className="border-b-2 border-black px-3 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white z-10 gap-3">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        {/* NAVBAR SUPERIOR — una sola fila siempre: la lupa queda arriba a la
+            derecha en vez de bajar a una segunda fila en mobile. "Salir" se
+            movió al menú lateral (ver abajo del todo del drawer). */}
+        <header className="border-b-2 border-black px-3 sm:px-6 py-3 sm:py-4 flex items-center justify-between bg-white z-10 gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
             <button
               onClick={() => setSidebarOpen(true)}
               className="lg:hidden neo-btn p-2 shrink-0"
@@ -3520,16 +3523,12 @@ export default function AppHome() {
             )}
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-4 text-xs font-mono">
+          <div className="flex items-center gap-2 sm:gap-4 text-xs font-mono shrink-0">
             {/* Buscador global — solo tiene sentido dentro de una empresa.
                 Colapsado a un ícono de lupa en todas las vistas; se expande
                 al hacer click (ver BuscadorGlobal) para no ocupar espacio
                 permanente en el header. */}
-            {tenant && !superAdminMode && (
-              <div className="flex-1 min-w-0 sm:flex-none">
-                <BuscadorGlobal onIrA={irAResultadoBusqueda} />
-              </div>
-            )}
+            {tenant && !superAdminMode && <BuscadorGlobal onIrA={irAResultadoBusqueda} />}
 
             <div className="text-right hidden md:block">
               <div className="font-bold text-black flex items-center gap-1.5 justify-end">
@@ -3538,14 +3537,6 @@ export default function AppHome() {
               </div>
               <span className="text-neutral-500 font-medium">{usuario?.email ?? ''}</span>
             </div>
-
-            <button
-              onClick={() => void logout()}
-              className="border-2 border-black bg-white hover:bg-neutral-100 font-bold px-3 py-2 sm:py-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all shrink-0 whitespace-nowrap"
-            >
-              <span className="sm:hidden">Salir</span>
-              <span className="hidden sm:inline">Cerrar Sesión</span>
-            </button>
           </div>
         </header>
 
@@ -3715,6 +3706,19 @@ export default function AppHome() {
                 <span className="text-neutral-500 font-bold">WIDGETS:</span>
                 <span className="text-green-600 font-extrabold">ONLINE</span>
               </div>
+            </div>
+
+            {/* Cerrar sesión — antes vivía como botón en el header; se movió
+                acá abajo del todo del menú lateral para no competir con la
+                lupa por espacio en la barra superior. */}
+            <div className="p-4 border-t border-black">
+              <button
+                onClick={() => void logout()}
+                className="w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-black bg-white hover:bg-brand-red hover:text-white hover:border-brand-red transition-colors"
+              >
+                <LogOut size={18} />
+                <span>Cerrar Sesión</span>
+              </button>
             </div>
           </aside>
 
