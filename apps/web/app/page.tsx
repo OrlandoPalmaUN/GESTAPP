@@ -44,6 +44,7 @@ import {
   Menu,
   KanbanSquare,
   Undo2,
+  Filter,
 } from 'lucide-react';
 
 import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, Tenant, TransferenciaBancaria } from '@antigravity/shared';
@@ -730,6 +731,8 @@ export default function AppHome() {
 
   // --- Vista de pedidos ---
   const [pedidosVista, setPedidosVista] = useState<'lista' | 'kanban'>('lista');
+  /** Panel de Agrupar/Rango/Ordenar/Vista — colapsado por defecto detrás del botón "Filtros" para no tapar la lista. */
+  const [pedidosFiltrosAbiertos, setPedidosFiltrosAbiertos] = useState(false);
   /** Kanban de "Pendientes" — agrupa por etapa de flujo (no por estado individual) y excluye entregado/cancelado, a diferencia del Kanban de arriba. */
   const [showPendientesKanban, setShowPendientesKanban] = useState(false);
   const [pedidoExpandido, setPedidoExpandido] = useState<string | null>(null);
@@ -3519,8 +3522,9 @@ export default function AppHome() {
 
           <div className="flex items-center gap-2 sm:gap-4 text-xs font-mono">
             {/* Buscador global — solo tiene sentido dentro de una empresa.
-                En celular ocupa el ancho de la fila: antes estaba oculto bajo
-                `sm:block`, o sea que en teléfono no había forma de buscar. */}
+                Colapsado a un ícono de lupa en todas las vistas; se expande
+                al hacer click (ver BuscadorGlobal) para no ocupar espacio
+                permanente en el header. */}
             {tenant && !superAdminMode && (
               <div className="flex-1 min-w-0 sm:flex-none">
                 <BuscadorGlobal onIrA={irAResultadoBusqueda} />
@@ -4603,10 +4607,44 @@ export default function AppHome() {
                       return (
                         <div className="flex flex-col gap-2">
 
-                          {/* Agrupación + slider + orden + vista + crear */}
-                          <div className="bg-white border-2 border-black p-3">
-                          <div className="flex flex-wrap gap-3 items-end justify-between">
-                            <div className="flex flex-wrap gap-3 items-end">
+                          {/* Barra de acciones: toggle de Filtros (Agrupar/Rango/Ordenar/Vista,
+                              colapsado por defecto) + Pendientes + Crear Pedido, siempre visibles. */}
+                          <div className="bg-white border-2 border-black p-3 flex flex-col gap-3">
+                          <div className="flex flex-wrap gap-2 items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() => setPedidosFiltrosAbiertos(v => !v)}
+                              className={`neo-btn text-xs py-2 px-3 flex items-center gap-1.5 shrink-0 ${pedidosFiltrosAbiertos ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                            >
+                              <Filter size={14} />
+                              <span>Filtros</span>
+                              {pedidosFiltrosAbiertos ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setShowPendientesKanban(true)}
+                                className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
+                              >
+                                <KanbanSquare size={14} />
+                                <span>Pendientes</span>
+                                <span className="bg-brand-blue text-white text-[11px] px-1.5 py-0.5 rounded font-sans">
+                                  {orders.filter(o => ['borrador', 'confirmado', 'en_preparacion', 'despachado'].includes(o.estado)).length}
+                                </span>
+                              </button>
+
+                              <button
+                                onClick={() => setShowCreateOrder(true)}
+                                className="neo-btn-primary text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
+                              >
+                                <Plus size={14} />
+                                <span>Crear Pedido</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {pedidosFiltrosAbiertos && (
+                          <div className="flex flex-wrap gap-3 items-end border-t border-neutral-200 pt-3">
 
                               {/* Agrupación */}
                               <div className="flex flex-col gap-1">
@@ -4741,30 +4779,12 @@ export default function AppHome() {
                                 </div>
                               </div>
                             </div>
-
-                            <button
-                              onClick={() => setShowPendientesKanban(true)}
-                              className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
-                            >
-                              <KanbanSquare size={14} />
-                              <span>Pendientes</span>
-                              <span className="bg-brand-blue text-white text-[11px] px-1.5 py-0.5 rounded font-sans">
-                                {orders.filter(o => ['borrador', 'confirmado', 'en_preparacion', 'despachado'].includes(o.estado)).length}
-                              </span>
-                            </button>
-
-                            <button
-                              onClick={() => setShowCreateOrder(true)}
-                              className="neo-btn-primary text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
-                            >
-                              <Plus size={14} />
-                              <span>Crear Pedido</span>
-                            </button>
-                          </div>
+                          )}
                           </div>{/* cierre recuadro controles */}
 
-                          {/* Tabs de estado — recuadro propio, debajo */}
-                          <div className="bg-white border-2 border-black p-2.5 flex flex-wrap gap-1.5 items-center">
+                          {/* Tabs de estado — recuadro propio, debajo. Scroll horizontal en vez de
+                              envolver en varias filas: con 7 estados esa fila se comía media pantalla. */}
+                          <div className="bg-white border-2 border-black p-2.5 flex flex-nowrap gap-1.5 items-center overflow-x-auto scrollbar-thin">
                             {estadoTabs.map(({ val, label, inactiveCls, activeCls }) => {
                               const count = val === 'all' ? orders.length : orders.filter(o => o.estado === val).length;
                               const isActive = orderStatusFilter === val;
@@ -4773,7 +4793,7 @@ export default function AppHome() {
                                   key={val}
                                   type="button"
                                   onClick={() => setOrderStatusFilter(val)}
-                                  className={`font-mono text-[11px] font-bold px-2.5 py-1 border-2 transition-colors ${
+                                  className={`font-mono text-[11px] font-bold px-2.5 py-1 border-2 transition-colors shrink-0 whitespace-nowrap ${
                                     isActive ? activeCls : inactiveCls
                                   }`}
                                 >
@@ -4919,20 +4939,21 @@ export default function AppHome() {
 
                                 return (
                                   <div key={ord.id} className={`border ${estadoClases[ord.estado] ?? 'bg-white border-neutral-300'} mb-1`}>
-                                    {/* Row — en mobile apila [nombre+numero] arriba y [estado][total][acciones] en una fila que envuelve abajo; desde sm: vuelve al grid de 4 columnas fijas. */}
-                                    <div className="grid grid-cols-1 sm:[grid-template-columns:1fr_7rem_8rem_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2 text-xs">
+                                    {/* Row rediseñada: código de pedido + cliente arriba, estado/pago/total
+                                        abajo, acciones a la derecha reducidas a solo íconos (gestionar +
+                                        expandir/colapsar) para que quepan sin encimarse en celular. */}
+                                    <div className="flex items-start gap-2 px-3 py-2 text-xs">
 
-                                      {/* Col 1: nombre + número */}
-                                      <div className="flex flex-col min-w-0">
-                                        <span className="font-bold text-black truncate leading-tight">{getOrderDisplayName(ord)}</span>
-                                        <span className="font-mono text-xs text-neutral-600 leading-tight">{ord.numero}</span>
-                                      </div>
-
-                                      {/* Cols 2-4: fila flex que envuelve en mobile; sm:contents las restaura como columnas 2/3/4. */}
-                                      <div className="flex items-center gap-2 flex-wrap sm:contents">
-                                        {/* Col 2: estado (ancho fijo, siempre alineado) */}
-                                        <div>
-                                          <span className={`inline-block border border-black text-[11px] font-mono font-bold px-1.5 py-0.5 sm:w-full text-center ${
+                                      {/* Info: código + cliente, luego estado + pago + total */}
+                                      <div className="flex-1 min-w-0 flex flex-col gap-1">
+                                        <div className="flex items-baseline gap-2 flex-wrap">
+                                          <span className="font-mono font-black text-black text-sm leading-tight">{ord.numero}</span>
+                                          <span className="bg-green-100 text-black text-xs font-bold px-2 py-0.5 rounded truncate max-w-[60%]">
+                                            {client?.nombre ?? 'Sin cliente'}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className={`inline-block border border-black text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                             ord.estado === 'borrador' ? 'bg-neutral-200 text-neutral-700' :
                                             ord.estado === 'confirmado' ? 'bg-blue-200 text-blue-800' :
                                             ord.estado === 'en_preparacion' ? 'bg-yellow-200 text-yellow-800' :
@@ -4940,31 +4961,35 @@ export default function AppHome() {
                                             ord.estado === 'entregado' ? 'bg-green-200 text-green-800' :
                                             'bg-red-200 text-red-800'
                                           }`}>{ord.estado.replace('_', ' ').toUpperCase()}</span>
-                                        </div>
-
-                                        {/* Col 3: total + saldo */}
-                                        <div className="flex flex-col sm:items-end min-w-0">
-                                          <span className="font-mono font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
                                           {cxcRow && cxcRow.saldo_pendiente > 0 ? (
-                                            <span className="font-mono text-xs font-bold text-brand-red">Debe ${cxcRow.saldo_pendiente.toLocaleString('es-CO')}</span>
+                                            <span className="bg-red-100 text-brand-red text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">Debe ${cxcRow.saldo_pendiente.toLocaleString('es-CO')}</span>
                                           ) : cxcRow && cxcRow.saldo_pendiente === 0 ? (
-                                            <span className="font-mono text-[11px] font-bold text-green-700">Pagado ✓</span>
+                                            <span className="bg-green-100 text-green-800 text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">Pagado ✓</span>
                                           ) : null}
+                                          <span className="font-mono font-bold text-black ml-auto">${ord.total.toLocaleString('es-CO')}</span>
                                         </div>
+                                      </div>
 
-                                        {/* Col 4: acciones */}
-                                        <div className="flex items-center gap-1.5 shrink-0 ml-auto sm:ml-0">
-                                          <button
-                                            type="button"
-                                            onClick={() => setPedidoExpandido(isExpanded ? null : ord.id)}
-                                            className="font-mono text-[11px] font-bold border border-black bg-white px-2 py-1 hover:bg-neutral-100"
-                                          >{isExpanded ? 'Ocultar' : 'Ver detalle'}</button>
-                                          <button
-                                            type="button"
-                                            onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
-                                            className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-blue hover:text-white"
-                                          >Gestionar</button>
-                                        </div>
+                                      {/* Acciones: gestionar arriba, expandir/colapsar abajo — solo íconos */}
+                                      <div className="flex flex-col items-center gap-1 shrink-0">
+                                        <button
+                                          type="button"
+                                          title="Gestionar pedido"
+                                          aria-label="Gestionar pedido"
+                                          onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
+                                          className="neo-btn p-1.5 hover:bg-brand-blue hover:text-white"
+                                        >
+                                          <Settings size={14} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          title={isExpanded ? 'Ocultar detalle' : 'Ver detalle'}
+                                          aria-label={isExpanded ? 'Ocultar detalle' : 'Ver detalle'}
+                                          onClick={() => setPedidoExpandido(isExpanded ? null : ord.id)}
+                                          className="neo-btn p-1.5 hover:bg-neutral-100"
+                                        >
+                                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                        </button>
                                       </div>
                                     </div>
 
