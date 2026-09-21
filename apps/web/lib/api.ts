@@ -804,8 +804,9 @@ export const api = {
         año: number
         pedidos: number
         ventas: number
-        gastos: number
-        gananciaAprox: number
+        ingresos: number
+        egresos: number
+        balance: number
         tieneDatos: boolean
       }>
     }>(`/reportes/overview?tipo=${tipo}&año=${año}`),
@@ -854,7 +855,7 @@ export const api = {
       año: number
       semanas: Array<{
         semana: number; label: string; desde: string; hasta: string
-        pedidos: number; ventas: number; gastos: number; costoVentas: number; margenBruto: number; utilidadNeta: number
+        pedidos: number; ventas: number; ingresos: number; egresos: number; balance: number
         topProducto: { nombre: string; ventas: number } | null
       }>
     }>(`/reportes/semanas-comparacion?año=${año}&semanas=${semanas.join(',')}`),
