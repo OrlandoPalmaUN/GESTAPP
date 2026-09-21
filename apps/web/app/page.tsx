@@ -517,7 +517,7 @@ export default function AppHome() {
   const [reportesAño, setReportesAño] = useState(() => new Date().getFullYear());
   const [reportesOverview, setReportesOverview] = useState<Array<{
     label: string; desde: string; hasta: string; mes: number; año: number;
-    pedidos: number; ventas: number; gastos: number; gananciaAprox: number; tieneDatos: boolean;
+    pedidos: number; ventas: number; ingresos: number; egresos: number; balance: number; tieneDatos: boolean;
   }> | null>(null);
   const [reportesOverviewCargando, setReportesOverviewCargando] = useState(false);
   const [reportesOverviewError, setReportesOverviewError] = useState<string | null>(null);
@@ -526,12 +526,10 @@ export default function AppHome() {
   type ReporteDetalle = {
     periodo: { label: string; desde: string; hasta: string };
     ventas: { total: number; pedidos: number; ticketPromedio: number; delta: number | null; deltaPedidos: number | null };
-    compras: { total: number; oc: number; delta: number | null };
-    costoVentas: { total: number; ventasSinCosto: number };
-    gastos: { total: number; delta: number | null };
-    ingresosManuales: number; cxcCobrada: number;
-    margenBruto: { total: number; porcentaje: number; delta: number | null; ventasSinCosto: number };
-    utilidadNeta: number;
+    // Flujo de caja del período: plata que entró vs. plata que salió.
+    ingresos: { cxcCobrada: number; manuales: number; total: number; delta: number | null };
+    egresos: { cxpPagada: number; gastos: number; total: number; delta: number | null };
+    balance: { total: number; delta: number | null };
     topProductos: { nombre: string; categoria: string | null; unidades: number; ventasTotal: number }[];
   };
   const [reportesDetalleMes, setReportesDetalleMes] = useState<ReporteDetalle | null>(null);
@@ -553,7 +551,7 @@ export default function AppHome() {
   const [reportesCalorPedidos, setReportesCalorPedidos] = useState<CalorCelda[] | null>(null);
   const [reportesCalorIG, setReportesCalorIG] = useState<CalorIG[] | null>(null);
   const [reportesCalorCargando, setReportesCalorCargando] = useState(false);
-  type SemanaComp = { semana: number; label: string; desde: string; hasta: string; pedidos: number; ventas: number; gastos: number; costoVentas: number; margenBruto: number; utilidadNeta: number; topProducto: { nombre: string; ventas: number } | null };
+  type SemanaComp = { semana: number; label: string; desde: string; hasta: string; pedidos: number; ventas: number; ingresos: number; egresos: number; balance: number; topProducto: { nombre: string; ventas: number } | null };
   const [reportesSemComp, setReportesSemComp] = useState<SemanaComp[] | null>(null);
   const [reportesSemCompCargando, setReportesSemCompCargando] = useState(false);
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
@@ -1162,6 +1160,9 @@ export default function AppHome() {
   // producto — viaja como `{ concepto, precioUnitario }` (ver `api.crearPedido`).
   const [shippingEnabled, setShippingEnabled] = useState(false);
   const [shippingPrice, setShippingPrice] = useState('');
+
+  // 3b. Dashboard — "Registrar Ingreso": elegir entre Abono (a factura CxC) o Ingreso manual
+  const [showRegistrarIngresoChoice, setShowRegistrarIngresoChoice] = useState(false);
 
   // 4. Registrar abono
   const [showAllCxC, setShowAllCxC] = useState(false);
@@ -3602,16 +3603,9 @@ export default function AppHome() {
               {/* "Compras / OC" dejó de ser una sección propia: para el dueño una
                   orden de compra y un gasto son lo mismo (plata que sale), y tener
                   dos lugares hacía que este quedara sin usar. Ahora se registra
-                  desde Gastos, eligiendo el tipo "Compra de inventario". */}
-              <button
-                onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('gastos'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'finanzas' && financeSubTab === 'gastos' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <PackagePlus size={18} />
-                <span>Gastos y Compras</span>
-              </button>
+                  desde Gastos, eligiendo el tipo "Compra de inventario" — el
+                  atajo del menú lateral se oculta a pedido, sigue disponible
+                  como subpestaña dentro de Finanzas. */}
 
               <button
                 onClick={() => { setActiveTab('inventario'); setSuperAdminMode(false); setSidebarOpen(false); }}
@@ -3631,7 +3625,7 @@ export default function AppHome() {
               <button
                 onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('resumen'); setSuperAdminMode(false); setSidebarOpen(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'finanzas' && financeSubTab !== 'gastos' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  activeTab === 'finanzas' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
                 }`}
               >
                 <DollarSign size={18} />
@@ -3892,11 +3886,11 @@ export default function AppHome() {
                         Hacer Pedido
                       </button>
                       <button
-                        onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('cxc'); setShowCreateAbono(true); }}
+                        onClick={() => setShowRegistrarIngresoChoice(true)}
                         className="border-2 border-black bg-brand-blue text-white font-mono font-bold text-sm py-3 px-4 flex items-center justify-center gap-2 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)]"
                       >
                         <DollarSign size={16} />
-                        Agregar Abono
+                        Registrar Ingreso
                       </button>
                       <button
                         onClick={() => setShowGastoModal(true)}
@@ -6885,8 +6879,8 @@ export default function AppHome() {
                                     <span className={`font-bold text-xs block ${isSelected ? 'text-white' : 'text-black'}`}>{periodo.pedidos}</span>
                                   </div>
                                   <div>
-                                    <span className={`font-mono text-[11px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-600'}`}>Ganancia aprox.</span>
-                                    <span className={`font-bold text-xs block ${isSelected ? 'text-white' : periodo.gananciaAprox >= 0 ? 'text-green-700' : 'text-red-600'}`}>${periodo.gananciaAprox.toLocaleString('es-CO')}</span>
+                                    <span className={`font-mono text-[11px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-600'}`}>Balance (flujo caja)</span>
+                                    <span className={`font-bold text-xs block ${isSelected ? 'text-white' : periodo.balance >= 0 ? 'text-green-700' : 'text-red-600'}`}>{moneySigned(periodo.balance)}</span>
                                   </div>
                                   <span className={`font-mono text-[11px] mt-0.5 ${isSelected ? 'text-neutral-600' : 'text-neutral-600'}`}>{isSelected ? '▲ cerrar' : '▼ ver detalle'}</span>
                                 </>
@@ -7057,57 +7051,24 @@ export default function AppHome() {
                                   {exportarPDFError && <p className="text-[11px] font-mono text-brand-red text-right max-w-xs">{exportarPDFError}</p>}
                                 </div>
                                 <div ref={reporteCapturaRef} className="flex flex-col gap-6 bg-white">
+                                {/* Flujo de caja del período: plata que entró vs. plata que salió —
+                                    ingresos = CxC cobrada + ingresos manuales; egresos = CxP pagada +
+                                    gastos operativos que salieron de caja. */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                                   {([
-                                    { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''}`, delta: d.ventas.delta, color: 'text-green-700', warn: null },
-                                    // El margen se calcula contra el COSTO DE LO VENDIDO, no contra las
-                                    // compras del mes. Si hay ventas sin costo cargado se avisa, porque
-                                    // en ese caso el margen mostrado es optimista.
-                                    { label: 'MARGEN BRUTO', value: `$${d.margenBruto.total.toLocaleString('es-CO')}`, sub: `${d.margenBruto.porcentaje}% sobre ventas · costo $${d.costoVentas.total.toLocaleString('es-CO')}`, delta: d.margenBruto.delta, color: d.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red', warn: d.margenBruto.ventasSinCosto > 0 ? `$${d.margenBruto.ventasSinCosto.toLocaleString('es-CO')} en ventas sin costo cargado — el margen real es menor` : null },
-                                    { label: 'COMPRAS / OC', value: `$${d.compras.total.toLocaleString('es-CO')}`, sub: `${d.compras.oc} orden${d.compras.oc !== 1 ? 'es' : ''} · reposición, no costo de venta`, delta: d.compras.delta !== null ? -d.compras.delta : null, color: 'text-black', warn: null },
-                                    { label: 'UTILIDAD NETA', value: `$${d.utilidadNeta.toLocaleString('es-CO')}`, sub: `Gastos: $${d.gastos.total.toLocaleString('es-CO')}`, delta: null, color: d.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red', warn: null },
-                                  ] as { label: string; value: string; sub: string; delta: number | null; color: string; warn: string | null }[]).map((kpi) => (
+                                    { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''} · ticket $${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}`, delta: d.ventas.delta, color: 'text-green-700' },
+                                    { label: 'INGRESOS', value: `$${d.ingresos.total.toLocaleString('es-CO')}`, sub: `CxC cobrada $${d.ingresos.cxcCobrada.toLocaleString('es-CO')} + manuales $${d.ingresos.manuales.toLocaleString('es-CO')}`, delta: d.ingresos.delta, color: 'text-green-700' },
+                                    { label: 'EGRESOS', value: `$${d.egresos.total.toLocaleString('es-CO')}`, sub: `CxP pagada $${d.egresos.cxpPagada.toLocaleString('es-CO')} + gastos $${d.egresos.gastos.toLocaleString('es-CO')}`, delta: d.egresos.delta, color: 'text-brand-red' },
+                                    { label: 'BALANCE (FLUJO DE CAJA)', value: moneySigned(d.balance.total), sub: 'Ingresos − egresos', delta: d.balance.delta, color: d.balance.total >= 0 ? 'text-green-700' : 'text-brand-red' },
+                                  ] as { label: string; value: string; sub: string; delta: number | null; color: string }[]).map((kpi) => (
                                     <div key={kpi.label} className="border border-black p-3 flex flex-col gap-1 bg-neutral-50">
                                       <span className="font-mono text-[11px] text-neutral-500 font-bold">{kpi.label}</span>
                                       <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
                                       <span className="text-[11px] font-mono text-neutral-500">{kpi.sub}</span>
                                       {kpi.delta !== null && <span className={`text-[11px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs anterior</span>}
-                                      {kpi.warn && <span className="text-[11px] font-mono font-bold text-amber-700 leading-tight">⚠ {kpi.warn}</span>}
                                     </div>
                                   ))}
                                 </div>
-
-                                {/* Ingresos totales vs Egresos totales — ingresos = CxC cobrada +
-                                    ingresos manuales; egresos = compras/OC + gastos operativos. */}
-                                {(() => {
-                                  const ingresosTotales = d.cxcCobrada + d.ingresosManuales;
-                                  const egresosTotales = d.compras.total + d.gastos.total;
-                                  const balance = ingresosTotales - egresosTotales;
-                                  return (
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
-                                      <div className="border border-black p-3 bg-neutral-50">
-                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS TOTALES</span>
-                                        <span className="text-lg font-black text-green-700 block mt-1">${ingresosTotales.toLocaleString('es-CO')}</span>
-                                        <span className="text-[11px] font-mono text-neutral-600">CxC cobrada ${d.cxcCobrada.toLocaleString('es-CO')} + ingresos ${d.ingresosManuales.toLocaleString('es-CO')}</span>
-                                      </div>
-                                      <div className="border border-black p-3 bg-neutral-50">
-                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">EGRESOS TOTALES</span>
-                                        <span className="text-lg font-black text-brand-red block mt-1">${egresosTotales.toLocaleString('es-CO')}</span>
-                                        <span className="text-[11px] font-mono text-neutral-600">OC ${d.compras.total.toLocaleString('es-CO')} + gastos ${d.gastos.total.toLocaleString('es-CO')}</span>
-                                      </div>
-                                      <div className={`border border-black p-3 ${balance >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
-                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">BALANCE</span>
-                                        <span className={`text-lg font-black block mt-1 ${balance >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{moneySigned(balance)}</span>
-                                        <span className="text-[11px] font-mono text-neutral-600">Ingresos − egresos</span>
-                                      </div>
-                                      <div className="border border-black p-3 bg-neutral-50">
-                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
-                                        <span className="text-lg font-black text-black block mt-1">${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
-                                        <span className="text-[11px] font-mono text-neutral-600">Por pedido</span>
-                                      </div>
-                                    </div>
-                                  );
-                                })()}
 
                                 {d.topProductos.length > 0 && (
                                   <div>
@@ -7304,8 +7265,8 @@ export default function AppHome() {
                                             <th className="text-left py-1 pr-2 font-bold">Semana</th>
                                             <th className="text-right py-1 px-2 font-bold">Pedidos</th>
                                             <th className="text-right py-1 px-2 font-bold">Ventas</th>
-                                            <th className="text-right py-1 px-2 font-bold">Gastos</th>
-                                            <th className="text-right py-1 px-2 font-bold">Margen</th>
+                                            <th className="text-right py-1 px-2 font-bold">Egresos</th>
+                                            <th className="text-right py-1 px-2 font-bold">Balance</th>
                                             <th className="text-left py-1 pl-2 font-bold">Top producto</th>
                                           </tr>
                                         </thead>
@@ -7313,7 +7274,7 @@ export default function AppHome() {
                                           {reportesSemComp.map((s, i) => {
                                             const maxVentas = Math.max(1, ...reportesSemComp.map(x => x.ventas));
                                             const pct = Math.round((s.ventas / maxVentas) * 100);
-                                            const margenPos = s.margenBruto >= 0;
+                                            const balancePos = s.balance >= 0;
                                             return (
                                               <tr key={s.semana} className={`border-b border-neutral-200 ${i === 0 ? 'bg-yellow-50' : ''}`}>
                                                 <td className="py-1 pr-2">
@@ -7329,9 +7290,9 @@ export default function AppHome() {
                                                     <span className="font-bold">${(s.ventas/1000).toFixed(0)}k</span>
                                                   </div>
                                                 </td>
-                                                <td className="text-right py-1 px-2 text-neutral-500">${(s.gastos/1000).toFixed(0)}k</td>
-                                                <td className={`text-right py-1 px-2 font-bold ${margenPos ? 'text-green-700' : 'text-red-600'}`}>
-                                                  {margenPos ? '+' : ''}{(s.margenBruto/1000).toFixed(0)}k
+                                                <td className="text-right py-1 px-2 text-neutral-500">${(s.egresos/1000).toFixed(0)}k</td>
+                                                <td className={`text-right py-1 px-2 font-bold ${balancePos ? 'text-green-700' : 'text-red-600'}`}>
+                                                  {balancePos ? '+' : ''}{(s.balance/1000).toFixed(0)}k
                                                 </td>
                                                 <td className="pl-2 py-1 text-[11px] text-neutral-500 truncate max-w-[90px]">
                                                   {s.topProducto ? <><span className="text-black font-bold">{s.topProducto.nombre}</span> ${(s.topProducto.ventas/1000).toFixed(0)}k</> : '—'}
@@ -8292,6 +8253,52 @@ export default function AppHome() {
                 CREAR PEDIDO EN BORRADOR
               </button>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* 3b. Modal: Dashboard "Registrar Ingreso" — elegir Abono o Ingreso manual */}
+      {showRegistrarIngresoChoice && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative">
+            <div className="flex justify-between items-center border-b border-black pb-2">
+              <h3 className="font-mono text-sm font-bold text-black">REGISTRAR INGRESO</h3>
+              <button onClick={() => setShowRegistrarIngresoChoice(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-neutral-600 font-mono">¿Qué tipo de ingreso quieres registrar?</p>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRegistrarIngresoChoice(false);
+                  setActiveTab('finanzas'); setFinanceSubTab('cxc'); setShowCreateAbono(true);
+                }}
+                className="border-2 border-black bg-brand-blue text-white font-mono font-bold text-sm py-4 px-4 flex items-center gap-3 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)] text-left"
+              >
+                <DollarSign size={20} className="shrink-0" />
+                <span>
+                  <span className="block">Abono</span>
+                  <span className="block text-[11px] font-normal opacity-80">Pago de un cliente a una factura pendiente (CxC)</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRegistrarIngresoChoice(false);
+                  setActiveTab('finanzas'); setFinanceSubTab('ingresos');
+                  setIngresoForm({ descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: bankAccounts[0]?.id ?? '', notas: '' });
+                  setIngresoFormError(null);
+                  setShowIngresoModal(true);
+                }}
+                className="border-2 border-black bg-white text-black font-mono font-bold text-sm py-4 px-4 flex items-center gap-3 hover:bg-neutral-50 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.15)] text-left"
+              >
+                <Plus size={20} className="shrink-0" />
+                <span>
+                  <span className="block">Ingreso manual</span>
+                  <span className="block text-[11px] font-normal text-neutral-500">Capital, préstamo, devolución u otro ingreso sin factura</span>
+                </span>
+              </button>
+            </div>
           </div>
         </div>
       )}

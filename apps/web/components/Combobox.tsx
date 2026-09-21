@@ -134,7 +134,11 @@ export function Combobox({
                   : i === highlighted ? 'bg-brand-blue text-white' : 'hover:bg-neutral-50'
               } ${opt.value === value ? 'font-bold' : ''}`}
             >
-              <span className="truncate">{opt.label}</span>
+              {/* min-w-0 es necesario para que `truncate` funcione dentro de un
+                  flex item — sin esto el span nunca se encoge por debajo del
+                  ancho de su contenido, así que en mobile el nombre largo no
+                  se recorta y queda tapando el SKU/código de al lado. */}
+              <span className="min-w-0 flex-1 truncate">{opt.label}</span>
               {opt.sublabel && (
                 <span className={`shrink-0 font-mono text-[11px] ${i === highlighted ? 'text-white/80' : 'text-neutral-500'}`}>{opt.sublabel}</span>
               )}
