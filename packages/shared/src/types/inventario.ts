@@ -24,6 +24,50 @@ export const MOVIMIENTOS_DE_ENTRADA: readonly TipoMovimiento[] = [
   'liberacion_reserva',
 ]
 
+/**
+ * Unidades de medida sugeridas al crear un producto. NO es una restricción:
+ * `productos.unidad` es TEXT libre y la UI permite escribir cualquier otra —
+ * esta lista solo evita que lo más común (vender por libra o por canasta)
+ * obligue a teclear. El orden es el de uso esperado, no alfabético.
+ */
+export const UNIDADES_COMUNES = [
+  'unidad',
+  'libra',
+  'kilo',
+  'gramo',
+  'litro',
+  'mililitro',
+  'canasta',
+  'envase',
+  'paquete',
+  'bolsa',
+  'caja',
+  'docena',
+] as const
+
+/**
+ * Catálogo de ilustraciones disponibles para un producto. Se guarda la CLAVE
+ * en `productos.sprite`; el dibujo vive como SVG en el front
+ * (apps/web/components/sprites) — así redibujar o recolorear un sprite no
+ * toca la base de datos.
+ *
+ * Es un enum cerrado a propósito: valida en el servidor que nadie guarde una
+ * clave que el front no sabe dibujar. Agregar una ilustración nueva es añadir
+ * su clave aquí y su mapa de píxeles en el front, sin migración.
+ */
+export const SPRITES_PRODUCTO = [
+  'queso',
+  'huevos',
+  'suero',
+  'mantequilla',
+  'arepa',
+  'botella',
+  'bolsa',
+  'caja',
+] as const
+
+export type SpriteProducto = (typeof SPRITES_PRODUCTO)[number]
+
 /** Categoría de producto — agrupación simple, sin jerarquía (plan §9). */
 export interface Categoria {
   id: string
@@ -44,6 +88,10 @@ export interface Producto {
   stockMinimo: number
   activo: boolean
   createdAt: string
+  /** Clave del catálogo `SPRITES_PRODUCTO`. NULL = se dibuja la caja genérica. */
+  sprite: SpriteProducto | null
+  /** Unidades que representa cada pieza dibujada en la Vitrina. NULL = 1. */
+  spriteEscala: number | null
   /** Calculado: suma de movimientos de inventario — no se persiste como columna (fuente de verdad = movimientos). */
   stockDisponible: number
   /**

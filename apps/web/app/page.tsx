@@ -2,6 +2,9 @@
 
 import React, { useState, useMemo, useEffect, useCallback, useRef } from 'react';
 import { IgDashboard } from '../components/redes/IgDashboard';
+import { ProductSprite } from '../components/sprites/ProductSprite';
+import { SpritePicker } from '../components/sprites/SpritePicker';
+import { StockVitrina } from '../components/sprites/StockVitrina';
 import { AiChat } from '../components/ai/AiChat';
 import { AiNotasHelper } from '../components/ai/AiNotasHelper';
 import { useRouter } from 'next/navigation';
@@ -42,7 +45,8 @@ import {
   Menu,
 } from 'lucide-react';
 
-import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, Tenant, TransferenciaBancaria } from '@antigravity/shared';
+import { UNIDADES_COMUNES } from '@antigravity/shared';
+import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, SpriteProducto, Tenant, TransferenciaBancaria } from '@antigravity/shared';
 
 // Definido localmente para no forzar un import de valor de @antigravity/shared
 // (el tsconfig apunta al source TS que usa extensiones .js — solo funciona con import type).
@@ -169,6 +173,69 @@ function categoriaAMockCategory(c: Categoria): Category {
   return { id: c.id, nombre: c.nombre, descripcion: '' };
 }
 
+/**
+ * Plantillas de alta rápida. Un toque llena nombre, unidad, ilustración y
+ * stock mínimo, y solo queda escribir el precio — crear el catálogo de una
+ * tienda pequeña pasa de un formulario por producto a unos pocos toques.
+ *
+ * Deuda conocida: la lista es fija y está pensada para un negocio de lácteos.
+ * Lo correcto a futuro es guardarlas por tenant (o derivarlas de los productos
+ * que el tenant ya creó) en vez de tenerlas en el código del front.
+ */
+const PLANTILLAS_PRODUCTO: { nombre: string; unidad: string; sprite: SpriteProducto; stock_minimo: string }[] = [
+  { nombre: 'Queso costeño', unidad: 'libra', sprite: 'queso', stock_minimo: '5' },
+  { nombre: 'Huevos', unidad: 'canasta', sprite: 'huevos', stock_minimo: '2' },
+  { nombre: 'Suero costeño', unidad: 'envase', sprite: 'suero', stock_minimo: '6' },
+  { nombre: 'Mantequilla', unidad: 'envase', sprite: 'mantequilla', stock_minimo: '4' },
+  { nombre: 'Arepas', unidad: 'unidad', sprite: 'arepa', stock_minimo: '20' },
+];
+
+/**
+ * Recorta una cantidad a 2 decimales, que es la precisión de
+ * `pedido_items.cantidad` / `movimientos_inventario.cantidad` (NUMERIC(12,2)).
+ * Sumar de a 0.5 en punto flotante deriva (0.1 + 0.2 = 0.30000000000000004) y
+ * eso terminaría viajando al servidor.
+ */
+const redondearCantidad = (n: number): number => Number(n.toFixed(2));
+
+/**
+ * Campo de unidad de medida. Ofrece las comunes en un desplegable y deja
+ * escribir cualquier otra: `productos.unidad` es TEXT libre, y restringirlo a
+ * una lista rompería a cualquier negocio que venda por algo que no previmos.
+ *
+ * El input de texto aparece solo cuando el valor actual NO está en la lista
+ * (incluido el caso "Otra…", que deja el valor vacío para que se escriba) —
+ * así no hace falta un estado extra que se desincronice al reabrir el modal.
+ */
+function UnidadSelect({ valor, onChange }: { valor: string; onChange: (unidad: string) => void }) {
+  const esComun = (UNIDADES_COMUNES as readonly string[]).includes(valor);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <select
+        value={esComun ? valor : '__otra__'}
+        onChange={(e) => onChange(e.target.value === '__otra__' ? '' : e.target.value)}
+        className="neo-input font-mono"
+      >
+        {UNIDADES_COMUNES.map((u) => (
+          <option key={u} value={u}>{u}</option>
+        ))}
+        <option value="__otra__">Otra…</option>
+      </select>
+      {!esComun && (
+        <input
+          type="text"
+          required
+          autoFocus
+          placeholder="Ej. bandeja, arroba, bulto"
+          value={valor}
+          onChange={(e) => onChange(e.target.value)}
+          className="neo-input font-mono"
+        />
+      )}
+    </div>
+  );
+}
+
 function productoAMockProduct(p: Producto): Product {
   return {
     id: p.id,
@@ -184,6 +251,9 @@ function productoAMockProduct(p: Producto): Product {
     // como valor inicial/semilla para no romper el shape de Product.
     stock_inicial: p.stockDisponible,
     tiene_variantes: p.tieneVariantes,
+    unidad: p.unidad,
+    sprite: p.sprite,
+    sprite_escala: p.spriteEscala,
   };
 }
 
@@ -552,6 +622,8 @@ export default function AppHome() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [movements, setMovements] = useState<InventoryMovement[]>([]);
   const [stockDisponibleById, setStockDisponibleById] = useState<Record<string, number>>({});
+  /** Inventario como tabla (números) o como Vitrina (piezas dibujadas). */
+  const [vistaInventario, setVistaInventario] = useState<'tabla' | 'vitrina'>('tabla');
   const [inventarioCargando, setInventarioCargando] = useState(false);
   const [inventarioError, setInventarioError] = useState<string | null>(null);
   // Clientes y Pedidos: igual que Inventario, conectados al backend real —
@@ -761,7 +833,12 @@ export default function AppHome() {
     stock_minimo: '10',
     stock_inicial: '20',
     tiene_variantes: false,
+    unidad: 'unidad',
+    sprite: null as SpriteProducto | null,
   });
+  // El alta rápida pide lo mínimo (nombre, unidad, precio, existencia) y deja
+  // el resto en valores por defecto; "Completo" es el formulario de siempre.
+  const [modoAltaRapida, setModoAltaRapida] = useState(true);
   // Crear categoría "al vuelo" desde el propio selector — evita el viaje a otra
   // pantalla solo para dar de alta una categoría que no existía todavía.
   const [showNewCategoryInput, setShowNewCategoryInput] = useState(false);
@@ -796,6 +873,7 @@ export default function AppHome() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editProductForm, setEditProductForm] = useState({
     sku: '', nombre: '', descripcion: '', categoria_id: '', precio_costo: '', precio_venta: '', stock_minimo: '', tiene_variantes: false,
+    unidad: 'unidad', sprite: null as SpriteProducto | null,
   });
 
   // --- Gestionar variantes de producto (talla/color/etc.) ---
@@ -990,9 +1068,16 @@ export default function AppHome() {
   // (PRECIO_CORRIENTE); si el usuario lo edita, viaja como override puntual
   // de ESTE pedido (p.ej. un descuento negociado) — el margen se recalcula
   // en vivo comparándolo contra el costo del producto.
-  const [orderItems, setOrderItems] = useState<{ producto_id: string; variante_id: string | null; cantidad: number; precio_excepcional: number | null }[]>([
-    { producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null },
-  ]);
+  // Arranca VACÍO: los ítems entran tocando un producto en la rejilla, no
+  // agregando una fila en blanco y buscándolo después en un desplegable.
+  //
+  // `uid` es un identificador local y estable por línea. Sirve para dos cosas
+  // que con el índice del array fallaban: la `key` de React (borrar el ítem 1
+  // de 3 remontaba los siguientes) y recordar qué línea tiene desplegado el
+  // bloque de precio — con índices, borrar una línea movía ese estado a otra.
+  const [orderItems, setOrderItems] = useState<{ uid: string; producto_id: string; variante_id: string | null; cantidad: number; precio_excepcional: number | null }[]>([]);
+  /** Ítems (por `uid`) con el bloque de precio excepcional/margen desplegado. */
+  const [itemsExpandidos, setItemsExpandidos] = useState<Set<string>>(new Set());
   // Variantes del producto elegido por cada ítem — se cargan al vuelo cuando
   // el producto seleccionado tiene `tiene_variantes` (evita pedir TODAS las
   // variantes de TODOS los productos por adelantado).
@@ -2472,6 +2557,8 @@ export default function AppHome() {
       precio_venta: String(p.precio_venta),
       stock_minimo: String(p.stock_minimo),
       tiene_variantes: p.tiene_variantes,
+      unidad: p.unidad,
+      sprite: p.sprite,
     });
   };
   const handleSaveEditProduct = async (e: React.FormEvent) => {
@@ -2485,8 +2572,10 @@ export default function AppHome() {
         categoriaId: editProductForm.categoria_id || null,
         precioCosto: parseFloat(editProductForm.precio_costo) || 0,
         precioVenta: parseFloat(editProductForm.precio_venta) || 0,
-        stockMinimo: parseInt(editProductForm.stock_minimo) || 0,
+        stockMinimo: parseFloat(editProductForm.stock_minimo) || 0,
         tieneVariantes: editProductForm.tiene_variantes,
+        unidad: editProductForm.unidad,
+        sprite: editProductForm.sprite,
       });
       setEditingProduct(null);
       await fetchInventario();
@@ -2501,6 +2590,26 @@ export default function AppHome() {
       mostrarUndoToast(`Producto "${p.nombre}" eliminado.`, 'producto', p.id);
     } catch (error) {
       setInventarioError(error instanceof ApiError ? error.message : 'No se pudo eliminar el producto.');
+    }
+  };
+
+  /**
+   * Guarda un conteo físico hecho desde la Vitrina. Se manda UN movimiento con
+   * la diferencia, no uno por cada toque: así el historial muestra "se contó y
+   * faltaban 2" en vez de dos salidas sueltas sin explicación.
+   */
+  const handleConteoFisico = async (p: Product, diferencia: number) => {
+    if (diferencia === 0) return;
+    try {
+      await api.crearMovimientoInventario({
+        productoId: p.id,
+        tipo: diferencia > 0 ? 'ajuste_positivo' : 'ajuste_negativo',
+        cantidad: Math.abs(diferencia),
+        notas: 'Conteo físico desde la Vitrina',
+      });
+      await fetchInventario();
+    } catch (error) {
+      setInventarioError(error instanceof ApiError ? error.message : 'No se pudo guardar el conteo.');
     }
   };
 
@@ -2836,6 +2945,30 @@ export default function AppHome() {
     return stocks;
   }, [products, stockDisponibleById]);
 
+  /**
+   * Productos que pasan los filtros de la pestaña Inventario (búsqueda,
+   * categoría, estado de stock). Vive aquí y no dentro de la tabla porque la
+   * Vitrina muestra exactamente el mismo conjunto — duplicar el filtro haría
+   * que las dos vistas se desincronizaran a la primera modificación.
+   */
+  const productosVisibles = useMemo(() => {
+    const q = searchQuery.toLowerCase();
+    return products.filter((p) => {
+      const matchSearch = p.nombre.toLowerCase().includes(q) || p.sku.toLowerCase().includes(q);
+      const matchCat = categoryFilter === 'all' || p.categoria_id === categoryFilter;
+
+      const stockVal = productStocks[p.id] ?? 0;
+      let matchStock = true;
+      if (stockFilter === 'critical') {
+        matchStock = stockVal <= p.stock_minimo;
+      } else if (stockFilter === 'instock') {
+        matchStock = stockVal > 0;
+      }
+
+      return matchSearch && matchCat && matchStock;
+    });
+  }, [products, productStocks, searchQuery, categoryFilter, stockFilter]);
+
   // Lista de productos con stock crítico (disponible <= mínimo)
   const criticalProducts = useMemo(() => {
     return products.filter((p) => {
@@ -2930,8 +3063,11 @@ export default function AppHome() {
     e.preventDefault();
     const cost = parseFloat(newProduct.precio_costo) || 0;
     const price = parseFloat(newProduct.precio_venta) || 0;
-    const minStock = parseInt(newProduct.stock_minimo) || 0;
-    const initStock = parseInt(newProduct.stock_inicial) || 0;
+    // `parseFloat` y no `parseInt`: el stock es NUMERIC(12,2) en la base, así
+    // que media libra de queso o 2.5 kilos son cantidades válidas — con
+    // `parseInt` se perdía la fracción en silencio.
+    const minStock = parseFloat(newProduct.stock_minimo) || 0;
+    const initStock = parseFloat(newProduct.stock_inicial) || 0;
 
     try {
       await api.crearProducto({
@@ -2943,6 +3079,8 @@ export default function AppHome() {
         stockMinimo: minStock,
         stockInicial: initStock,
         tieneVariantes: newProduct.tiene_variantes,
+        unidad: newProduct.unidad,
+        sprite: newProduct.sprite,
       });
 
       setShowCreateProduct(false);
@@ -2955,6 +3093,8 @@ export default function AppHome() {
         stock_minimo: '10',
         stock_inicial: '20',
         tiene_variantes: false,
+        unidad: 'unidad',
+        sprite: null,
       });
       setShowNewCategoryInput(false);
       setNewCategoryName('');
@@ -2991,6 +3131,49 @@ export default function AppHome() {
 
   // 3. Crear nuevo pedido — el SERVIDOR valida stock, resuelve precios del
   // catálogo y genera el número consecutivo. Nunca fabricamos el pedido localmente.
+  /**
+   * Agrega un producto al pedido desde la rejilla de sprites.
+   *
+   * Si el producto ya está en el pedido suma una unidad a esa línea en vez de
+   * duplicarla: tocar tres veces el queso debe dar "3 libras", no tres
+   * renglones de 1. Con variantes sí se crea línea nueva — dos tallas del
+   * mismo producto son dos ítems legítimos y distintos.
+   */
+  const agregarProductoAlPedido = (p: Product) => {
+    setOrderValidationError(null);
+    const nuevo = { uid: crypto.randomUUID(), producto_id: p.id, variante_id: null, cantidad: 1, precio_excepcional: null };
+
+    if (p.tiene_variantes) {
+      setOrderItems((prev) => [...prev, nuevo]);
+      void cargarVariantesParaItem(p.id);
+      return;
+    }
+
+    setOrderItems((prev) => {
+      const idx = prev.findIndex((i) => i.producto_id === p.id);
+      if (idx === -1) return [...prev, nuevo];
+      const copia = [...prev];
+      copia[idx] = { ...copia[idx]!, cantidad: redondearCantidad(copia[idx]!.cantidad + 1) };
+      return copia;
+    });
+  };
+
+  /** Cambia la cantidad de una línea. `delta` puede ser fraccionario (media libra). */
+  const cambiarCantidadItem = (uid: string, delta: number) => {
+    setOrderItems((prev) =>
+      prev.map((i) => (i.uid === uid ? { ...i, cantidad: Math.max(0.01, redondearCantidad(i.cantidad + delta)) } : i)),
+    );
+  };
+
+  const quitarItemDelPedido = (uid: string) => {
+    setOrderItems((prev) => prev.filter((i) => i.uid !== uid));
+    setItemsExpandidos((prev) => {
+      const copia = new Set(prev);
+      copia.delete(uid);
+      return copia;
+    });
+  };
+
   const handleCreateOrder = (e: React.FormEvent) => {
     e.preventDefault();
     setOrderValidationError(null);
@@ -3001,8 +3184,10 @@ export default function AppHome() {
     // (ver `apps/api/.../pedidos.ts`); `orderValidationError` queda solo para
     // mostrar errores reales que el servidor devuelva.
 
-    if (orderItems.some((item) => !item.producto_id)) {
-      setOrderValidationError('Selecciona un producto para cada ítem del pedido.');
+    // Con la rejilla ya no existen ítems sin producto (entran tocando uno),
+    // así que lo único que queda por validar es que el pedido no vaya vacío.
+    if (orderItems.length === 0) {
+      setOrderValidationError('Agrega al menos un producto al pedido.');
       return;
     }
 
@@ -3030,7 +3215,8 @@ export default function AppHome() {
           items: itemsAEnviar,
         });
         setShowCreateOrder(false);
-        setOrderItems([{ producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null }]);
+        setOrderItems([]);
+        setItemsExpandidos(new Set());
         setShippingEnabled(false);
         setShippingPrice('');
         await Promise.all([fetchPedidos(), fetchFinanzas()]);
@@ -4045,6 +4231,23 @@ export default function AppHome() {
                       </div>
 
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full sm:w-auto">
+                        {/* Tabla = todos los datos; Vitrina = la existencia
+                            dibujada, para saber de un vistazo qué falta. */}
+                        <div className="flex border-2 border-black">
+                          {([['tabla', 'Tabla'], ['vitrina', 'Vitrina']] as const).map(([vista, etiqueta]) => (
+                            <button
+                              key={vista}
+                              type="button"
+                              aria-pressed={vistaInventario === vista}
+                              onClick={() => setVistaInventario(vista)}
+                              className={`px-3 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
+                                vistaInventario === vista ? 'bg-brand-blue text-white' : 'bg-white hover:bg-neutral-50'
+                              }`}
+                            >
+                              {etiqueta}
+                            </button>
+                          ))}
+                        </div>
                         <button
                           onClick={() => { setCategoryAdminError(null); setAdminCategoryName(''); setEditingCategoryId(null); setShowCategoryAdmin(true); }}
                           className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 w-full sm:w-auto flex items-center justify-center gap-1.5"
@@ -4063,9 +4266,19 @@ export default function AppHome() {
 
                     </div>
 
-                    {/* Tabla de Productos */}
-                    <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
-                    <div className="neo-card bg-white p-0 overflow-x-auto">
+                    {vistaInventario === 'vitrina' && (
+                      <StockVitrina
+                        productos={productosVisibles}
+                        stockPorId={productStocks}
+                        onAjustar={handleConteoFisico}
+                      />
+                    )}
+
+                    {/* Tabla de Productos. Se oculta con `hidden` en vez de
+                        desmontarse para no perder el estado de las filas
+                        expandidas (variantes) al alternar de vista. */}
+                    <p className={`sm:hidden text-[11px] font-mono text-neutral-600 text-center ${vistaInventario === 'vitrina' ? 'hidden' : ''}`}>← desliza para ver más →</p>
+                    <div className={`neo-card bg-white p-0 overflow-x-auto ${vistaInventario === 'vitrina' ? 'hidden' : ''}`}>
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
                           <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
@@ -4079,20 +4292,7 @@ export default function AppHome() {
                           </tr>
                         </thead>
                         {(() => {
-                          const visibles = products.filter((p) => {
-                            const matchSearch = p.nombre.toLowerCase().includes(searchQuery.toLowerCase()) || p.sku.toLowerCase().includes(searchQuery.toLowerCase());
-                            const matchCat = categoryFilter === 'all' || p.categoria_id === categoryFilter;
-
-                            const stockVal = productStocks[p.id] ?? 0;
-                            let matchStock = true;
-                            if (stockFilter === 'critical') {
-                              matchStock = stockVal <= p.stock_minimo;
-                            } else if (stockFilter === 'instock') {
-                              matchStock = stockVal > 0;
-                            }
-
-                            return matchSearch && matchCat && matchStock;
-                          });
+                          const visibles = productosVisibles;
 
                           // Agrupamos por categoría (orden alfabético; "Sin categoría" siempre al final)
                           // así la tabla refleja la organización del inventario en vez de una lista plana.
@@ -4154,6 +4354,7 @@ export default function AppHome() {
                                             <ChevronDown size={14} className={`transition-transform ${variantesAbiertas ? '' : '-rotate-90'}`} />
                                           </button>
                                         )}
+                                        <ProductSprite sprite={p.sprite} size={22} className="shrink-0 mt-0.5" />
                                         <div>
                                           <div className="flex items-center gap-1.5">
                                             <span>{p.nombre}</span>
@@ -7429,8 +7630,54 @@ export default function AppHome() {
               <button onClick={() => setShowCreateProduct(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
+            {/* Alta rápida vs. formulario completo. Rápido pide lo mínimo y
+                deja SKU, descripción y categoría en sus valores por defecto —
+                todo eso es opcional en la base y se puede completar luego. */}
+            <div className="flex gap-1.5">
+              {([['rapida', 'Alta rápida'], ['completa', 'Completo']] as const).map(([modo, etiqueta]) => {
+                const activo = (modo === 'rapida') === modoAltaRapida;
+                return (
+                  <button
+                    key={modo}
+                    type="button"
+                    onClick={() => setModoAltaRapida(modo === 'rapida')}
+                    className={`neo-btn flex-1 py-1.5 font-mono text-[10px] font-bold uppercase tracking-wider ${
+                      activo ? 'bg-brand-blue text-white' : 'bg-white hover:bg-neutral-50'
+                    }`}
+                  >
+                    {etiqueta}
+                  </button>
+                );
+              })}
+            </div>
+
             <form onSubmit={handleCreateProduct} className="flex flex-col gap-3.5 text-xs">
-              <div className="flex flex-col gap-1">
+              {modoAltaRapida && (
+                <div className="flex flex-col gap-1.5">
+                  <label className="font-mono font-bold">EMPEZAR DESDE UNA PLANTILLA</label>
+                  <div className="flex flex-wrap gap-1.5">
+                    {PLANTILLAS_PRODUCTO.map((pl) => (
+                      <button
+                        key={pl.nombre}
+                        type="button"
+                        onClick={() => setNewProduct({
+                          ...newProduct,
+                          nombre: pl.nombre,
+                          unidad: pl.unidad,
+                          sprite: pl.sprite,
+                          stock_minimo: pl.stock_minimo,
+                        })}
+                        className="neo-btn bg-white hover:bg-neutral-50 flex flex-col items-center gap-1 px-2 py-1.5"
+                      >
+                        <ProductSprite sprite={pl.sprite} size={28} />
+                        <span className="font-mono text-[9px] font-bold uppercase">{pl.nombre}</span>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className={`flex-col gap-1 ${modoAltaRapida ? 'hidden' : 'flex'}`}>
                 <label className="font-mono font-bold">CATEGORÍA</label>
                 {!showNewCategoryInput ? (
                   <select
@@ -7498,7 +7745,24 @@ export default function AppHome() {
                 />
               </div>
 
-              <div className="flex flex-col gap-1">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">CÓMO SE VENDE</label>
+                  <UnidadSelect
+                    valor={newProduct.unidad}
+                    onChange={(unidad) => setNewProduct({ ...newProduct, unidad })}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">ILUSTRACIÓN</label>
+                  <SpritePicker
+                    valor={newProduct.sprite}
+                    onChange={(sprite) => setNewProduct({ ...newProduct, sprite })}
+                  />
+                </div>
+              </div>
+
+              <div className={`flex-col gap-1 ${modoAltaRapida ? 'hidden' : 'flex'}`}>
                 <label className="font-mono font-bold">DESCRIPCIÓN</label>
                 <input
                   type="text"
@@ -7536,21 +7800,28 @@ export default function AppHome() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">STOCK MÍNIMO ALERTA</label>
+                  <label className="font-mono font-bold">STOCK MÍNIMO ({newProduct.unidad || '—'})</label>
                   <input
                     type="number"
                     required
+                    // `step="any"` porque el stock admite decimales (media
+                    // libra de queso). Con el step=1 implícito, el navegador
+                    // marcaba 5.5 como inválido y no dejaba enviar.
+                    step="any"
+                    min="0"
                     value={newProduct.stock_minimo}
                     onChange={(e) => setNewProduct({ ...newProduct, stock_minimo: e.target.value })}
                     className="neo-input font-mono"
                   />
                 </div>
                 <div className="flex flex-col gap-1">
-                  <label className={`font-mono font-bold ${newProduct.tiene_variantes ? 'text-neutral-600' : ''}`}>STOCK COMPRA INICIAL</label>
+                  <label className={`font-mono font-bold ${newProduct.tiene_variantes ? 'text-neutral-600' : ''}`}>EXISTENCIA HOY ({newProduct.unidad || '—'})</label>
                   <input
                     type="number"
                     required={!newProduct.tiene_variantes}
                     disabled={newProduct.tiene_variantes}
+                    step="any"
+                    min="0"
                     value={newProduct.stock_inicial}
                     onChange={(e) => setNewProduct({ ...newProduct, stock_inicial: e.target.value })}
                     className="neo-input font-mono disabled:bg-neutral-100 disabled:text-neutral-600"
@@ -7558,7 +7829,7 @@ export default function AppHome() {
                 </div>
               </div>
 
-              <label className="flex items-start gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50">
+              <label className={`items-start gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50 ${modoAltaRapida ? 'hidden' : 'flex'}`}>
                 <input
                   type="checkbox"
                   checked={newProduct.tiene_variantes}
@@ -7694,176 +7965,238 @@ export default function AppHome() {
                 )}
               </div>
 
-              {/* Items agregados */}
-              <div className="space-y-3">
-                <div className="font-mono font-bold flex justify-between">
-                  <span>PRODUCTOS DEL PEDIDO</span>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOrderItems([...orderItems, { producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null }]);
-                    }}
-                    className="text-brand-blue hover:underline font-bold flex items-center gap-0.5 text-[11px]"
-                  >
-                    + Agregar Ítem
-                  </button>
+              {/* Items del pedido — se arman tocando la rejilla de abajo, no
+                  agregando filas vacías y buscando en un desplegable. */}
+              <div className="space-y-2.5">
+                <div className="font-mono font-bold">PRODUCTOS DEL PEDIDO</div>
+
+                <div className="border border-black/10 bg-neutral-50/60 p-2">
+                  <p className="font-mono text-[10px] text-neutral-500 uppercase tracking-wider mb-1.5">
+                    Toca para agregar · vuelve a tocar para sumar
+                  </p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {products.length === 0 && (
+                      <span className="font-mono text-[11px] text-neutral-500">
+                        No hay productos en el catálogo todavía.
+                      </span>
+                    )}
+                    {products.map((p) => {
+                      const disp = productStocks[p.id] ?? 0;
+                      // Cuánto de ESTE producto lleva ya el pedido (sumando
+                      // sus líneas, que con variantes pueden ser varias).
+                      const enPedido = orderItems
+                        .filter((i) => i.producto_id === p.id)
+                        .reduce((s, i) => s + i.cantidad, 0);
+                      return (
+                        <button
+                          key={p.id}
+                          type="button"
+                          onClick={() => agregarProductoAlPedido(p)}
+                          title={`${p.nombre} — disponible ${disp} ${p.unidad}`}
+                          className={`neo-btn bg-white hover:bg-neutral-50 relative flex flex-col items-center gap-0.5 px-2 py-1.5 ${disp <= 0 ? 'opacity-50' : ''}`}
+                        >
+                          <ProductSprite sprite={p.sprite} size={30} />
+                          <span className="font-mono text-[9px] font-bold uppercase max-w-[74px] truncate">{p.nombre}</span>
+                          <span className="font-mono text-[9px] text-neutral-500">{disp} {p.unidad}</span>
+                          {enPedido > 0 && (
+                            <span className="absolute -top-2 -right-2 bg-brand-blue text-white font-mono text-[9px] font-bold border-2 border-black px-1 leading-tight">
+                              {enPedido}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
                 </div>
 
-                <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1">
-                  {orderItems.map((item, idx) => {
-                    const activeProd = products.find(p => p.id === item.producto_id);
-                    const maxAvailable = activeProd ? (productStocks[activeProd.id] ?? 0) : 0;
-                    const isExceeded = item.cantidad > maxAvailable;
-                    const precioCatalogo = activeProd?.precio_venta ?? 0;
-                    const precioEfectivo = item.precio_excepcional ?? precioCatalogo;
-                    const esExcepcional = item.precio_excepcional !== null;
-                    const costo = activeProd?.precio_costo ?? null;
-                    const margenUnitario = costo !== null ? precioEfectivo - costo : null;
-                    const margenPorcentaje = margenUnitario !== null && precioEfectivo > 0 ? (margenUnitario / precioEfectivo) * 100 : null;
+                {orderItems.length === 0 ? (
+                  <p className="font-mono text-[11px] text-neutral-500 text-center py-3 border border-dashed border-black/25">
+                    El pedido está vacío — toca un producto de arriba.
+                  </p>
+                ) : (
+                  <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
+                    {orderItems.map((item) => {
+                      const activeProd = products.find((p) => p.id === item.producto_id);
+                      const maxAvailable = activeProd ? (productStocks[activeProd.id] ?? 0) : 0;
+                      const isExceeded = item.cantidad > maxAvailable;
+                      const precioCatalogo = activeProd?.precio_venta ?? 0;
+                      const precioEfectivo = item.precio_excepcional ?? precioCatalogo;
+                      const esExcepcional = item.precio_excepcional !== null;
+                      const costo = activeProd?.precio_costo ?? null;
+                      const margenUnitario = costo !== null ? precioEfectivo - costo : null;
+                      const margenPorcentaje = margenUnitario !== null && precioEfectivo > 0 ? (margenUnitario / precioEfectivo) * 100 : null;
+                      const subtotal = precioEfectivo * item.cantidad;
+                      const expandido = itemsExpandidos.has(item.uid);
 
-                    return (
-                      <div key={idx} className="border border-black/10 bg-neutral-50/60 p-2 flex flex-col gap-1.5">
-                        <div className="flex gap-2 items-center">
-                          <select
-                            value={item.producto_id}
-                            onChange={(e) => {
-                              const updated = [...orderItems];
-                              const target = updated[idx];
-                              if (target) {
-                                target.producto_id = e.target.value;
-                                target.variante_id = null; // nuevo producto → hay que elegir variante de nuevo si aplica
-                                target.precio_excepcional = null; // nuevo producto → vuelve al precio de catálogo
-                                setOrderItems(updated);
-                                const nuevoProd = products.find((p) => p.id === e.target.value);
-                                if (nuevoProd?.tiene_variantes) void cargarVariantesParaItem(nuevoProd.id);
-                              }
-                            }}
-                            className="neo-input flex-1 py-1.5"
-                          >
-                            <option value="">Seleccionar producto…</option>
-                            {products.map((p) => (
-                              <option key={p.id} value={p.id}>{p.nombre} (Dispo: {productStocks[p.id] ?? 0})</option>
-                            ))}
-                          </select>
+                      return (
+                        <div key={item.uid} className="border border-black/10 bg-neutral-50/60 p-1.5 flex flex-col gap-1">
+                          <div className="flex gap-1.5 items-center">
+                            <ProductSprite sprite={activeProd?.sprite ?? null} size={26} className="shrink-0" />
 
-                          <div className="w-20 flex flex-col">
-                            <input
-                              type="number"
-                              min="1"
-                              value={item.cantidad}
-                              onChange={(e) => {
-                                const updated = [...orderItems];
-                                const target = updated[idx];
-                                if (target) {
-                                  target.cantidad = parseInt(e.target.value) || 1;
-                                  setOrderItems(updated);
-                                }
-                              }}
-                              className={`neo-input py-1.5 text-center font-mono ${isExceeded ? 'border-brand-red text-brand-red bg-red-50' : ''}`}
-                            />
-                          </div>
+                            <div className="min-w-0 flex-1">
+                              <div className="font-bold truncate">{activeProd?.nombre ?? '—'}</div>
+                              <div className="font-mono text-[10px] text-neutral-500">
+                                {esExcepcional && <span className="text-brand-blue font-bold">★ </span>}
+                                ${precioEfectivo.toLocaleString('es-CO')} / {activeProd?.unidad ?? 'unidad'}
+                              </div>
+                            </div>
 
-                          <button
-                            type="button"
-                            onClick={() => {
-                              const updated = orderItems.filter((_, i) => i !== idx);
-                              setOrderItems(updated.length === 0 ? [{ producto_id: '', variante_id: null, cantidad: 1, precio_excepcional: null }] : updated);
-                            }}
-                            className="font-mono font-bold text-base hover:text-brand-red px-2"
-                          >
-                            ×
-                          </button>
-                        </div>
+                            <div className="flex items-center shrink-0">
+                              <button
+                                type="button"
+                                onClick={() => cambiarCantidadItem(item.uid, -1)}
+                                className="neo-btn px-1.5 py-1 font-mono font-bold"
+                                aria-label={`Quitar una ${activeProd?.unidad ?? 'unidad'}`}
+                              >
+                                −
+                              </button>
+                              <input
+                                // `step="any"` + parseFloat: la cantidad es
+                                // NUMERIC(12,2) en la base, así que media libra
+                                // de queso es una venta válida. Antes esto era
+                                // `parseInt` con `min="1"` y la volvía imposible.
+                                type="number"
+                                step="any"
+                                min="0.01"
+                                value={item.cantidad}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value);
+                                  setOrderItems((prev) =>
+                                    prev.map((i) =>
+                                      i.uid === item.uid
+                                        ? { ...i, cantidad: Number.isFinite(v) && v > 0 ? redondearCantidad(v) : i.cantidad }
+                                        : i,
+                                    ),
+                                  );
+                                }}
+                                className={`neo-input w-16 py-1 px-1 text-center font-mono text-[11px] ${isExceeded ? 'border-brand-red text-brand-red bg-red-50' : ''}`}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => cambiarCantidadItem(item.uid, 1)}
+                                className="neo-btn px-1.5 py-1 font-mono font-bold"
+                                aria-label={`Agregar una ${activeProd?.unidad ?? 'unidad'}`}
+                              >
+                                +
+                              </button>
+                            </div>
 
-                        {/* Selector de variante — solo si el producto elegido tiene talla/color/etc. */}
-                        {activeProd?.tiene_variantes && (
-                          <div className="pl-0.5">
-                            <select
-                              value={item.variante_id ?? ''}
-                              onChange={(e) => {
-                                const updated = [...orderItems];
-                                const target = updated[idx];
-                                if (target) {
-                                  target.variante_id = e.target.value || null;
-                                  setOrderItems(updated);
-                                }
-                              }}
-                              className={`neo-input w-full py-1.5 text-[11px] ${!item.variante_id ? 'border-brand-red' : ''}`}
-                            >
-                              <option value="">— Elige talla/color/etc. —</option>
-                              {(variantesPorItem[activeProd.id] ?? []).map((v) => (
-                                <option key={v.id} value={v.id}>
-                                  {Object.entries(v.valores).map(([k, val]) => `${k}: ${val}`).join(' · ')} (Dispo: {v.stockDisponible})
-                                </option>
-                              ))}
-                            </select>
-                            {!variantesPorItem[activeProd.id] && (
-                              <span className="text-[11px] font-mono text-neutral-600">Cargando variantes…</span>
-                            )}
-                          </div>
-                        )}
-
-                        {/* Precio excepcional + margen — permite cobrar distinto al precio de
-                            catálogo (p.ej. un descuento puntual) y ver de inmediato cuánto
-                            margen queda con ese precio, comparado contra el costo del producto. */}
-                        <div className="flex gap-2 items-center pl-0.5">
-                          <label className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-neutral-600 whitespace-nowrap">
-                            <input
-                              type="checkbox"
-                              checked={esExcepcional}
-                              onChange={(e) => {
-                                const updated = [...orderItems];
-                                const target = updated[idx];
-                                if (target) {
-                                  target.precio_excepcional = e.target.checked ? precioCatalogo : null;
-                                  setOrderItems(updated);
-                                }
-                              }}
-                            />
-                            PRECIO EXCEPCIONAL
-                          </label>
-
-                          <div className="w-28 flex flex-col">
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              disabled={!esExcepcional}
-                              // OJO: cuando NO está marcado "precio excepcional" el campo
-                              // queda VACÍO — no se precarga el precio de catálogo. Así
-                              // queda claro que no se está fijando ningún valor a mano;
-                              // el catálogo sigue siendo la fuente de verdad por defecto.
-                              placeholder={esExcepcional ? undefined : `Catálogo: $${precioCatalogo.toLocaleString('es-CO')}`}
-                              value={esExcepcional ? (item.precio_excepcional ?? '') : ''}
-                              onChange={(e) => {
-                                const updated = [...orderItems];
-                                const target = updated[idx];
-                                if (target) {
-                                  target.precio_excepcional = e.target.value === '' ? null : parseFloat(e.target.value) || 0;
-                                  setOrderItems(updated);
-                                }
-                              }}
-                              className={`neo-input py-1 px-1.5 text-right font-mono text-[11px] ${esExcepcional ? 'border-brand-blue' : 'opacity-50 cursor-not-allowed placeholder:text-[11px]'}`}
-                            />
-                          </div>
-
-                          <span className="text-[11px] font-mono text-neutral-600">
-                            (catálogo: ${precioCatalogo.toLocaleString('es-CO')})
-                          </span>
-
-                          {margenUnitario !== null ? (
-                            <span className={`ml-auto text-[11px] font-mono font-bold ${margenUnitario < 0 ? 'text-brand-red' : 'text-emerald-700'}`}>
-                              Margen: ${margenUnitario.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                              {margenPorcentaje !== null && ` (${margenPorcentaje.toFixed(1)}%)`}
+                            <span className="font-mono font-bold text-[11px] w-[74px] text-right shrink-0">
+                              ${subtotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                             </span>
-                          ) : (
-                            <span className="ml-auto text-[11px] font-mono text-neutral-600">Sin costo cargado — no se puede calcular margen</span>
+
+                            <button
+                              type="button"
+                              aria-expanded={expandido}
+                              title="Precio excepcional y margen"
+                              onClick={() =>
+                                setItemsExpandidos((prev) => {
+                                  const copia = new Set(prev);
+                                  if (copia.has(item.uid)) copia.delete(item.uid);
+                                  else copia.add(item.uid);
+                                  return copia;
+                                })
+                              }
+                              className={`neo-btn px-1.5 py-1 font-mono text-[11px] font-bold shrink-0 ${expandido ? 'bg-brand-blue text-white' : ''}`}
+                            >
+                              ⋯
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => quitarItemDelPedido(item.uid)}
+                              className="font-mono font-bold text-base hover:text-brand-red px-1 shrink-0"
+                              aria-label={`Quitar ${activeProd?.nombre ?? 'ítem'} del pedido`}
+                            >
+                              ×
+                            </button>
+                          </div>
+
+                          {isExceeded && (
+                            <p className="font-mono text-[10px] text-brand-red pl-0.5">
+                              Supera lo disponible ({maxAvailable} {activeProd?.unidad ?? 'unidad'}) — se permite igual, el stock queda en negativo.
+                            </p>
+                          )}
+
+                          {/* Selector de variante — solo si el producto elegido tiene talla/color/etc. */}
+                          {activeProd?.tiene_variantes && (
+                            <div className="pl-0.5">
+                              <select
+                                value={item.variante_id ?? ''}
+                                onChange={(e) => {
+                                  setOrderItems((prev) =>
+                                    prev.map((i) => (i.uid === item.uid ? { ...i, variante_id: e.target.value || null } : i)),
+                                  );
+                                }}
+                                className={`neo-input w-full py-1.5 text-[11px] ${!item.variante_id ? 'border-brand-red' : ''}`}
+                              >
+                                <option value="">— Elige talla/color/etc. —</option>
+                                {(variantesPorItem[activeProd.id] ?? []).map((v) => (
+                                  <option key={v.id} value={v.id}>
+                                    {Object.entries(v.valores).map(([k, val]) => `${k}: ${val}`).join(' · ')} (Dispo: {v.stockDisponible})
+                                  </option>
+                                ))}
+                              </select>
+                              {!variantesPorItem[activeProd.id] && (
+                                <span className="text-[11px] font-mono text-neutral-600">Cargando variantes…</span>
+                              )}
+                            </div>
+                          )}
+
+                          {/* Precio excepcional + margen. Plegado por defecto: es
+                              justamente lo excepcional, y ocupaba la mitad del alto
+                              de cada línea en el caso normal. */}
+                          {expandido && (
+                            <div className="flex flex-wrap gap-2 items-center pl-0.5 border-t border-black/10 pt-1.5">
+                              <label className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-neutral-600 whitespace-nowrap">
+                                <input
+                                  type="checkbox"
+                                  checked={esExcepcional}
+                                  onChange={(e) => {
+                                    const marcado = e.target.checked;
+                                    setOrderItems((prev) =>
+                                      prev.map((i) => (i.uid === item.uid ? { ...i, precio_excepcional: marcado ? precioCatalogo : null } : i)),
+                                    );
+                                  }}
+                                />
+                                PRECIO EXCEPCIONAL
+                              </label>
+
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                disabled={!esExcepcional}
+                                // OJO: cuando NO está marcado "precio excepcional" el campo
+                                // queda VACÍO — no se precarga el precio de catálogo. Así
+                                // queda claro que no se está fijando ningún valor a mano;
+                                // el catálogo sigue siendo la fuente de verdad por defecto.
+                                placeholder={esExcepcional ? undefined : `Catálogo: $${precioCatalogo.toLocaleString('es-CO')}`}
+                                value={esExcepcional ? (item.precio_excepcional ?? '') : ''}
+                                onChange={(e) => {
+                                  const valor = e.target.value === '' ? null : parseFloat(e.target.value) || 0;
+                                  setOrderItems((prev) =>
+                                    prev.map((i) => (i.uid === item.uid ? { ...i, precio_excepcional: valor } : i)),
+                                  );
+                                }}
+                                className={`neo-input w-28 py-1 px-1.5 text-right font-mono text-[11px] ${esExcepcional ? 'border-brand-blue' : 'opacity-50 cursor-not-allowed placeholder:text-[11px]'}`}
+                              />
+
+                              {margenUnitario !== null ? (
+                                <span className={`ml-auto text-[11px] font-mono font-bold ${margenUnitario < 0 ? 'text-brand-red' : 'text-emerald-700'}`}>
+                                  Margen: ${margenUnitario.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                                  {margenPorcentaje !== null && ` (${margenPorcentaje.toFixed(1)}%)`}
+                                </span>
+                              ) : (
+                                <span className="ml-auto text-[11px] font-mono text-neutral-600">Sin costo cargado — no se puede calcular margen</span>
+                              )}
+                            </div>
                           )}
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
 
               {/* Cargo dinámico de Envío — un ítem que NO está en el catálogo,
@@ -8931,6 +9264,16 @@ export default function AppHome() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">CÓMO SE VENDE</label>
+                  <UnidadSelect valor={editProductForm.unidad} onChange={(unidad) => setEditProductForm({ ...editProductForm, unidad })} />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">ILUSTRACIÓN</label>
+                  <SpritePicker valor={editProductForm.sprite} onChange={(sprite) => setEditProductForm({ ...editProductForm, sprite })} />
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
                   <label className="font-mono font-bold">PRECIO COSTO (COP)</label>
                   <input type="number" required value={editProductForm.precio_costo} onChange={(e) => setEditProductForm({ ...editProductForm, precio_costo: e.target.value })} className="neo-input font-mono" />
                 </div>
@@ -8940,8 +9283,8 @@ export default function AppHome() {
                 </div>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="font-mono font-bold">STOCK MÍNIMO ALERTA</label>
-                <input type="number" required value={editProductForm.stock_minimo} onChange={(e) => setEditProductForm({ ...editProductForm, stock_minimo: e.target.value })} className="neo-input font-mono" />
+                <label className="font-mono font-bold">STOCK MÍNIMO ({editProductForm.unidad || '—'})</label>
+                <input type="number" required step="any" min="0" value={editProductForm.stock_minimo} onChange={(e) => setEditProductForm({ ...editProductForm, stock_minimo: e.target.value })} className="neo-input font-mono" />
               </div>
               <label className="flex items-center justify-between gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50">
                 <span className="font-mono font-bold">Este producto tiene variantes</span>

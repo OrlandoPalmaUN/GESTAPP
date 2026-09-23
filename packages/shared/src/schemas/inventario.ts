@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { TIPOS_MOVIMIENTO } from '../types/inventario.js'
+import { SPRITES_PRODUCTO, TIPOS_MOVIMIENTO } from '../types/inventario.js'
 
 export const tipoMovimientoSchema = z.enum(TIPOS_MOVIMIENTO)
 
@@ -19,8 +19,12 @@ export const crearProductoSchema = z.object({
   categoriaId: z.uuid().nullable().optional(),
   precioCosto: z.number().nonnegative().nullable().optional(),
   precioVenta: z.number().nonnegative().nullable().optional(),
-  unidad: z.string().min(1).default('unidad'),
+  unidad: z.string().trim().min(1).default('unidad'),
   stockMinimo: z.number().nonnegative().default(0),
+  /** Ilustración del producto — clave de `SPRITES_PRODUCTO`. NULL = caja genérica. */
+  sprite: z.enum(SPRITES_PRODUCTO).nullable().optional(),
+  /** Unidades por pieza dibujada en la Vitrina. Entero > 0; NULL = 1. */
+  spriteEscala: z.number().int().positive().nullable().optional(),
   /** Stock con el que arranca el producto — genera un `ajuste_positivo` inicial si es > 0. Ignorado si `tieneVariantes`: el stock se carga por variante. */
   stockInicial: z.number().nonnegative().default(0),
   /** Opt-in: si es true, el stock y el precio se gestionan por variante (ver crearVarianteProductoSchema), no a nivel de producto. */

@@ -4,6 +4,7 @@ import {
   actualizarVarianteProductoSchema,
   calcularStockDisponible,
   MOVIMIENTOS_DE_ENTRADA,
+  SPRITES_PRODUCTO,
   crearCategoriaSchema,
   crearMovimientoSchema,
   crearProductoSchema,
@@ -14,6 +15,7 @@ import {
   type MovimientoInventario,
   type Producto,
   type ProductoAtributo,
+  type SpriteProducto,
   type VarianteProducto,
 } from '@antigravity/shared'
 
@@ -33,6 +35,8 @@ interface FilaProducto {
   activo: boolean
   created_at: Date
   tiene_variantes: boolean
+  sprite: string | null
+  sprite_escala: number | null
 }
 
 interface FilaMovimiento {
@@ -101,7 +105,17 @@ function aProducto(row: FilaProducto, stockDisponible: number): Producto {
     createdAt: row.created_at.toISOString(),
     stockDisponible,
     tieneVariantes: row.tiene_variantes,
+    // La columna es TEXT libre en la base; el enum vive en el schema de
+    // entrada. Si una fila vieja (o escrita a mano) trae una clave que el
+    // catálogo ya no reconoce, la tratamos como "sin sprite" en vez de
+    // mandarle al front una clave que no sabe dibujar.
+    sprite: esSpriteConocido(row.sprite) ? row.sprite : null,
+    spriteEscala: row.sprite_escala,
   }
+}
+
+function esSpriteConocido(valor: string | null): valor is SpriteProducto {
+  return valor !== null && (SPRITES_PRODUCTO as readonly string[]).includes(valor)
 }
 
 function aAtributo(row: FilaAtributo): ProductoAtributo {
@@ -271,7 +285,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
 
     const [productosRes, movimientosRes] = await Promise.all([
       request.tenantDb.query<FilaProducto>(
-        'SELECT id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes FROM productos WHERE deleted_at IS NULL ORDER BY created_at DESC',
+        'SELECT id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, sprite, sprite_escala FROM productos WHERE deleted_at IS NULL ORDER BY created_at DESC',
       ),
       request.tenantDb.query<{ producto_id: string; tipo: string; cantidad: string }>(
         'SELECT producto_id, tipo, cantidad FROM movimientos_inventario',
@@ -332,9 +346,9 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
       sku = body.data.sku ?? (await generarSku(client))
 
       const insertProd = await client.query<FilaProducto>(
-        `INSERT INTO productos (sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, tiene_variantes)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes`,
+        `INSERT INTO productos (sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, tiene_variantes, sprite, sprite_escala)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, sprite, sprite_escala`,
         [
           sku,
           body.data.nombre,
@@ -345,6 +359,8 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
           body.data.unidad,
           body.data.stockMinimo,
           body.data.tieneVariantes,
+          body.data.sprite ?? null,
+          body.data.spriteEscala ?? null,
         ],
       )
       const producto = insertProd.rows[0]!
@@ -390,6 +406,8 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
       stock_minimo: body.data.stockMinimo,
       activo: body.data.activo,
       tiene_variantes: body.data.tieneVariantes,
+      sprite: body.data.sprite,
+      sprite_escala: body.data.spriteEscala,
     }
     const entradas = Object.entries(campos).filter(([, v]) => v !== undefined)
     const sets = entradas.map(([col], idx) => `${col} = $${idx + 2}`).join(', ')
@@ -397,7 +415,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
 
     const { rows, rowCount } = await request.tenantDb.query<FilaProducto>(
       `UPDATE productos SET ${sets} WHERE id = $1 AND deleted_at IS NULL
-       RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes`,
+       RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, sprite, sprite_escala`,
       [request.params.id, ...valores],
     )
     if (rowCount === 0) return reply.notFound('Producto no encontrado.')

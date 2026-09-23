@@ -1,4 +1,4 @@
-import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, ProductoAtributo, Proveedor, ResumenFinanciero, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario, VarianteProducto } from '@antigravity/shared'
+import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, ProductoAtributo, Proveedor, ResumenFinanciero, SpriteProducto, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario, VarianteProducto } from '@antigravity/shared'
 
 export type { ProductoAtributo, VarianteProducto }
 
@@ -272,6 +272,8 @@ export const api = {
     stockMinimo?: number
     stockInicial?: number
     tieneVariantes?: boolean
+    sprite?: SpriteProducto | null
+    spriteEscala?: number | null
   }) =>
     request<{ producto: Producto }>('/inventario/productos', {
       method: 'POST',
@@ -291,6 +293,8 @@ export const api = {
       stockMinimo: number
       activo: boolean
       tieneVariantes: boolean
+      sprite: SpriteProducto | null
+      spriteEscala: number | null
     }>,
   ) =>
     request<{ producto: Producto }>(`/inventario/productos/${id}`, {

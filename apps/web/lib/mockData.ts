@@ -11,6 +11,8 @@
  * `packages/shared` junto a los del backend, para que una sola definición
  * gobierne API y web.
  */
+import type { SpriteProducto } from '@antigravity/shared';
+
 export interface Category {
   id: string;
   nombre: string;
@@ -28,6 +30,12 @@ export interface Product {
   stock_minimo: number;
   stock_inicial: number;
   tiene_variantes: boolean;
+  /** Cómo se vende: unidad, libra, canasta… (ver `UNIDADES_COMUNES` en shared). */
+  unidad: string;
+  /** Clave del catálogo de ilustraciones. null = caja genérica. */
+  sprite: SpriteProducto | null;
+  /** Unidades que representa cada pieza dibujada en la Vitrina. null = 1. */
+  sprite_escala: number | null;
 }
 
 export interface InventoryMovement {
