@@ -8633,10 +8633,10 @@ export default function AppHome() {
                       return (
                         <div key={item.uid} className="border border-black/10 bg-neutral-50/60 p-1.5 flex flex-col gap-1">
                           {tema8bit ? (
-                            <div className="flex gap-1.5 items-center">
+                            <div className="flex flex-wrap gap-1.5 items-center">
                               <ProductSprite sprite={activeProd?.sprite ?? null} size={26} className="shrink-0" />
 
-                              <div className="min-w-0 flex-1">
+                              <div className="min-w-0 flex-1 basis-[60%]">
                                 <div className="font-bold truncate">{activeProd?.nombre ?? '—'}</div>
                                 <div className="font-mono text-[10px] text-neutral-500">
                                   {esExcepcional && <span className="text-brand-blue font-bold">★ </span>}
@@ -8644,7 +8644,11 @@ export default function AppHome() {
                                 </div>
                               </div>
 
-                              <div className="flex items-center shrink-0">
+                              {/* Controles en su propio bloque: en angosto
+                                  bajan a una segunda línea completa en vez de
+                                  apretar el nombre del producto. */}
+                              <div className="flex items-center gap-1.5 w-full sm:w-auto sm:shrink-0">
+                                <div className="flex items-center">
                                 <button
                                   type="button"
                                   onClick={() => cambiarCantidadItem(item.uid, -1)}
@@ -8662,9 +8666,9 @@ export default function AppHome() {
                                 >
                                   +
                                 </button>
-                              </div>
+                                </div>
 
-                              <span className="font-mono font-bold text-[11px] w-[74px] text-right shrink-0">
+                              <span className="font-mono font-bold text-[11px] flex-1 sm:flex-initial sm:w-[74px] text-right">
                                 ${subtotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
                               </span>
 
@@ -8693,9 +8697,10 @@ export default function AppHome() {
                               >
                                 ×
                               </button>
+                              </div>
                             </div>
                           ) : (
-                            <div className="flex gap-2 items-center">
+                            <div className="flex flex-wrap gap-2 items-center">
                               <Combobox
                                 value={item.producto_id}
                                 onChange={(productoId) => {
@@ -8714,23 +8719,28 @@ export default function AppHome() {
                                 emptyOptionLabel="Seleccionar producto…"
                                 placeholder="Buscar producto por nombre o SKU…"
                                 options={products.map((p) => ({ value: p.id, label: p.nombre, sublabel: `Dispo ${productStocks[p.id] ?? 0} ${p.unidad} · ${p.sku}` }))}
-                                className="flex-1"
+                                className="w-full sm:flex-1 sm:w-auto"
                               />
 
-                              {inputCantidad}
+                              {/* Cantidad, subtotal y borrar viajan juntos: en
+                                  pantalla angosta bajan a su propia línea en vez
+                                  de estrangular al selector de producto. */}
+                              <div className="flex items-center gap-2 w-full sm:w-auto">
+                                {inputCantidad}
 
-                              <span className="font-mono font-bold text-[11px] w-[74px] text-right shrink-0">
-                                ${subtotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                              </span>
+                                <span className="font-mono font-bold text-[11px] flex-1 sm:flex-initial sm:w-[74px] text-right">
+                                  ${subtotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                                </span>
 
-                              <button
-                                type="button"
-                                onClick={() => quitarItemDelPedido(item.uid)}
-                                className="font-mono font-bold text-base hover:text-brand-red px-2"
-                                aria-label={`Quitar ${activeProd?.nombre ?? 'ítem'} del pedido`}
-                              >
-                                ×
-                              </button>
+                                <button
+                                  type="button"
+                                  onClick={() => quitarItemDelPedido(item.uid)}
+                                  className="font-mono font-bold text-base hover:text-brand-red px-2 shrink-0"
+                                  aria-label={`Quitar ${activeProd?.nombre ?? 'ítem'} del pedido`}
+                                >
+                                  ×
+                                </button>
+                              </div>
                             </div>
                           )}
 
