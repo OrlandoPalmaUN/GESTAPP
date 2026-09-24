@@ -8390,7 +8390,11 @@ export default function AppHome() {
       {/* 3. Modal: Crear Pedido */}
       {showCreateOrder && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="neo-card bg-white max-w-lg w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
+          {/* Más ancho que el resto de los modales: cada línea de producto
+              lleva selector, cantidad, subtotal y borrar en la misma fila, y
+              con `max-w-lg` el selector quedaba tan angosto que no cabía el
+              nombre del producto. */}
+          <div className="neo-card bg-white max-w-2xl w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR NUEVO PEDIDO</h3>
               <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', email: '', telefono: '' }); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
@@ -8539,7 +8543,7 @@ export default function AppHome() {
                           options={products.map((p) => ({
                             value: p.id,
                             label: p.nombre,
-                            sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0} ${p.unidad}`,
+                            sublabel: `Dispo ${productStocks[p.id] ?? 0} ${p.unidad} · ${p.sku}`,
                           }))}
                         />
                       </div>
@@ -8709,7 +8713,7 @@ export default function AppHome() {
                                 }}
                                 emptyOptionLabel="Seleccionar producto…"
                                 placeholder="Buscar producto por nombre o SKU…"
-                                options={products.map((p) => ({ value: p.id, label: p.nombre, sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0} ${p.unidad}` }))}
+                                options={products.map((p) => ({ value: p.id, label: p.nombre, sublabel: `Dispo ${productStocks[p.id] ?? 0} ${p.unidad} · ${p.sku}` }))}
                                 className="flex-1"
                               />
 

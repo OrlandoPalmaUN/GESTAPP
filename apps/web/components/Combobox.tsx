@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Search, ChevronDown } from 'lucide-react';
 
 export interface ComboboxOption {
@@ -64,6 +64,48 @@ export function Combobox({
 
   const visibles = filtradas.slice(0, MAX_VISIBLE);
 
+  /**
+   * Posición del desplegable en coordenadas de viewport.
+   *
+   * Iba `absolute` dentro del contenedor, y eso lo recortaba: en Crear Pedido
+   * el selector vive dentro de un modal con `overflow-y-auto`, así que la
+   * lista se cortaba al borde del modal y quedaba una sola opción a medias.
+   * Con `fixed` la lista escapa de cualquier ancestro que recorte, y el alto
+   * se limita a lo que de verdad queda en pantalla.
+   */
+  const [pos, setPos] = useState<{ left: number; width: number; top?: number; bottom?: number; maxHeight: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!open) { setPos(null); return; }
+
+    const calcular = () => {
+      const el = contenedorRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const MARGEN = 12;
+      const espacioAbajo = window.innerHeight - r.bottom - MARGEN;
+      const espacioArriba = r.top - MARGEN;
+      // Solo abrimos hacia arriba si abajo no entra una lista mínima usable y
+      // arriba hay más lugar — si no, preferimos abajo, que es lo esperable.
+      const haciaArriba = espacioAbajo < 140 && espacioArriba > espacioAbajo;
+      setPos(
+        haciaArriba
+          ? { left: r.left, width: r.width, bottom: window.innerHeight - r.top + 4, maxHeight: Math.max(120, espacioArriba) }
+          : { left: r.left, width: r.width, top: r.bottom + 4, maxHeight: Math.max(120, espacioAbajo) },
+      );
+    };
+
+    calcular();
+    // `true` para capturar el scroll de contenedores internos (el modal),
+    // no solo el de la ventana.
+    window.addEventListener('scroll', calcular, true);
+    window.addEventListener('resize', calcular);
+    return () => {
+      window.removeEventListener('scroll', calcular, true);
+      window.removeEventListener('resize', calcular);
+    };
+  }, [open]);
+
   // Cerrar al hacer clic afuera — mismo patrón que BuscadorGlobal.
   useEffect(() => {
     function onClickFuera(e: MouseEvent) {
@@ -117,8 +159,12 @@ export function Combobox({
         <ChevronDown size={14} className={`absolute right-2.5 top-1/2 -translate-y-1/2 text-neutral-400 pointer-events-none transition-transform ${open ? 'rotate-180' : ''}`} />
       </div>
 
-      {open && !disabled && (
-        <div className="absolute z-20 mt-1 w-full max-h-64 overflow-y-auto border-2 border-black bg-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]">
+      {open && !disabled && pos && (
+        <div
+          style={{ position: 'fixed', left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, maxHeight: pos.maxHeight }}
+          // z-[60] para quedar por encima de los modales, que son z-50.
+          className="z-[60] overflow-y-auto border-2 border-black bg-white shadow-[3px_3px_0px_0px_rgba(0,0,0,1)]"
+        >
           {visibles.length === 0 && (
             <p className="px-3 py-3 text-[11px] font-mono text-neutral-500 italic text-center">Sin resultados.</p>
           )}
@@ -129,18 +175,22 @@ export function Combobox({
               disabled={opt.disabled}
               onClick={() => elegir(opt)}
               onMouseEnter={() => setHighlighted(i)}
-              className={`w-full text-left px-3 py-2 text-xs border-b border-neutral-100 last:border-0 flex items-center justify-between gap-2 ${
+              className={`w-full text-left px-3 py-2 text-xs border-b border-neutral-100 last:border-0 block ${
                 opt.disabled ? 'opacity-40 cursor-not-allowed'
                   : i === highlighted ? 'bg-brand-blue text-white' : 'hover:bg-neutral-50'
               } ${opt.value === value ? 'font-bold' : ''}`}
             >
-              {/* min-w-0 es necesario para que `truncate` funcione dentro de un
-                  flex item — sin esto el span nunca se encoge por debajo del
-                  ancho de su contenido, así que en mobile el nombre largo no
-                  se recorta y queda tapando el SKU/código de al lado. */}
-              <span className="min-w-0 flex-1 truncate">{opt.label}</span>
+              {/* Nombre arriba, metadatos (SKU, disponible, NIT) debajo.
+                  Antes iban en dos columnas con el sublabel en `shrink-0`: en
+                  un contenedor angosto —el selector de producto de Crear
+                  Pedido comparte fila con cantidad, subtotal y borrar— el SKU
+                  se quedaba con todo el ancho y el nombre se recortaba hasta
+                  desaparecer. Quedaba una lista de seriales sin nombre, que es
+                  exactamente lo contrario de lo que se necesita para elegir.
+                  Apilados, el nombre se lee a cualquier ancho. */}
+              <span className="block truncate">{opt.label}</span>
               {opt.sublabel && (
-                <span className={`shrink-0 font-mono text-[11px] ${i === highlighted ? 'text-white/80' : 'text-neutral-500'}`}>{opt.sublabel}</span>
+                <span className={`block truncate font-mono text-[10px] ${i === highlighted ? 'text-white/80' : 'text-neutral-500'}`}>{opt.sublabel}</span>
               )}
             </button>
           ))}
