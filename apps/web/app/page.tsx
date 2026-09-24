@@ -156,7 +156,7 @@ const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
  *  esas filas viven en `pedidos_proveedor`, no en `gastos_operativos`. */
 const TIPO_COMPRA_INVENTARIO = '__compra_inventario__';
 
-import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type ResultadoBusqueda, type VarianteProducto } from '../lib/api';
+import { api, ApiError, type ConfigEmpresa, type EntradaAuditoria, type ProductoAtributo, type ResultadoBusqueda, type VarianteProducto } from '../lib/api';
 import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
 import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
@@ -216,6 +216,21 @@ const PLANTILLAS_PRODUCTO: { nombre: string; unidad: string; sprite: SpriteProdu
  * eso terminaría viajando al servidor.
  */
 const redondearCantidad = (n: number): number => Number(n.toFixed(2));
+
+/**
+ * Línea nueva de pedido. El `uid` es local y estable: sirve de `key` de React
+ * (borrar la línea 1 de 3 con índices remontaba las siguientes) y de
+ * identificador para actualizarla sin depender de su posición.
+ */
+function nuevoItemDePedido(productoId = ''): {
+  uid: string;
+  producto_id: string;
+  variante_id: string | null;
+  cantidad: number;
+  precio_excepcional: number | null;
+} {
+  return { uid: crypto.randomUUID(), producto_id: productoId, variante_id: null, cantidad: 1, precio_excepcional: null };
+}
 
 /**
  * Campo de unidad de medida. Ofrece las comunes en un desplegable y deja
@@ -1327,11 +1342,27 @@ export default function AppHome() {
 
   // Configuración visual de la empresa: nombre a mostrar y slogan en el
   // header (en vez de "EMPRESA: nombre (slug)"). Editable desde Suscripción/Configuración.
-  const [configEmpresa, setConfigEmpresa] = useState<{ nombreDisplay: string | null; slogan: string | null } | null>(null);
+  const [configEmpresa, setConfigEmpresa] = useState<ConfigEmpresa | null>(null);
   const [nombreDisplayInput, setNombreDisplayInput] = useState('');
   const [sloganInput, setSloganInput] = useState('');
   const [guardandoConfigEmpresa, setGuardandoConfigEmpresa] = useState(false);
   const [configEmpresaError, setConfigEmpresaError] = useState<string | null>(null);
+
+  /**
+   * ¿Esta empresa usa la interfaz 8-bit (ilustraciones, Vitrina, alta rápida
+   * con plantillas)? Ver migración 025.
+   *
+   * Arranca en `false` mientras `config_empresa` viaja: el default seguro es
+   * NO mostrar nada nuevo. Si fuera al revés, cualquier empresa vería un
+   * parpadeo de plantillas de lácteos antes de que llegue su configuración.
+   */
+  const tema8bit = configEmpresa?.tema === '8bit';
+  /**
+   * El alta rápida (plantillas + campos plegados) solo existe con tema 8-bit.
+   * Sin él, `modoAltaRapida` queda inerte y el formulario de producto es el
+   * completo de siempre — categoría, descripción y variantes visibles.
+   */
+  const altaRapidaActiva = tema8bit && modoAltaRapida;
   /**
    * `admin` del tenant (o superadmin). El backend ya rechaza con 403 lo
    * sensible —borrar facturas/cuentas, papelera, auditoría, reportes de
@@ -3428,7 +3459,7 @@ export default function AppHome() {
    */
   const agregarProductoAlPedido = (p: Product) => {
     setOrderValidationError(null);
-    const nuevo = { uid: crypto.randomUUID(), producto_id: p.id, variante_id: null, cantidad: 1, precio_excepcional: null };
+    const nuevo = nuevoItemDePedido(p.id);
 
     if (p.tiene_variantes) {
       setOrderItems((prev) => [...prev, nuevo]);
@@ -3471,10 +3502,15 @@ export default function AppHome() {
     // (ver `apps/api/.../pedidos.ts`); `orderValidationError` queda solo para
     // mostrar errores reales que el servidor devuelva.
 
-    // Con la rejilla ya no existen ítems sin producto (entran tocando uno),
-    // así que lo único que queda por validar es que el pedido no vaya vacío.
     if (orderItems.length === 0) {
       setOrderValidationError('Agrega al menos un producto al pedido.');
+      return;
+    }
+    // Con la rejilla de sprites un ítem nunca nace sin producto (entra al
+    // tocar uno), pero con el formulario clásico sí: ahí la fila se agrega
+    // vacía y el producto se elige después.
+    if (orderItems.some((item) => !item.producto_id)) {
+      setOrderValidationError('Selecciona un producto para cada ítem del pedido.');
       return;
     }
 
@@ -4510,8 +4546,10 @@ export default function AppHome() {
 
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 shrink-0 w-full sm:w-auto">
                         {/* Tabla = todos los datos; Vitrina = la existencia
-                            dibujada, para saber de un vistazo qué falta. */}
-                        <div className="flex border-2 border-black">
+                            dibujada, para saber de un vistazo qué falta.
+                            Solo con tema 8-bit: sin ilustraciones asignadas la
+                            Vitrina son cajas genéricas y no aporta nada. */}
+                        <div className={`border-2 border-black ${tema8bit ? 'flex' : 'hidden'}`}>
                           {([['tabla', 'Tabla'], ['vitrina', 'Vitrina']] as const).map(([vista, etiqueta]) => (
                             <button
                               key={vista}
@@ -4544,7 +4582,7 @@ export default function AppHome() {
 
                     </div>
 
-                    {vistaInventario === 'vitrina' && (
+                    {tema8bit && vistaInventario === 'vitrina' && (
                       <StockVitrina
                         productos={productosVisibles}
                         stockPorId={productStocks}
@@ -4555,8 +4593,8 @@ export default function AppHome() {
                     {/* Tabla de Productos. Se oculta con `hidden` en vez de
                         desmontarse para no perder el estado de las filas
                         expandidas (variantes) al alternar de vista. */}
-                    <p className={`sm:hidden text-[11px] font-mono text-neutral-600 text-center ${vistaInventario === 'vitrina' ? 'hidden' : ''}`}>← desliza para ver más →</p>
-                    <div className={`neo-card bg-white p-0 overflow-x-auto ${vistaInventario === 'vitrina' ? 'hidden' : ''}`}>
+                    <p className={`sm:hidden text-[11px] font-mono text-neutral-600 text-center ${tema8bit && vistaInventario === 'vitrina' ? 'hidden' : ''}`}>← desliza para ver más →</p>
+                    <div className={`neo-card bg-white p-0 overflow-x-auto ${tema8bit && vistaInventario === 'vitrina' ? 'hidden' : ''}`}>
                       <table className="w-full text-left border-collapse text-xs">
                         <thead>
                           <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
@@ -4675,7 +4713,7 @@ export default function AppHome() {
                                             <ChevronDown size={14} className={`transition-transform ${variantesAbiertas ? '' : '-rotate-90'}`} />
                                           </button>
                                         )}
-                                        <ProductSprite sprite={p.sprite} size={22} className="shrink-0 mt-0.5" />
+                                        {tema8bit && <ProductSprite sprite={p.sprite} size={22} className="shrink-0 mt-0.5" />}
                                         <div>
                                           <div className="flex items-center gap-1.5">
                                             <span>{p.nombre}</span>
@@ -8031,8 +8069,10 @@ export default function AppHome() {
 
             {/* Alta rápida vs. formulario completo. Rápido pide lo mínimo y
                 deja SKU, descripción y categoría en sus valores por defecto —
-                todo eso es opcional en la base y se puede completar luego. */}
-            <div className="flex gap-1.5">
+                todo eso es opcional en la base y se puede completar luego.
+                Solo con tema 8-bit: para el resto el formulario es el de
+                siempre, sin modos. */}
+            <div className={`gap-1.5 ${tema8bit ? 'flex' : 'hidden'}`}>
               {([['rapida', 'Alta rápida'], ['completa', 'Completo']] as const).map(([modo, etiqueta]) => {
                 const activo = (modo === 'rapida') === modoAltaRapida;
                 return (
@@ -8051,7 +8091,7 @@ export default function AppHome() {
             </div>
 
             <form onSubmit={handleCreateProduct} className="flex flex-col gap-3.5 text-xs">
-              {modoAltaRapida && (
+              {tema8bit && modoAltaRapida && (
                 <div className="flex flex-col gap-1.5">
                   <label className="font-mono font-bold">EMPEZAR DESDE UNA PLANTILLA</label>
                   <div className="flex flex-wrap gap-1.5">
@@ -8076,7 +8116,7 @@ export default function AppHome() {
                 </div>
               )}
 
-              <div className={`flex-col gap-1 ${modoAltaRapida ? 'hidden' : 'flex'}`}>
+              <div className={`flex-col gap-1 ${altaRapidaActiva ? 'hidden' : 'flex'}`}>
                 <label className="font-mono font-bold">CATEGORÍA</label>
                 {!showNewCategoryInput ? (
                   <select
@@ -8152,16 +8192,18 @@ export default function AppHome() {
                     onChange={(unidad) => setNewProduct({ ...newProduct, unidad })}
                   />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">ILUSTRACIÓN</label>
-                  <SpritePicker
-                    valor={newProduct.sprite}
-                    onChange={(sprite) => setNewProduct({ ...newProduct, sprite })}
-                  />
-                </div>
+                {tema8bit && (
+                  <div className="flex flex-col gap-1">
+                    <label className="font-mono font-bold">ILUSTRACIÓN</label>
+                    <SpritePicker
+                      valor={newProduct.sprite}
+                      onChange={(sprite) => setNewProduct({ ...newProduct, sprite })}
+                    />
+                  </div>
+                )}
               </div>
 
-              <div className={`flex-col gap-1 ${modoAltaRapida ? 'hidden' : 'flex'}`}>
+              <div className={`flex-col gap-1 ${altaRapidaActiva ? 'hidden' : 'flex'}`}>
                 <label className="font-mono font-bold">DESCRIPCIÓN</label>
                 <input
                   type="text"
@@ -8228,7 +8270,7 @@ export default function AppHome() {
                 </div>
               </div>
 
-              <label className={`items-start gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50 ${modoAltaRapida ? 'hidden' : 'flex'}`}>
+              <label className={`items-start gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50 ${altaRapidaActiva ? 'hidden' : 'flex'}`}>
                 <input
                   type="checkbox"
                   checked={newProduct.tiene_variantes}
@@ -8456,76 +8498,92 @@ export default function AppHome() {
                 )}
               </div>
 
-              {/* Items del pedido — se arman tocando la rejilla de abajo, no
-                  agregando filas vacías y buscando en un desplegable. */}
+              {/* Items del pedido. Con tema 8-bit se arman tocando la rejilla
+                  de ilustraciones; con el tema por defecto, con el selector de
+                  búsqueda de siempre. Lo que NO depende del tema son los
+                  arreglos: cantidades decimales y subtotal por línea. */}
               <div className="space-y-2.5">
-                <div className="font-mono font-bold">PRODUCTOS DEL PEDIDO</div>
-
-                <div className="border border-black/10 bg-neutral-50/60 p-2">
-                  <p className="font-mono text-[10px] text-neutral-500 uppercase tracking-wider mb-1.5">
-                    Toca para agregar · vuelve a tocar para sumar
-                  </p>
-
-                  {/* Buscador, para cuando la rejilla deja de alcanzar. Con pocos
-                      productos se agrega tocando el dibujo; con un catálogo grande
-                      eso obliga a barrer con la vista, y buscar por nombre o SKU es
-                      más rápido. Selecciona y agrega igual que un toque: el valor
-                      vuelve a '' para poder encadenar varios seguidos. */}
-                  {products.length > 8 && (
-                    <div className="mb-2">
-                      <Combobox
-                        value=""
-                        onChange={(productoId) => {
-                          const p = products.find((prod) => prod.id === productoId);
-                          if (p) agregarProductoAlPedido(p);
-                        }}
-                        placeholder="Buscar producto por nombre o SKU…"
-                        options={products.map((p) => ({
-                          value: p.id,
-                          label: p.nombre,
-                          sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0} ${p.unidad}`,
-                        }))}
-                      />
-                    </div>
+                <div className="font-mono font-bold flex justify-between">
+                  <span>PRODUCTOS DEL PEDIDO</span>
+                  {!tema8bit && (
+                    <button
+                      type="button"
+                      onClick={() => setOrderItems([...orderItems, nuevoItemDePedido()])}
+                      className="text-brand-blue hover:underline font-bold flex items-center gap-0.5 text-[11px]"
+                    >
+                      + Agregar Ítem
+                    </button>
                   )}
-                  <div className="flex flex-wrap gap-1.5">
-                    {products.length === 0 && (
-                      <span className="font-mono text-[11px] text-neutral-500">
-                        No hay productos en el catálogo todavía.
-                      </span>
-                    )}
-                    {products.map((p) => {
-                      const disp = productStocks[p.id] ?? 0;
-                      // Cuánto de ESTE producto lleva ya el pedido (sumando
-                      // sus líneas, que con variantes pueden ser varias).
-                      const enPedido = orderItems
-                        .filter((i) => i.producto_id === p.id)
-                        .reduce((s, i) => s + i.cantidad, 0);
-                      return (
-                        <button
-                          key={p.id}
-                          type="button"
-                          onClick={() => agregarProductoAlPedido(p)}
-                          title={`${p.nombre} — disponible ${disp} ${p.unidad}`}
-                          className={`neo-btn bg-white hover:bg-neutral-50 relative flex flex-col items-center gap-0.5 px-2 py-1.5 ${disp <= 0 ? 'opacity-50' : ''}`}
-                        >
-                          <ProductSprite sprite={p.sprite} size={30} />
-                          <span className="font-mono text-[9px] font-bold uppercase max-w-[74px] truncate">{p.nombre}</span>
-                          <span className="font-mono text-[9px] text-neutral-500">{disp} {p.unidad}</span>
-                          {enPedido > 0 && (
-                            <span className="absolute -top-2 -right-2 bg-brand-blue text-white font-mono text-[9px] font-bold border-2 border-black px-1 leading-tight">
-                              {enPedido}
-                            </span>
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
                 </div>
+
+                {tema8bit && (
+                  <div className="border border-black/10 bg-neutral-50/60 p-2">
+                    <p className="font-mono text-[10px] text-neutral-500 uppercase tracking-wider mb-1.5">
+                      Toca para agregar · vuelve a tocar para sumar
+                    </p>
+
+                    {/* Buscador, para cuando la rejilla deja de alcanzar. Con pocos
+                        productos se agrega tocando el dibujo; con un catálogo grande
+                        eso obliga a barrer con la vista, y buscar por nombre o SKU es
+                        más rápido. Selecciona y agrega igual que un toque: el valor
+                        vuelve a '' para poder encadenar varios seguidos. */}
+                    {products.length > 8 && (
+                      <div className="mb-2">
+                        <Combobox
+                          value=""
+                          onChange={(productoId) => {
+                            const p = products.find((prod) => prod.id === productoId);
+                            if (p) agregarProductoAlPedido(p);
+                          }}
+                          placeholder="Buscar producto por nombre o SKU…"
+                          options={products.map((p) => ({
+                            value: p.id,
+                            label: p.nombre,
+                            sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0} ${p.unidad}`,
+                          }))}
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-1.5">
+                      {products.length === 0 && (
+                        <span className="font-mono text-[11px] text-neutral-500">
+                          No hay productos en el catálogo todavía.
+                        </span>
+                      )}
+                      {products.map((p) => {
+                        const disp = productStocks[p.id] ?? 0;
+                        // Cuánto de ESTE producto lleva ya el pedido (sumando
+                        // sus líneas, que con variantes pueden ser varias).
+                        const enPedido = orderItems
+                          .filter((i) => i.producto_id === p.id)
+                          .reduce((s, i) => s + i.cantidad, 0);
+                        return (
+                          <button
+                            key={p.id}
+                            type="button"
+                            onClick={() => agregarProductoAlPedido(p)}
+                            title={`${p.nombre} — disponible ${disp} ${p.unidad}`}
+                            className={`neo-btn bg-white hover:bg-neutral-50 relative flex flex-col items-center gap-0.5 px-2 py-1.5 ${disp <= 0 ? 'opacity-50' : ''}`}
+                          >
+                            <ProductSprite sprite={p.sprite} size={30} />
+                            <span className="font-mono text-[9px] font-bold uppercase max-w-[74px] truncate">{p.nombre}</span>
+                            <span className="font-mono text-[9px] text-neutral-500">{disp} {p.unidad}</span>
+                            {enPedido > 0 && (
+                              <span className="absolute -top-2 -right-2 bg-brand-blue text-white font-mono text-[9px] font-bold border-2 border-black px-1 leading-tight">
+                                {enPedido}
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
 
                 {orderItems.length === 0 ? (
                   <p className="font-mono text-[11px] text-neutral-500 text-center py-3 border border-dashed border-black/25">
-                    El pedido está vacío — toca un producto de arriba.
+                    {tema8bit ? 'El pedido está vacío — toca un producto de arriba.' : 'El pedido está vacío — usa "+ Agregar Ítem".'}
                   </p>
                 ) : (
                   <div className="space-y-1.5 max-h-56 overflow-y-auto pr-1">
@@ -8540,95 +8598,143 @@ export default function AppHome() {
                       const margenUnitario = costo !== null ? precioEfectivo - costo : null;
                       const margenPorcentaje = margenUnitario !== null && precioEfectivo > 0 ? (margenUnitario / precioEfectivo) * 100 : null;
                       const subtotal = precioEfectivo * item.cantidad;
-                      const expandido = itemsExpandidos.has(item.uid);
+                      // El bloque de precio/margen se pliega solo con tema
+                      // 8-bit; en el clásico está siempre a la vista.
+                      const detalleVisible = !tema8bit || itemsExpandidos.has(item.uid);
+
+                      // El input de cantidad es el mismo en ambos temas: acepta
+                      // decimales porque el stock es NUMERIC(12,2) en la base y
+                      // media libra de queso es una venta válida. Antes era
+                      // `parseInt` con `min="1"` y la volvía imposible.
+                      const inputCantidad = (
+                        <input
+                          type="number"
+                          step="any"
+                          min="0.01"
+                          value={item.cantidad}
+                          onChange={(e) => {
+                            const v = parseFloat(e.target.value);
+                            setOrderItems((prev) =>
+                              prev.map((i) =>
+                                i.uid === item.uid
+                                  ? { ...i, cantidad: Number.isFinite(v) && v > 0 ? redondearCantidad(v) : i.cantidad }
+                                  : i,
+                              ),
+                            );
+                          }}
+                          className={`neo-input py-1 px-1 text-center font-mono text-[11px] ${tema8bit ? 'w-16' : 'w-20'} ${activeProd && isExceeded ? 'border-brand-red text-brand-red bg-red-50' : ''}`}
+                        />
+                      );
 
                       return (
                         <div key={item.uid} className="border border-black/10 bg-neutral-50/60 p-1.5 flex flex-col gap-1">
-                          <div className="flex gap-1.5 items-center">
-                            <ProductSprite sprite={activeProd?.sprite ?? null} size={26} className="shrink-0" />
+                          {tema8bit ? (
+                            <div className="flex gap-1.5 items-center">
+                              <ProductSprite sprite={activeProd?.sprite ?? null} size={26} className="shrink-0" />
 
-                            <div className="min-w-0 flex-1">
-                              <div className="font-bold truncate">{activeProd?.nombre ?? '—'}</div>
-                              <div className="font-mono text-[10px] text-neutral-500">
-                                {esExcepcional && <span className="text-brand-blue font-bold">★ </span>}
-                                ${precioEfectivo.toLocaleString('es-CO')} / {activeProd?.unidad ?? 'unidad'}
+                              <div className="min-w-0 flex-1">
+                                <div className="font-bold truncate">{activeProd?.nombre ?? '—'}</div>
+                                <div className="font-mono text-[10px] text-neutral-500">
+                                  {esExcepcional && <span className="text-brand-blue font-bold">★ </span>}
+                                  ${precioEfectivo.toLocaleString('es-CO')} / {activeProd?.unidad ?? 'unidad'}
+                                </div>
                               </div>
-                            </div>
 
-                            <div className="flex items-center shrink-0">
+                              <div className="flex items-center shrink-0">
+                                <button
+                                  type="button"
+                                  onClick={() => cambiarCantidadItem(item.uid, -1)}
+                                  className="neo-btn px-1.5 py-1 font-mono font-bold"
+                                  aria-label={`Quitar una ${activeProd?.unidad ?? 'unidad'}`}
+                                >
+                                  −
+                                </button>
+                                {inputCantidad}
+                                <button
+                                  type="button"
+                                  onClick={() => cambiarCantidadItem(item.uid, 1)}
+                                  className="neo-btn px-1.5 py-1 font-mono font-bold"
+                                  aria-label={`Agregar una ${activeProd?.unidad ?? 'unidad'}`}
+                                >
+                                  +
+                                </button>
+                              </div>
+
+                              <span className="font-mono font-bold text-[11px] w-[74px] text-right shrink-0">
+                                ${subtotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                              </span>
+
                               <button
                                 type="button"
-                                onClick={() => cambiarCantidadItem(item.uid, -1)}
-                                className="neo-btn px-1.5 py-1 font-mono font-bold"
-                                aria-label={`Quitar una ${activeProd?.unidad ?? 'unidad'}`}
+                                aria-expanded={itemsExpandidos.has(item.uid)}
+                                title="Precio excepcional y margen"
+                                onClick={() =>
+                                  setItemsExpandidos((prev) => {
+                                    const copia = new Set(prev);
+                                    if (copia.has(item.uid)) copia.delete(item.uid);
+                                    else copia.add(item.uid);
+                                    return copia;
+                                  })
+                                }
+                                className={`neo-btn px-1.5 py-1 font-mono text-[11px] font-bold shrink-0 ${itemsExpandidos.has(item.uid) ? 'bg-brand-blue text-white' : ''}`}
                               >
-                                −
+                                ⋯
                               </button>
-                              <input
-                                // `step="any"` + parseFloat: la cantidad es
-                                // NUMERIC(12,2) en la base, así que media libra
-                                // de queso es una venta válida. Antes esto era
-                                // `parseInt` con `min="1"` y la volvía imposible.
-                                type="number"
-                                step="any"
-                                min="0.01"
-                                value={item.cantidad}
-                                onChange={(e) => {
-                                  const v = parseFloat(e.target.value);
+
+                              <button
+                                type="button"
+                                onClick={() => quitarItemDelPedido(item.uid)}
+                                className="font-mono font-bold text-base hover:text-brand-red px-1 shrink-0"
+                                aria-label={`Quitar ${activeProd?.nombre ?? 'ítem'} del pedido`}
+                              >
+                                ×
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex gap-2 items-center">
+                              <Combobox
+                                value={item.producto_id}
+                                onChange={(productoId) => {
                                   setOrderItems((prev) =>
                                     prev.map((i) =>
                                       i.uid === item.uid
-                                        ? { ...i, cantidad: Number.isFinite(v) && v > 0 ? redondearCantidad(v) : i.cantidad }
+                                        ? // Producto nuevo: la variante y el precio
+                                          // excepcional dejan de aplicar.
+                                          { ...i, producto_id: productoId, variante_id: null, precio_excepcional: null }
                                         : i,
                                     ),
                                   );
+                                  const nuevoProd = products.find((p) => p.id === productoId);
+                                  if (nuevoProd?.tiene_variantes) void cargarVariantesParaItem(nuevoProd.id);
                                 }}
-                                className={`neo-input w-16 py-1 px-1 text-center font-mono text-[11px] ${isExceeded ? 'border-brand-red text-brand-red bg-red-50' : ''}`}
+                                emptyOptionLabel="Seleccionar producto…"
+                                placeholder="Buscar producto por nombre o SKU…"
+                                options={products.map((p) => ({ value: p.id, label: p.nombre, sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0} ${p.unidad}` }))}
+                                className="flex-1"
                               />
+
+                              {inputCantidad}
+
+                              <span className="font-mono font-bold text-[11px] w-[74px] text-right shrink-0">
+                                ${subtotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
+                              </span>
+
                               <button
                                 type="button"
-                                onClick={() => cambiarCantidadItem(item.uid, 1)}
-                                className="neo-btn px-1.5 py-1 font-mono font-bold"
-                                aria-label={`Agregar una ${activeProd?.unidad ?? 'unidad'}`}
+                                onClick={() => quitarItemDelPedido(item.uid)}
+                                className="font-mono font-bold text-base hover:text-brand-red px-2"
+                                aria-label={`Quitar ${activeProd?.nombre ?? 'ítem'} del pedido`}
                               >
-                                +
+                                ×
                               </button>
                             </div>
+                          )}
 
-                            <span className="font-mono font-bold text-[11px] w-[74px] text-right shrink-0">
-                              ${subtotal.toLocaleString('es-CO', { maximumFractionDigits: 0 })}
-                            </span>
-
-                            <button
-                              type="button"
-                              aria-expanded={expandido}
-                              title="Precio excepcional y margen"
-                              onClick={() =>
-                                setItemsExpandidos((prev) => {
-                                  const copia = new Set(prev);
-                                  if (copia.has(item.uid)) copia.delete(item.uid);
-                                  else copia.add(item.uid);
-                                  return copia;
-                                })
-                              }
-                              className={`neo-btn px-1.5 py-1 font-mono text-[11px] font-bold shrink-0 ${expandido ? 'bg-brand-blue text-white' : ''}`}
-                            >
-                              ⋯
-                            </button>
-
-                            <button
-                              type="button"
-                              onClick={() => quitarItemDelPedido(item.uid)}
-                              className="font-mono font-bold text-base hover:text-brand-red px-1 shrink-0"
-                              aria-label={`Quitar ${activeProd?.nombre ?? 'ítem'} del pedido`}
-                            >
-                              ×
-                            </button>
-                          </div>
-
-                          {isExceeded && (
+                          {/* Solo con producto elegido: en una fila recién
+                              agregada no hay nada que pueda "superar el stock". */}
+                          {activeProd && isExceeded && (
                             <p className="font-mono text-[10px] text-brand-red pl-0.5">
-                              Supera lo disponible ({maxAvailable} {activeProd?.unidad ?? 'unidad'}) — se permite igual, el stock queda en negativo.
+                              Supera lo disponible ({maxAvailable} {activeProd.unidad}) — se permite igual, el stock queda en negativo.
                             </p>
                           )}
 
@@ -8657,11 +8763,11 @@ export default function AppHome() {
                             </div>
                           )}
 
-                          {/* Precio excepcional + margen. Plegado por defecto: es
-                              justamente lo excepcional, y ocupaba la mitad del alto
-                              de cada línea en el caso normal. */}
-                          {expandido && (
-                            <div className="flex flex-wrap gap-2 items-center pl-0.5 border-t border-black/10 pt-1.5">
+                          {/* Precio excepcional + margen — permite cobrar distinto al precio de
+                              catálogo (p.ej. un descuento puntual) y ver de inmediato cuánto
+                              margen queda con ese precio, comparado contra el costo. */}
+                          {detalleVisible && (
+                            <div className={`flex flex-wrap gap-2 items-center pl-0.5 ${tema8bit ? 'border-t border-black/10 pt-1.5' : ''}`}>
                               <label className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-neutral-600 whitespace-nowrap">
                                 <input
                                   type="checkbox"
@@ -9669,10 +9775,12 @@ export default function AppHome() {
                   <label className="font-mono font-bold">CÓMO SE VENDE</label>
                   <UnidadSelect valor={editProductForm.unidad} onChange={(unidad) => setEditProductForm({ ...editProductForm, unidad })} />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">ILUSTRACIÓN</label>
-                  <SpritePicker valor={editProductForm.sprite} onChange={(sprite) => setEditProductForm({ ...editProductForm, sprite })} />
-                </div>
+                {tema8bit && (
+                  <div className="flex flex-col gap-1">
+                    <label className="font-mono font-bold">ILUSTRACIÓN</label>
+                    <SpritePicker valor={editProductForm.sprite} onChange={(sprite) => setEditProductForm({ ...editProductForm, sprite })} />
+                  </div>
+                )}
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">

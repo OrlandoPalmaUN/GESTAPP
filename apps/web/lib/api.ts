@@ -77,6 +77,19 @@ export interface EntradaAuditoria {
   creadoEn: string
 }
 
+/**
+ * Tema de interfaz de la empresa. `'8bit'` enciende las ilustraciones de
+ * producto, la Vitrina y el alta rápida con plantillas; `'default'` deja la
+ * interfaz de siempre. Cada empresa elige el suyo — ver migración 025.
+ */
+export type TemaEmpresa = 'default' | '8bit'
+
+export interface ConfigEmpresa {
+  nombreDisplay: string | null
+  slogan: string | null
+  tema: TemaEmpresa
+}
+
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 
 /**
@@ -211,10 +224,10 @@ export const api = {
     }),
 
   obtenerConfigEmpresa: () =>
-    request<{ nombreDisplay: string | null; slogan: string | null }>('/tenant/config-empresa'),
+    request<ConfigEmpresa>('/tenant/config-empresa'),
 
-  actualizarConfigEmpresa: (data: { nombreDisplay?: string | null; slogan?: string | null }) =>
-    request<{ nombreDisplay: string | null; slogan: string | null }>('/tenant/config-empresa', {
+  actualizarConfigEmpresa: (data: { nombreDisplay?: string | null; slogan?: string | null; tema?: TemaEmpresa }) =>
+    request<ConfigEmpresa>('/tenant/config-empresa', {
       method: 'PATCH',
       body: JSON.stringify(data),
     }),
