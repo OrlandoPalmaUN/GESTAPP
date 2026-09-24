@@ -106,19 +106,27 @@ export async function buildApp(): Promise<FastifyInstance> {
 
   // Al arrancar el servidor, aplica migraciones de tenant pendientes en todos
   // los tenants activos. Idempotente — solo corre lo que no está en migration_log.
+  // Iban de a uno, en serie. Con 7 tenants contra una base remota eso son ~7s
+  // ANTES de aceptar el primer request — y Fastify aborta el arranque si un
+  // hook `onReady` pasa de 10s, cosa que ya ocurrió. En paralelo el arranque
+  // baja al tenant más lento (~1s) en vez de a la suma, y el margen contra
+  // ese límite deja de depender de cuántas empresas haya.
   app.addHook('onReady', async () => {
     try {
       const tenants = await app.prisma.tenant.findMany({ where: { status: 'active' } })
-      for (const tenant of tenants) {
-        try {
-          const aplicadas = await provisionarSchemaDeTenant(app.pg, tenant.schemaName)
-          if (aplicadas.length > 0) {
-            app.log.info({ slug: tenant.slug, aplicadas }, 'migraciones de tenant aplicadas al arrancar')
+      await Promise.all(
+        tenants.map(async (tenant) => {
+          try {
+            const aplicadas = await provisionarSchemaDeTenant(app.pg, tenant.schemaName)
+            if (aplicadas.length > 0) {
+              app.log.info({ slug: tenant.slug, aplicadas }, 'migraciones de tenant aplicadas al arrancar')
+            }
+          } catch (err) {
+            // Un tenant que falla no debe impedir que arranquen los demás.
+            app.log.error({ slug: tenant.slug, err }, 'error al migrar tenant al arrancar')
           }
-        } catch (err) {
-          app.log.error({ slug: tenant.slug, err }, 'error al migrar tenant al arrancar')
-        }
-      }
+        }),
+      )
     } catch (err) {
       app.log.error({ err }, 'error al obtener tenants para migración de arranque')
     }
