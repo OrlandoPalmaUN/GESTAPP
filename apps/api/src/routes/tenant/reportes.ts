@@ -305,58 +305,14 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
       WHERE estado != 'cancelado' AND deleted_at IS NULL
     `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
 
-    // ── Compras / OC ──────────────────────────────────────────────────────
-    const comprasQ = await db.query<{
-      totalOC: string; totalCompras: string; totalComprasPrev: string;
-    }>(`
-      SELECT
-        COUNT(*) FILTER (WHERE created_at >= $1 AND created_at < $2)                 AS "totalOC",
-        COALESCE(SUM(total) FILTER (WHERE created_at >= $1 AND created_at < $2), 0)  AS "totalCompras",
-        COALESCE(SUM(total) FILTER (WHERE created_at >= $3 AND created_at < $4), 0)  AS "totalComprasPrev"
-      FROM pedidos_proveedor
-      WHERE estado != 'cancelado' AND deleted_at IS NULL
-    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
-
-    // ── Costo de la mercancía vendida (COGS) ──────────────────────────────
-    // OJO: el margen bruto NO es "ventas − compras". Las compras (OC) son
-    // reposición de inventario y pueden no tener nada que ver con lo que se
-    // vendió en el período: comprar $500k en agosto y vender mercancía traída
-    // en julio daba un "margen" negativo en un mes rentable, y el dueño tomaba
-    // decisiones con esa cifra.
-    //
-    // El costo real de lo vendido sale del snapshot `pedido_items.precio_costo`
-    // (migración 007, creado exactamente para esto). Los ítems sin costo
-    // cargado suman NULL — SUM los ignora, así que contribuirían margen
-    // inflado; por eso se reporta aparte `ventasSinCosto`, para que la UI
-    // pueda advertir en vez de mostrar un número que parece exacto y no lo es.
-    const costoQ = await db.query<{
-      costoVentas: string; costoVentasPrev: string; ventasSinCosto: string;
-    }>(`
-      SELECT
-        COALESCE(SUM(pi.precio_costo * pi.cantidad)
-                 FILTER (WHERE pe.created_at >= $1 AND pe.created_at < $2), 0) AS "costoVentas",
-        COALESCE(SUM(pi.precio_costo * pi.cantidad)
-                 FILTER (WHERE pe.created_at >= $3 AND pe.created_at < $4), 0) AS "costoVentasPrev",
-        COALESCE(SUM(pi.subtotal)
-                 FILTER (WHERE pe.created_at >= $1 AND pe.created_at < $2
-                           AND pi.precio_costo IS NULL), 0)                    AS "ventasSinCosto"
-      FROM pedido_items pi
-      JOIN pedidos pe ON pi.pedido_id = pe.id
-      WHERE pe.estado != 'cancelado' AND pe.deleted_at IS NULL
-    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
-
-    // ── Gastos operativos ─────────────────────────────────────────────────
-    const gastosQ = await db.query<{
-      totalGastos: string; totalGastosPrev: string;
-    }>(`
-      SELECT
-        COALESCE(SUM(monto) FILTER (WHERE fecha >= $1 AND fecha < $2), 0) AS "totalGastos",
-        COALESCE(SUM(monto) FILTER (WHERE fecha >= $3 AND fecha < $4), 0) AS "totalGastosPrev"
-      FROM gastos_operativos
-      WHERE deleted_at IS NULL
-    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
-
-    // ── CxC cobrada (abonos a facturas de venta) ──────────────────────────
+    // ── Ingresos y egresos de caja (flujo de caja del período) ─────────────
+    // Reportes usa la misma lógica que /finanzas/resumen: plata que
+    // efectivamente entró o salió, no lo devengado. Ingresos = CxC cobrada
+    // (abonos a facturas de venta) + ingresos manuales. Egresos = CxP pagada
+    // (abonos a facturas de compra) + gastos operativos que salieron de caja
+    // directamente. Los gastos a crédito (`factura_compra_id` no nulo)
+    // todavía no movieron plata — se cuentan cuando se abona su CxP, así que
+    // incluirlos aquí también los duplicaría.
     const cxcQ = await db.query<{ cxcCobrada: string; cxcCobradaPrev: string }>(`
       SELECT
         COALESCE(SUM(a.monto) FILTER (WHERE a.fecha >= $1 AND a.fecha < $2), 0) AS "cxcCobrada",
@@ -366,6 +322,27 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         ON a.tipo_documento = 'factura_venta'
        AND a.documento_id = fv.id
       WHERE a.deleted_at IS NULL AND fv.deleted_at IS NULL
+    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
+
+    const cxpQ = await db.query<{ cxpPagada: string; cxpPagadaPrev: string }>(`
+      SELECT
+        COALESCE(SUM(a.monto) FILTER (WHERE a.fecha >= $1 AND a.fecha < $2), 0) AS "cxpPagada",
+        COALESCE(SUM(a.monto) FILTER (WHERE a.fecha >= $3 AND a.fecha < $4), 0) AS "cxpPagadaPrev"
+      FROM abonos a
+      JOIN facturas_compra fc
+        ON a.tipo_documento = 'factura_compra'
+       AND a.documento_id = fc.id
+      WHERE a.deleted_at IS NULL AND fc.deleted_at IS NULL
+    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
+
+    const gastosQ = await db.query<{
+      totalGastos: string; totalGastosPrev: string;
+    }>(`
+      SELECT
+        COALESCE(SUM(monto) FILTER (WHERE fecha >= $1 AND fecha < $2), 0) AS "totalGastos",
+        COALESCE(SUM(monto) FILTER (WHERE fecha >= $3 AND fecha < $4), 0) AS "totalGastosPrev"
+      FROM gastos_operativos
+      WHERE deleted_at IS NULL AND factura_compra_id IS NULL
     `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
 
     // ── Top 5 productos ───────────────────────────────────────────────────
@@ -391,34 +368,41 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     `, [rango.desde, rango.hasta])
 
     // ── Ingresos manuales ─────────────────────────────────────────────────
-    const ingresosQ = await db.query<{ totalIngresos: string }>(`
-      SELECT COALESCE(SUM(monto), 0) AS "totalIngresos"
+    const ingresosQ = await db.query<{ totalIngresos: string; totalIngresosPrev: string }>(`
+      SELECT
+        COALESCE(SUM(monto) FILTER (WHERE fecha >= $1 AND fecha < $2), 0) AS "totalIngresos",
+        COALESCE(SUM(monto) FILTER (WHERE fecha >= $3 AND fecha < $4), 0) AS "totalIngresosPrev"
       FROM ingresos_bancarios
-      WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
-    `, [rango.desde, rango.hasta])
+      WHERE deleted_at IS NULL
+    `, [rango.desde, rango.hasta, rango.desdePrev, rango.hastaPrev])
 
     const v = ventasQ.rows[0]!
-    const c = comprasQ.rows[0]!
     const g = gastosQ.rows[0]!
     const cxc = cxcQ.rows[0]!
+    const cxp = cxpQ.rows[0]!
     const ing = ingresosQ.rows[0]!
-    const co = costoQ.rows[0]!
 
     const totalVentas = Number(v.totalVentas)
     const totalVentasPrev = Number(v.totalVentasPrev)
-    const totalCompras = Number(c.totalCompras)
-    const totalComprasPrev = Number(c.totalComprasPrev)
-    const totalGastos = Number(g.totalGastos)
-    const totalGastosPrev = Number(g.totalGastosPrev)
-    const costoVentas = Number(co.costoVentas)
-    const costoVentasPrev = Number(co.costoVentasPrev)
-    const ventasSinCosto = Number(co.ventasSinCosto)
-    // Margen bruto = ventas − costo de LO VENDIDO (no de lo comprado en el mes).
-    const margenBruto = totalVentas - costoVentas
-    const margenBrutoPrev = totalVentasPrev - costoVentasPrev
-    const utilidadNeta = margenBruto - totalGastos
     const totalPedidos = Number(v.totalPedidos)
     const totalPedidosPrev = Number(v.totalPedidosPrev)
+
+    const cxcCobrada = Number(cxc.cxcCobrada)
+    const cxcCobradaPrev = Number(cxc.cxcCobradaPrev)
+    const ingresosManuales = Number(ing.totalIngresos)
+    const ingresosManualesPrev = Number(ing.totalIngresosPrev)
+    const ingresosTotales = cxcCobrada + ingresosManuales
+    const ingresosTotalesPrev = cxcCobradaPrev + ingresosManualesPrev
+
+    const cxpPagada = Number(cxp.cxpPagada)
+    const cxpPagadaPrev = Number(cxp.cxpPagadaPrev)
+    const totalGastos = Number(g.totalGastos)
+    const totalGastosPrev = Number(g.totalGastosPrev)
+    const egresosTotales = cxpPagada + totalGastos
+    const egresosTotalesPrev = cxpPagadaPrev + totalGastosPrev
+
+    const balance = ingresosTotales - egresosTotales
+    const balancePrev = ingresosTotalesPrev - egresosTotalesPrev
 
     function delta(actual: number, prev: number): number | null {
       if (prev === 0) return null
@@ -438,31 +422,24 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         delta: delta(totalVentas, totalVentasPrev),
         deltaPedidos: totalPedidosPrev > 0 ? totalPedidos - totalPedidosPrev : null,
       },
-      // Las compras son reposición de inventario (flujo de caja), NO el costo
-      // de lo vendido — se reportan aparte y no entran al margen.
-      compras: {
-        total: totalCompras,
-        oc: Number(c.totalOC),
-        delta: delta(totalCompras, totalComprasPrev),
+      // Flujo de caja del período: plata que entró vs. plata que salió —
+      // nada de causación (margen, COGS, compras a crédito).
+      ingresos: {
+        cxcCobrada,
+        manuales: ingresosManuales,
+        total: ingresosTotales,
+        delta: delta(ingresosTotales, ingresosTotalesPrev),
       },
-      costoVentas: {
-        total: costoVentas,
-        /** Ventas del período cuyos ítems no tienen costo cargado — el margen las sobreestima. */
-        ventasSinCosto,
+      egresos: {
+        cxpPagada,
+        gastos: totalGastos,
+        total: egresosTotales,
+        delta: delta(egresosTotales, egresosTotalesPrev),
       },
-      gastos: {
-        total: totalGastos,
-        delta: delta(totalGastos, totalGastosPrev),
+      balance: {
+        total: balance,
+        delta: delta(balance, balancePrev),
       },
-      ingresosManuales: Number(ing.totalIngresos),
-      cxcCobrada: Number(cxc.cxcCobrada),
-      margenBruto: {
-        total: margenBruto,
-        porcentaje: totalVentas > 0 ? Math.round((margenBruto / totalVentas) * 100) : 0,
-        delta: delta(margenBruto, margenBrutoPrev),
-        ventasSinCosto,
-      },
-      utilidadNeta,
       topProductos: topQ.rows.map((r) => ({
         nombre: r.nombre,
         categoria: r.categoria,
@@ -490,7 +467,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
       const desdeAño = `${año}-01-01`
       const hastaAño = `${año + 1}-01-01`
 
-      const [ventasQ, gastosQ] = await Promise.all([
+      const [ventasQ, gastosQ, cxcQ, ingresosManQ, cxpQ] = await Promise.all([
         db.query<{ mes: string; pedidos: string; ventas: string }>(`
           SELECT
             TO_CHAR(DATE_TRUNC('month', created_at), 'YYYY-MM-DD') AS mes,
@@ -507,13 +484,47 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
             TO_CHAR(DATE_TRUNC('month', fecha), 'YYYY-MM-DD') AS mes,
             COALESCE(SUM(monto), 0) AS gastos
           FROM gastos_operativos
+          WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL AND factura_compra_id IS NULL
+          GROUP BY DATE_TRUNC('month', fecha)
+        `, [desdeAño, hastaAño]),
+
+        // Ingresos de caja del mes: CxC cobrada + ingresos manuales.
+        db.query<{ mes: string; ingresos: string }>(`
+          SELECT
+            TO_CHAR(DATE_TRUNC('month', a.fecha), 'YYYY-MM-DD') AS mes,
+            COALESCE(SUM(a.monto), 0) AS ingresos
+          FROM abonos a
+          JOIN facturas_venta fv ON a.tipo_documento = 'factura_venta' AND a.documento_id = fv.id
+          WHERE a.fecha >= $1 AND a.fecha < $2 AND a.deleted_at IS NULL AND fv.deleted_at IS NULL
+          GROUP BY DATE_TRUNC('month', a.fecha)
+        `, [desdeAño, hastaAño]),
+
+        db.query<{ mes: string; ingresos: string }>(`
+          SELECT
+            TO_CHAR(DATE_TRUNC('month', fecha), 'YYYY-MM-DD') AS mes,
+            COALESCE(SUM(monto), 0) AS ingresos
+          FROM ingresos_bancarios
           WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
           GROUP BY DATE_TRUNC('month', fecha)
+        `, [desdeAño, hastaAño]),
+
+        // Egresos de caja del mes: CxP pagada.
+        db.query<{ mes: string; egresos: string }>(`
+          SELECT
+            TO_CHAR(DATE_TRUNC('month', a.fecha), 'YYYY-MM-DD') AS mes,
+            COALESCE(SUM(a.monto), 0) AS egresos
+          FROM abonos a
+          JOIN facturas_compra fc ON a.tipo_documento = 'factura_compra' AND a.documento_id = fc.id
+          WHERE a.fecha >= $1 AND a.fecha < $2 AND a.deleted_at IS NULL AND fc.deleted_at IS NULL
+          GROUP BY DATE_TRUNC('month', a.fecha)
         `, [desdeAño, hastaAño]),
       ])
 
       const gastosPorMes = new Map(gastosQ.rows.map((r) => [r.mes, Number(r.gastos)]))
       const ventasPorMes = new Map(ventasQ.rows.map((r) => [r.mes, r]))
+      const cxcPorMes = new Map(cxcQ.rows.map((r) => [r.mes, Number(r.ingresos)]))
+      const ingresosManPorMes = new Map(ingresosManQ.rows.map((r) => [r.mes, Number(r.ingresos)]))
+      const cxpPorMes = new Map(cxpQ.rows.map((r) => [r.mes, Number(r.egresos)]))
 
       const periodos = Array.from({ length: 12 }, (_, i) => {
         const mes = i + 1
@@ -521,6 +532,8 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         const v = ventasPorMes.get(key)
         const gastos = gastosPorMes.get(key) ?? 0
         const ventas = Number(v?.ventas ?? 0)
+        const ingresos = (cxcPorMes.get(key) ?? 0) + (ingresosManPorMes.get(key) ?? 0)
+        const egresos = (cxpPorMes.get(key) ?? 0) + gastos
         const r = rangoMes(año, mes)
         return {
           label: r.label,
@@ -530,8 +543,9 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
           año,
           pedidos: Number(v?.pedidos ?? 0),
           ventas,
-          gastos,
-          gananciaAprox: ventas - gastos,
+          ingresos,
+          egresos,
+          balance: ingresos - egresos,
           tieneDatos: !!v,
         }
       })
@@ -544,7 +558,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     const desdeAño = mondayOfISOWeek(año, 1).toISOString().slice(0, 10)
     const hastaAño = mondayOfISOWeek(año + 1, 1).toISOString().slice(0, 10)
 
-    const [ventasQ, gastosQ] = await Promise.all([
+    const [ventasQ, gastosQ, cxcQ, ingresosManQ, cxpQ] = await Promise.all([
       db.query<{ semana: string; añoiso: string; pedidos: string; ventas: string }>(`
         SELECT
           EXTRACT(WEEK FROM created_at)::text     AS semana,
@@ -562,13 +576,48 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
           EXTRACT(ISOYEAR FROM fecha)::text  AS añoiso,
           COALESCE(SUM(monto), 0)            AS gastos
         FROM gastos_operativos
+        WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL AND factura_compra_id IS NULL
+        GROUP BY EXTRACT(WEEK FROM fecha), EXTRACT(ISOYEAR FROM fecha)
+      `, [desdeAño, hastaAño]),
+
+      db.query<{ semana: string; añoiso: string; ingresos: string }>(`
+        SELECT
+          EXTRACT(WEEK FROM a.fecha)::text     AS semana,
+          EXTRACT(ISOYEAR FROM a.fecha)::text  AS añoiso,
+          COALESCE(SUM(a.monto), 0)            AS ingresos
+        FROM abonos a
+        JOIN facturas_venta fv ON a.tipo_documento = 'factura_venta' AND a.documento_id = fv.id
+        WHERE a.fecha >= $1 AND a.fecha < $2 AND a.deleted_at IS NULL AND fv.deleted_at IS NULL
+        GROUP BY EXTRACT(WEEK FROM a.fecha), EXTRACT(ISOYEAR FROM a.fecha)
+      `, [desdeAño, hastaAño]),
+
+      db.query<{ semana: string; añoiso: string; ingresos: string }>(`
+        SELECT
+          EXTRACT(WEEK FROM fecha)::text     AS semana,
+          EXTRACT(ISOYEAR FROM fecha)::text  AS añoiso,
+          COALESCE(SUM(monto), 0)            AS ingresos
+        FROM ingresos_bancarios
         WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
         GROUP BY EXTRACT(WEEK FROM fecha), EXTRACT(ISOYEAR FROM fecha)
+      `, [desdeAño, hastaAño]),
+
+      db.query<{ semana: string; añoiso: string; egresos: string }>(`
+        SELECT
+          EXTRACT(WEEK FROM a.fecha)::text     AS semana,
+          EXTRACT(ISOYEAR FROM a.fecha)::text  AS añoiso,
+          COALESCE(SUM(a.monto), 0)            AS egresos
+        FROM abonos a
+        JOIN facturas_compra fc ON a.tipo_documento = 'factura_compra' AND a.documento_id = fc.id
+        WHERE a.fecha >= $1 AND a.fecha < $2 AND a.deleted_at IS NULL AND fc.deleted_at IS NULL
+        GROUP BY EXTRACT(WEEK FROM a.fecha), EXTRACT(ISOYEAR FROM a.fecha)
       `, [desdeAño, hastaAño]),
     ])
 
     const ventasMap = new Map(ventasQ.rows.map((r) => [`${r.añoiso}-${r.semana}`, r]))
     const gastosMap = new Map(gastosQ.rows.map((r) => [`${r.añoiso}-${r.semana}`, Number(r.gastos)]))
+    const cxcMap = new Map(cxcQ.rows.map((r) => [`${r.añoiso}-${r.semana}`, Number(r.ingresos)]))
+    const ingresosManMap = new Map(ingresosManQ.rows.map((r) => [`${r.añoiso}-${r.semana}`, Number(r.ingresos)]))
+    const cxpMap = new Map(cxpQ.rows.map((r) => [`${r.añoiso}-${r.semana}`, Number(r.egresos)]))
 
     const periodos = Array.from({ length: totalSemanas }, (_, i) => {
       const sem = i + 1
@@ -576,6 +625,8 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
       const v = ventasMap.get(key)
       const gastos = gastosMap.get(key) ?? 0
       const ventas = Number(v?.ventas ?? 0)
+      const ingresos = (cxcMap.get(key) ?? 0) + (ingresosManMap.get(key) ?? 0)
+      const egresos = (cxpMap.get(key) ?? 0) + gastos
       const r = rangoSemana(año, sem)
       return {
         label: r.label,
@@ -585,8 +636,9 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         año,
         pedidos: Number(v?.pedidos ?? 0),
         ventas,
-        gastos,
-        gananciaAprox: ventas - gastos,
+        ingresos,
+        egresos,
+        balance: ingresos - egresos,
         tieneDatos: !!v,
       }
     })
@@ -750,7 +802,7 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
     const db = request.tenantDb
     const resultados = await Promise.all(semanas.map(async (sem) => {
       const rango = rangoSemana(año, sem)
-      const [v, g, costo, top] = await Promise.all([
+      const [v, g, cxc, ingMan, cxp, top] = await Promise.all([
         db.query<{ pedidos: string; ventas: string }>(`
           SELECT COUNT(*) AS pedidos, COALESCE(SUM(total), 0) AS ventas
           FROM pedidos
@@ -758,14 +810,22 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         `, [rango.desde, rango.hasta]),
         db.query<{ gastos: string }>(`
           SELECT COALESCE(SUM(monto), 0) AS gastos FROM gastos_operativos
+          WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL AND factura_compra_id IS NULL
+        `, [rango.desde, rango.hasta]),
+        // Flujo de caja de la semana — mismo criterio que /reportes/periodo.
+        db.query<{ cxc: string }>(`
+          SELECT COALESCE(SUM(a.monto), 0) AS cxc
+          FROM abonos a JOIN facturas_venta fv ON a.tipo_documento = 'factura_venta' AND a.documento_id = fv.id
+          WHERE a.fecha >= $1 AND a.fecha < $2 AND a.deleted_at IS NULL AND fv.deleted_at IS NULL
+        `, [rango.desde, rango.hasta]),
+        db.query<{ ingresos: string }>(`
+          SELECT COALESCE(SUM(monto), 0) AS ingresos FROM ingresos_bancarios
           WHERE fecha >= $1 AND fecha < $2 AND deleted_at IS NULL
         `, [rango.desde, rango.hasta]),
-        // Costo de lo vendido en la semana — mismo criterio que /reportes/periodo.
-        db.query<{ costo: string }>(`
-          SELECT COALESCE(SUM(pi.precio_costo * pi.cantidad), 0) AS costo
-          FROM pedido_items pi JOIN pedidos pe ON pi.pedido_id = pe.id
-          WHERE pe.created_at >= $1 AND pe.created_at < $2
-            AND pe.estado != 'cancelado' AND pe.deleted_at IS NULL
+        db.query<{ cxp: string }>(`
+          SELECT COALESCE(SUM(a.monto), 0) AS cxp
+          FROM abonos a JOIN facturas_compra fc ON a.tipo_documento = 'factura_compra' AND a.documento_id = fc.id
+          WHERE a.fecha >= $1 AND a.fecha < $2 AND a.deleted_at IS NULL AND fc.deleted_at IS NULL
         `, [rango.desde, rango.hasta]),
         db.query<{ nombre: string; ventas: string }>(`
           SELECT p.nombre, SUM(pi.subtotal) AS ventas
@@ -778,7 +838,8 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
       ])
       const ventas = Number(v.rows[0]?.ventas ?? 0)
       const gastos = Number(g.rows[0]?.gastos ?? 0)
-      const costoVentas = Number(costo.rows[0]?.costo ?? 0)
+      const ingresos = Number(cxc.rows[0]?.cxc ?? 0) + Number(ingMan.rows[0]?.ingresos ?? 0)
+      const egresos = Number(cxp.rows[0]?.cxp ?? 0) + gastos
       return {
         semana: sem,
         label: rango.label,
@@ -786,12 +847,9 @@ export async function reportesRoutes(fastify: FastifyInstance): Promise<void> {
         hasta: rango.hasta,
         pedidos: Number(v.rows[0]?.pedidos ?? 0),
         ventas,
-        gastos,
-        costoVentas,
-        // Antes era `ventas − gastos`, que no es margen bruto (ignoraba el
-        // costo de la mercancía y restaba gastos operativos, que van después).
-        margenBruto: ventas - costoVentas,
-        utilidadNeta: ventas - costoVentas - gastos,
+        ingresos,
+        egresos,
+        balance: ingresos - egresos,
         topProducto: top.rows[0] ? { nombre: top.rows[0].nombre, ventas: Number(top.rows[0].ventas) } : null,
       }
     }))

@@ -27,6 +27,9 @@ import {
 } from '@antigravity/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 
+import { aAbono, registrarAbonoEnTx, type FilaAbono } from '../../lib/abonos.js'
+import { generarNumeroFacturaCompra } from '../../lib/numeracion.js'
+
 interface FilaFacturaVenta {
   id: string
   numero: string
@@ -50,17 +53,6 @@ interface FilaFacturaCompra {
   created_at: Date
 }
 
-interface FilaAbono {
-  id: string
-  tipo_documento: string
-  documento_id: string
-  monto: string
-  fecha: Date
-  medio_pago: string | null
-  referencia: string | null
-  usuario_id: string | null
-  created_at: Date
-}
 
 interface FilaCuentaBancaria {
   id: string
@@ -91,6 +83,8 @@ interface FilaGasto {
   medio_pago: string | null
   cuenta_bancaria_id: string | null
   notas: string | null
+  proveedor_id: string | null
+  factura_compra_id: string | null
   usuario_id: string | null
   created_at: Date
 }
@@ -119,20 +113,6 @@ function aCuentaBancaria(row: FilaCuentaBancaria): CuentaBancaria {
   }
 }
 
-function aAbono(row: FilaAbono): Abono {
-  return {
-    id: row.id,
-    facturaId: row.documento_id,
-    tipoDocumento: row.tipo_documento as Abono['tipoDocumento'],
-    monto: Number(row.monto),
-    fecha: row.fecha.toISOString().slice(0, 10),
-    medioPago: row.medio_pago,
-    referencia: row.referencia,
-    usuarioId: row.usuario_id,
-    createdAt: row.created_at.toISOString(),
-  }
-}
-
 function aTransferencia(row: FilaTransferencia): TransferenciaBancaria {
   return {
     id: row.id,
@@ -156,6 +136,8 @@ function aGasto(row: FilaGasto): GastoOperativo {
     medioPago: row.medio_pago,
     cuentaBancariaId: row.cuenta_bancaria_id,
     notas: row.notas,
+    proveedorId: row.proveedor_id,
+    facturaCompraId: row.factura_compra_id,
     usuarioId: row.usuario_id,
     createdAt: row.created_at.toISOString(),
   }
@@ -797,72 +779,20 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
 
     const client = request.tenantDb
-    const tipoDocumento = TIPO_DOCUMENTO_POR_TIPO_FACTURA[body.data.tipo]
-    const tablaFactura = body.data.tipo === 'cxc' ? 'facturas_venta' : 'facturas_compra'
 
     try {
       await client.query('BEGIN')
 
-      const facturaRes = await client.query<{ id: string; numero: string; total: string }>(
-        `SELECT id, numero, total FROM ${tablaFactura} WHERE id = $1 FOR UPDATE`,
-        [body.data.facturaId],
-      )
-      if (facturaRes.rowCount === 0) {
+      const resultado = await registrarAbonoEnTx(client, body.data, request.user.sub)
+      if (!resultado.ok) {
         await client.query('ROLLBACK')
-        return reply.notFound('La factura indicada no existe.')
-      }
-      const factura = facturaRes.rows[0]!
-
-      const abonosRes = await client.query<FilaAbono>(
-        `SELECT id, tipo_documento, documento_id, monto, fecha, medio_pago, referencia, usuario_id, created_at
-         FROM abonos WHERE tipo_documento = $1 AND documento_id = $2 AND deleted_at IS NULL FOR UPDATE`,
-        [tipoDocumento, factura.id],
-      )
-      const saldoActual = calcularSaldoPendiente(Number(factura.total), abonosRes.rows.map(aAbono))
-
-      if (body.data.monto > saldoActual) {
-        await client.query('ROLLBACK')
-        return reply.badRequest(
-          `El abono ($${body.data.monto.toLocaleString('es-CO')}) excede el saldo pendiente de la factura ${factura.numero} ($${saldoActual.toLocaleString('es-CO')}).`,
-        )
-      }
-
-      // Si se especificó cuenta bancaria, validarla y hacer lock antes de insertar.
-      if (body.data.cuentaBancariaId) {
-        const cuentaRes = await client.query<{ id: string; saldo: string }>(
-          'SELECT id, saldo FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
-          [body.data.cuentaBancariaId],
-        )
-        if (cuentaRes.rowCount === 0) {
-          await client.query('ROLLBACK')
-          return reply.badRequest('La cuenta bancaria seleccionada no existe.')
-        }
-        if (body.data.tipo === 'cxp' && Number(cuentaRes.rows[0]!.saldo) < body.data.monto) {
-          await client.query('ROLLBACK')
-          return reply.badRequest(
-            `Saldo insuficiente en la cuenta bancaria ($${Number(cuentaRes.rows[0]!.saldo).toLocaleString('es-CO')} disponible, se requieren $${body.data.monto.toLocaleString('es-CO')}).`,
-          )
-        }
-      }
-
-      const { rows } = await client.query<FilaAbono>(
-        `INSERT INTO abonos (tipo_documento, documento_id, monto, medio_pago, referencia, usuario_id, cuenta_bancaria_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         RETURNING id, tipo_documento, documento_id, monto, fecha, medio_pago, referencia, usuario_id, created_at`,
-        [tipoDocumento, factura.id, body.data.monto, body.data.medioPago ?? null, body.data.referencia ?? null, request.user.sub, body.data.cuentaBancariaId ?? null],
-      )
-
-      // CxC: el dinero ENTRA → suma al saldo. CxP: el dinero SALE → resta del saldo.
-      if (body.data.cuentaBancariaId) {
-        const operacion = body.data.tipo === 'cxc' ? '+' : '-'
-        await client.query(
-          `UPDATE cuentas_bancarias SET saldo = saldo ${operacion} $1 WHERE id = $2`,
-          [body.data.monto, body.data.cuentaBancariaId],
-        )
+        return resultado.motivo === 'no_encontrado'
+          ? reply.notFound(resultado.mensaje)
+          : reply.badRequest(resultado.mensaje)
       }
 
       await client.query('COMMIT')
-      return reply.status(201).send({ abono: aAbono(rows[0]!) })
+      return reply.status(201).send({ abono: aAbono(resultado.fila) })
     } catch (error) {
       await client.query('ROLLBACK').catch(() => undefined)
       throw error
@@ -1239,7 +1169,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/finanzas/gastos', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaGasto>(
-      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
        FROM gastos_operativos WHERE deleted_at IS NULL ORDER BY fecha DESC, created_at DESC`,
     )
     return reply.send({ gastos: rows.map(aGasto) })
@@ -1273,10 +1203,39 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const fecha = body.data.fecha ?? new Date().toISOString().slice(0, 10)
+
+      // A crédito: en vez de mover el banco, el gasto queda como cuenta por
+      // pagar al proveedor y se salda después con abonos. El gasto igual se
+      // registra (la contabilidad es por causación: el arriendo de este mes es
+      // gasto de este mes, se haya pagado o no); lo que cambia es de dónde sale
+      // la plata y cuándo.
+      let facturaCompraId: string | null = null
+      if (body.data.aCredito) {
+        const proveedorRes = await client.query<{ id: string }>(
+          'SELECT id FROM proveedores WHERE id = $1 AND deleted_at IS NULL',
+          [body.data.proveedorId],
+        )
+        if (proveedorRes.rowCount === 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest('El proveedor indicado no existe.')
+        }
+
+        const fechaVenc = body.data.fechaVencimiento ?? (() => {
+          const d = new Date(fecha); d.setDate(d.getDate() + 30); return d.toISOString().slice(0, 10)
+        })()
+        const numeroFC = await generarNumeroFacturaCompra(client)
+        const { rows: [fc] } = await client.query<{ id: string }>(
+          `INSERT INTO facturas_compra (numero, proveedor_id, fecha_emision, fecha_vencimiento, total, notas)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [numeroFC, body.data.proveedorId, fecha, fechaVenc, body.data.monto, `Gasto a crédito — ${body.data.descripcion}`],
+        )
+        facturaCompraId = fc!.id
+      }
+
       const { rows } = await client.query<FilaGasto>(
-        `INSERT INTO gastos_operativos (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+        `INSERT INTO gastos_operativos (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
         [
           body.data.descripcion,
           body.data.categoria,
@@ -1285,6 +1244,8 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
           body.data.medioPago ?? null,
           body.data.cuentaBancariaId ?? null,
           body.data.notas ?? null,
+          body.data.proveedorId ?? null,
+          facturaCompraId,
           request.user.sub,
         ],
       )
@@ -1321,7 +1282,7 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('BEGIN')
 
       const actualRes = await client.query<FilaGasto>(
-        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
+        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
          FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [request.params.id],
       )
@@ -1334,6 +1295,40 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const cuentaPrev = prev.cuenta_bancaria_id
       const montoNuevo = body.data.monto ?? montoPrev
       const cuentaNueva = body.data.cuentaBancariaId !== undefined ? body.data.cuentaBancariaId : cuentaPrev
+
+      // Un gasto a crédito se paga con abonos contra su CxP, nunca descontando
+      // la cuenta acá. Si se permitiera, la plata saldría del banco, la CxP
+      // quedaría abierta, y el flujo de caja no vería el egreso por ningún
+      // lado: como gasto lo excluye el filtro `factura_compra_id IS NULL`, y
+      // como abono nunca existió.
+      if (prev.factura_compra_id && cuentaNueva) {
+        await client.query('ROLLBACK')
+        return reply.badRequest(
+          'Este gasto quedó a crédito: se paga registrando un abono contra su cuenta por pagar, no descontándolo de una cuenta bancaria.',
+        )
+      }
+
+      // El monto del gasto y el total de su CxP son el mismo número visto
+      // desde dos lados. Se mueven juntos — y no se mueven si ya hay abonos,
+      // porque bajar el total por debajo de lo abonado deja una factura
+      // sobrepagada (la invariante que `verificar-integridad` vigila).
+      if (prev.factura_compra_id && montoNuevo !== montoPrev) {
+        const { rows: [ab] } = await client.query<{ total: string }>(
+          `SELECT COALESCE(SUM(monto), 0)::text AS total FROM abonos
+           WHERE tipo_documento = 'factura_compra' AND documento_id = $1 AND deleted_at IS NULL`,
+          [prev.factura_compra_id],
+        )
+        if (Number(ab?.total ?? 0) > 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            'Este gasto ya tiene pagos registrados contra su cuenta por pagar. Eliminá primero los abonos si necesitás corregir el monto.',
+          )
+        }
+        await client.query(
+          'UPDATE facturas_compra SET total = $1 WHERE id = $2 AND deleted_at IS NULL',
+          [montoNuevo, prev.factura_compra_id],
+        )
+      }
 
       if (cuentaNueva !== cuentaPrev || montoNuevo !== montoPrev) {
         // Lock de todas las cuentas involucradas en orden determinístico.
@@ -1386,11 +1381,20 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       if (body.data.cuentaBancariaId !== undefined) ag('cuenta_bancaria_id', body.data.cuentaBancariaId)
       if (body.data.notas !== undefined) ag('notas', body.data.notas)
 
+      // Corregir la fecha del gasto corrige también la de emisión de su CxP,
+      // por el mismo motivo que el monto: son el mismo hecho.
+      if (prev.factura_compra_id && body.data.fecha !== undefined) {
+        await client.query(
+          'UPDATE facturas_compra SET fecha_emision = $1 WHERE id = $2 AND deleted_at IS NULL',
+          [body.data.fecha, prev.factura_compra_id],
+        )
+      }
+
       valores.push(request.params.id)
       const { rows } = await client.query<FilaGasto>(
         `UPDATE gastos_operativos SET ${sets.join(', ')}
          WHERE id = $${valores.length} AND deleted_at IS NULL
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
         valores,
       )
 
@@ -1411,8 +1415,8 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       await client.query('BEGIN')
 
-      const { rows, rowCount } = await client.query<{ monto: string; cuenta_bancaria_id: string | null }>(
-        'SELECT monto, cuenta_bancaria_id FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+      const { rows, rowCount } = await client.query<{ monto: string; cuenta_bancaria_id: string | null; factura_compra_id: string | null }>(
+        'SELECT monto, cuenta_bancaria_id, factura_compra_id FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
         [request.params.id],
       )
       if (rowCount === 0) {
@@ -1420,9 +1424,29 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
         return reply.notFound('Gasto no encontrado.')
       }
 
+      const gasto = rows[0]!
+
+      // Si el gasto quedó a crédito, borrarlo debe llevarse también su cuenta
+      // por pagar — si no, quedaría una deuda sin gasto que la explique. Pero
+      // no si ya se abonó: esos pagos salieron de una cuenta bancaria y hay que
+      // revertirlos por su propia vía, que es la que devuelve la plata.
+      if (gasto.factura_compra_id) {
+        const { rows: [ab] } = await client.query<{ total: string }>(
+          `SELECT COALESCE(SUM(monto), 0)::text AS total FROM abonos
+           WHERE tipo_documento = 'factura_compra' AND documento_id = $1 AND deleted_at IS NULL`,
+          [gasto.factura_compra_id],
+        )
+        if (Number(ab?.total ?? 0) > 0) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            'Este gasto quedó a crédito y ya tiene pagos registrados. Eliminá primero los abonos (eso devuelve la plata a la cuenta) y después el gasto.',
+          )
+        }
+        await client.query('UPDATE facturas_compra SET deleted_at = NOW() WHERE id = $1', [gasto.factura_compra_id])
+      }
+
       await client.query('UPDATE gastos_operativos SET deleted_at = NOW() WHERE id = $1', [request.params.id])
 
-      const gasto = rows[0]!
       if (gasto.cuenta_bancaria_id) {
         // Al crear: se restó el monto. Al eliminar: se devuelve.
         await client.query(
@@ -1641,10 +1665,19 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
          WHERE tipo_documento = 'factura_compra' AND deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
         [desde, hasta],
       ),
-      // Gastos operativos del periodo
+      // Gastos operativos del periodo que SALIERON DE CAJA.
+      //
+      // Se excluyen los que quedaron a crédito (`factura_compra_id IS NOT NULL`):
+      // esos todavía no movieron plata, y cuando se paguen van a entrar acá
+      // igual por `egresosCxP`, que suma los abonos a facturas de compra.
+      // Contarlos en ambos lados inflaría el egreso del flujo de caja al doble.
+      //
+      // OJO: este filtro va SOLO acá. `reportes.ts` (utilidad neta) es por
+      // causación — el arriendo de este mes es gasto de este mes, se haya
+      // pagado o no — y ahí el gasto debe contarse una vez, sin filtrar.
       db.query<{ total: string }>(
         `SELECT COALESCE(SUM(monto), 0)::text AS total FROM gastos_operativos
-         WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+         WHERE deleted_at IS NULL AND factura_compra_id IS NULL AND fecha BETWEEN $1 AND $2`,
         [desde, hasta],
       ),
       // Ingresos manuales del periodo

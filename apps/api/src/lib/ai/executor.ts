@@ -14,10 +14,13 @@
  */
 import type { PoolClient } from 'pg'
 import {
+  CATEGORIAS_GASTO,
   MOVIMIENTOS_POR_TRANSICION,
   TRANSICIONES_VALIDAS,
   type EstadoPedido,
 } from '@antigravity/shared'
+
+import { generarNumeroOC } from '../numeracion.js'
 
 export interface ToolResult {
   success: boolean
@@ -146,17 +149,6 @@ async function generarNumeroPedido(db: PoolClient): Promise<string> {
   )
   const n = Number(rows[0]?.total ?? 0) + 1
   return `PED-${anio}-${String(n).padStart(4, '0')}`
-}
-
-async function generarNumeroOC(db: PoolClient): Promise<string> {
-  const anio = new Date().getFullYear()
-  await db.query("SELECT pg_advisory_xact_lock(hashtext('numero_oc'))")
-  const { rows } = await db.query<{ total: string }>(
-    `SELECT COUNT(*)::text AS total FROM pedidos_proveedor WHERE EXTRACT(YEAR FROM created_at) = $1`,
-    [anio],
-  )
-  const n = Number(rows[0]?.total ?? 0) + 1
-  return `OC-${anio}-${String(n).padStart(4, '0')}`
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -799,7 +791,11 @@ async function registrarAbono(args: RegistrarAbonoArgs, db: PoolClient): Promise
 async function registrarGasto(args: RegistrarGastoArgs, db: PoolClient): Promise<ToolResult> {
   await db.query('BEGIN')
   try {
-    const categoriasPermitidas = new Set(['arriendo', 'servicios', 'nomina', 'comisiones', 'marketing', 'otros'])
+    // Fuente de verdad única: agregar una categoría en @antigravity/shared la
+    // habilita acá sola. Antes esta lista estaba hardcodeada y rechazaba en
+    // silencio (cayendo a 'otros') categorías que la propia descripción de la
+    // herramienta le ofrecía al modelo.
+    const categoriasPermitidas = new Set<string>(CATEGORIAS_GASTO)
     const categoria = args.categoria && categoriasPermitidas.has(args.categoria) ? args.categoria : 'otros'
 
     // Si tiene cuenta, validar saldo suficiente

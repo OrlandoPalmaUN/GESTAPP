@@ -121,11 +121,14 @@ export async function limpiarDatos(): Promise<void> {
     await client.query(`SET search_path TO "${SCHEMA}", public`)
     // El orden respeta las llaves foráneas.
     for (const t of [
-      'abonos', 'facturas_venta', 'facturas_compra',
+      // `gastos_operativos` va ANTES que `facturas_compra`: desde que un gasto
+      // puede quedar a crédito, referencia la CxP que generó, y borrar la
+      // factura primero rompe esa FK.
+      'abonos', 'facturas_venta', 'gastos_operativos', 'facturas_compra',
       'pedido_items', 'pedidos',
       'pedidos_proveedor_items', 'pedidos_proveedor',
       'movimientos_inventario', 'transferencias_bancarias',
-      'gastos_operativos', 'ingresos_bancarios',
+      'ingresos_bancarios',
       'variantes_producto', 'producto_atributos', 'productos',
       'clientes', 'proveedores', 'cuentas_bancarias',
     ]) {

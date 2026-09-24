@@ -40,8 +40,11 @@ export function MoneyInput({
   const texto = value === '' ? '' : formatMoneyInput(String(value));
 
   return (
-    <div className="relative">
-      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-neutral-600 select-none">
+    <div className="relative w-full">
+      {/* `text-xs` explícito: sin él el `$` hereda el tamaño del modal que lo
+          contiene, así que su ancho cambia según dónde se use y el `pl-7` del
+          input deja de calzar. */}
+      <span className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-xs text-neutral-600 select-none">
         $
       </span>
       <input
@@ -58,7 +61,7 @@ export function MoneyInput({
           const limpio = e.target.value.replace(/\D/g, '');
           onChange(limpio === '' ? '' : parseMoney(limpio));
         }}
-        className={`pl-6 ${className}`}
+        className={`${className} pl-7`}
       />
     </div>
   );

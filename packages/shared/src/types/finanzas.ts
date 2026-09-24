@@ -75,7 +75,29 @@ export interface TransferenciaBancaria {
   createdAt: string
 }
 
-export const CATEGORIAS_GASTO = ['arriendo', 'servicios', 'nomina', 'comisiones', 'marketing', 'otros'] as const
+/**
+ * Tipos de gasto. FUENTE DE VERDAD — debe coincidir con el CHECK de
+ * `gastos_operativos.categoria` (migración 023). Solo se agrega: hay filas
+ * vivas con los valores viejos.
+ *
+ * No existe una categoría de "compra de inventario": esa plata se registra
+ * como `pedidos_proveedor` para que entre al stock y genere la CxP. Si se
+ * guardara como gasto, los reportes la restarían de la utilidad neta y además
+ * volverían a restar el costo de esa misma mercancía al venderla.
+ */
+export const CATEGORIAS_GASTO = [
+  'arriendo',
+  'servicios',
+  'nomina',
+  'comisiones',
+  'marketing',
+  'transporte',
+  'impuestos',
+  'mantenimiento',
+  'honorarios',
+  'financieros',
+  'otros',
+] as const
 export type CategoriaGasto = (typeof CATEGORIAS_GASTO)[number]
 
 /** Gasto operativo del negocio (arriendo, servicios, nómina, etc.). */
@@ -88,6 +110,10 @@ export interface GastoOperativo {
   medioPago: string | null
   cuentaBancariaId: string | null
   notas: string | null
+  /** Solo en gastos a crédito: a quién se le debe. */
+  proveedorId: string | null
+  /** CxP generada cuando el gasto quedó debiendo. `null` = se pagó al momento. */
+  facturaCompraId: string | null
   usuarioId: string | null
   createdAt: string
 }

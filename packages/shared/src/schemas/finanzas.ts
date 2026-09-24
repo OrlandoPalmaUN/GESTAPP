@@ -102,16 +102,33 @@ export const crearIngresoBancarioSchema = z.object({
 })
 
 /** Registrar un gasto operativo. */
-export const crearGastoOperativoSchema = z.object({
-  descripcion: z.string().trim().min(1, 'La descripción es obligatoria.'),
-  categoria: categoriaGastoSchema.default('otros'),
-  monto: z.number().positive('El monto debe ser mayor que cero.'),
-  fecha: z.string().optional(),
-  medioPago: z.string().optional(),
-  /** Si se provee, el API descuenta el monto de esta cuenta bancaria (atomicamente). */
-  cuentaBancariaId: z.uuid().optional(),
-  notas: z.string().optional(),
-})
+export const crearGastoOperativoSchema = z
+  .object({
+    descripcion: z.string().trim().min(1, 'La descripción es obligatoria.'),
+    categoria: categoriaGastoSchema.default('otros'),
+    monto: z.number().positive('El monto debe ser mayor que cero.'),
+    fecha: z.string().optional(),
+    medioPago: z.string().optional(),
+    /** Si se provee, el API descuenta el monto de esta cuenta bancaria (atomicamente). */
+    cuentaBancariaId: z.uuid().optional(),
+    notas: z.string().optional(),
+    /**
+     * `true` = queda debiendo: en vez de mover el banco se genera una cuenta
+     * por pagar al proveedor, que después se salda con abonos.
+     */
+    aCredito: z.boolean().default(false),
+    proveedorId: z.uuid().optional(),
+    /** Solo aplica a crédito. Por defecto, 30 días. */
+    fechaVencimiento: z.string().optional(),
+  })
+  .refine((d) => !d.aCredito || !!d.proveedorId, {
+    message: 'Para dejar el gasto a crédito tenés que indicar a qué proveedor se le debe.',
+    path: ['proveedorId'],
+  })
+  .refine((d) => !d.aCredito || !d.cuentaBancariaId, {
+    message: 'Un gasto a crédito no sale de una cuenta bancaria — se paga después con un abono.',
+    path: ['cuentaBancariaId'],
+  })
 
 /**
  * Corregir un gasto ya registrado. A diferencia de `abonos` —donde el monto es

@@ -102,21 +102,39 @@ export const ENTIDADES_PAPELERA = {
   },
   gasto_operativo: {
     tabla: 'gastos_operativos',
-    columnas: 'id, descripcion, monto, cuenta_bancaria_id, deleted_at',
+    columnas: 'id, descripcion, monto, cuenta_bancaria_id, factura_compra_id, deleted_at',
     etiqueta: (r) => `Gasto "${String(r.descripcion)}" · $${Number(r.monto).toLocaleString('es-CO')}`,
-    // Al restaurar, re-aplica el descuento a la cuenta bancaria.
+    // Al restaurar, re-aplica el descuento a la cuenta bancaria y revive la CxP
+    // si el gasto había quedado a crédito (el DELETE la borró junto con él).
     alRestaurar: async (tenantDb, id) => {
-      const { rows } = await tenantDb.query<{ monto: string; cuenta_bancaria_id: string | null }>(
-        'SELECT monto, cuenta_bancaria_id FROM gastos_operativos WHERE id = $1',
+      const { rows } = await tenantDb.query<{ monto: string; cuenta_bancaria_id: string | null; factura_compra_id: string | null }>(
+        'SELECT monto, cuenta_bancaria_id, factura_compra_id FROM gastos_operativos WHERE id = $1',
         [id],
       )
       const gasto = rows[0]
-      if (!gasto?.cuenta_bancaria_id) return
+      if (!gasto) return
+      if (gasto.factura_compra_id) {
+        await tenantDb.query('UPDATE facturas_compra SET deleted_at = NULL WHERE id = $1', [gasto.factura_compra_id])
+      }
+      if (!gasto.cuenta_bancaria_id) return
       await tenantDb.query(
         'UPDATE cuentas_bancarias SET saldo = saldo - $1 WHERE id = $2 AND deleted_at IS NULL',
         [gasto.monto, gasto.cuenta_bancaria_id],
       )
     },
+  },
+  /**
+   * Las compras (antes "órdenes de compra") no estaban registradas acá, así que
+   * una compra borrada desaparecía sin forma de recuperarla — justo lo contrario
+   * de lo que promete la papelera. Solo se pueden borrar compras que no
+   * recibieron mercancía ni generaron CxP (lo valida `DELETE /compras/:id`), así
+   * que restaurarlas no necesita revertir nada: no hay movimientos de inventario
+   * ni facturas asociadas que reponer.
+   */
+  pedido_proveedor: {
+    tabla: 'pedidos_proveedor',
+    columnas: 'id, numero, total, deleted_at',
+    etiqueta: (r) => `Compra ${String(r.numero)} · $${Number(r.total).toLocaleString('es-CO')}`,
   },
   ingreso_bancario: {
     tabla: 'ingresos_bancarios',

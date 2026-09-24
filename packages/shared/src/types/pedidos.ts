@@ -36,6 +36,12 @@ export interface PedidoProveedor {
   numero: string
   proveedorId: string | null
   estado: EstadoPedidoProveedor
+  /**
+   * Fecha de negocio de la compra (`YYYY-MM-DD`). Antes se usaba `createdAt`,
+   * que es timestamptz: en UTC-5 el límite del mes se corría ~5 horas respecto
+   * de los gastos (que sí usan `fecha`), y no se podía retro-fechar una compra.
+   */
+  fecha: string
   fechaEsperada: string | null
   notas: string | null
   total: number

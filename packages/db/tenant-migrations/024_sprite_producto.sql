@@ -1,4 +1,4 @@
--- Migración 023 — ilustración (sprite) por producto.
+-- Migración 024 — ilustración (sprite) por producto.
 --
 -- El inventario solo se podía leer como números en una tabla. Para negocios
 -- con pocos productos y cantidades bajas (una tienda de barrio, un puesto de

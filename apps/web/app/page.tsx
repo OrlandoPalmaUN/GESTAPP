@@ -5,6 +5,7 @@ import { IgDashboard } from '../components/redes/IgDashboard';
 import { ProductSprite } from '../components/sprites/ProductSprite';
 import { SpritePicker } from '../components/sprites/SpritePicker';
 import { StockVitrina } from '../components/sprites/StockVitrina';
+import { LoadingScreen } from '../components/LoadingScreen';
 import { AiChat } from '../components/ai/AiChat';
 import { AiNotasHelper } from '../components/ai/AiNotasHelper';
 import { useRouter } from 'next/navigation';
@@ -41,8 +42,13 @@ import {
   X,
   BarChart2,
   ChevronDown,
+  ChevronUp,
   Footprints,
   Menu,
+  KanbanSquare,
+  Undo2,
+  Filter,
+  LogOut,
 } from 'lucide-react';
 
 import { UNIDADES_COMUNES } from '@antigravity/shared';
@@ -81,7 +87,7 @@ function tiempoRelativo(iso: string): string {
 
 const ENTIDAD_LABELS: Record<string, string> = {
   productos: 'Producto', categorias: 'Categoría', clientes: 'Cliente', proveedores: 'Proveedor',
-  pedidos: 'Pedido', pedido_items: 'Ítem de pedido', pedidos_proveedor: 'Orden de compra', pedidos_proveedor_items: 'Ítem de OC',
+  pedidos: 'Pedido', pedido_items: 'Ítem de pedido', pedidos_proveedor: 'Compra de inventario', pedidos_proveedor_items: 'Ítem de compra',
   facturas_venta: 'Factura de venta', facturas_compra: 'Factura de compra', abonos: 'Abono', gastos_operativos: 'Gasto',
   ingresos_bancarios: 'Ingreso bancario', cuentas_bancarias: 'Cuenta bancaria', transferencias_bancarias: 'Transferencia',
   eventos_calendario: 'Evento de calendario', notas_crm: 'Nota CRM', notas_internas: 'Nota interna',
@@ -132,11 +138,23 @@ const TRANSICIONES_VALIDAS_PROVEEDOR: Record<EstadoPedidoProveedor, EstadoPedido
 };
 
 // Local copy of CATEGORIAS_GASTO (mirrors shared) — avoids value import from @antigravity/shared.
-const CATEGORIAS_GASTO_LOCAL: CategoriaGasto[] = ['arriendo', 'servicios', 'nomina', 'comisiones', 'marketing', 'otros'];
+// Fuente de verdad: CATEGORIAS_GASTO en packages/shared/src/types/finanzas.ts
+// (copia local para no forzar un import de valor desde @antigravity/shared).
+// Agregar uno acá exige agregarlo también allá y en el CHECK de la migración.
+const CATEGORIAS_GASTO_LOCAL: CategoriaGasto[] = [
+  'arriendo', 'servicios', 'nomina', 'comisiones', 'marketing',
+  'transporte', 'impuestos', 'mantenimiento', 'honorarios', 'financieros', 'otros',
+];
 const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
   arriendo: 'Arriendo', servicios: 'Servicios', nomina: 'Nómina',
-  comisiones: 'Comisiones', marketing: 'Marketing', otros: 'Otros',
+  comisiones: 'Comisiones', marketing: 'Marketing', transporte: 'Transporte',
+  impuestos: 'Impuestos', mantenimiento: 'Mantenimiento', honorarios: 'Honorarios',
+  financieros: 'Financieros', otros: 'Otros',
 };
+
+/** Tipo de "compra de inventario" en el selector del formulario. NO es una categoría persistida:
+ *  esas filas viven en `pedidos_proveedor`, no en `gastos_operativos`. */
+const TIPO_COMPRA_INVENTARIO = '__compra_inventario__';
 
 import { api, ApiError, type EntradaAuditoria, type ProductoAtributo, type ResultadoBusqueda, type VarianteProducto } from '../lib/api';
 import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
@@ -145,6 +163,7 @@ import { BuscadorGlobal } from '../components/BuscadorGlobal';
 import { CarteraPorEdades } from '../components/CarteraPorEdades';
 import { FlujoDeCaja } from '../components/FlujoDeCaja';
 import { usePaginacion, Paginador } from '../components/Paginador';
+import { Combobox } from '../components/Combobox';
 import { linkWhatsApp, mensajePedido, mensajeEstadoDeCuenta } from '../lib/whatsapp';
 import {
   leerEstadoUrl, escribirEstadoUrl, valorInicialDeUrl, pedidoInicialDeUrl,
@@ -571,7 +590,7 @@ export default function AppHome() {
   const [reportesAño, setReportesAño] = useState(() => new Date().getFullYear());
   const [reportesOverview, setReportesOverview] = useState<Array<{
     label: string; desde: string; hasta: string; mes: number; año: number;
-    pedidos: number; ventas: number; gastos: number; gananciaAprox: number; tieneDatos: boolean;
+    pedidos: number; ventas: number; ingresos: number; egresos: number; balance: number; tieneDatos: boolean;
   }> | null>(null);
   const [reportesOverviewCargando, setReportesOverviewCargando] = useState(false);
   const [reportesOverviewError, setReportesOverviewError] = useState<string | null>(null);
@@ -580,12 +599,10 @@ export default function AppHome() {
   type ReporteDetalle = {
     periodo: { label: string; desde: string; hasta: string };
     ventas: { total: number; pedidos: number; ticketPromedio: number; delta: number | null; deltaPedidos: number | null };
-    compras: { total: number; oc: number; delta: number | null };
-    costoVentas: { total: number; ventasSinCosto: number };
-    gastos: { total: number; delta: number | null };
-    ingresosManuales: number; cxcCobrada: number;
-    margenBruto: { total: number; porcentaje: number; delta: number | null; ventasSinCosto: number };
-    utilidadNeta: number;
+    // Flujo de caja del período: plata que entró vs. plata que salió.
+    ingresos: { cxcCobrada: number; manuales: number; total: number; delta: number | null };
+    egresos: { cxpPagada: number; gastos: number; total: number; delta: number | null };
+    balance: { total: number; delta: number | null };
     topProductos: { nombre: string; categoria: string | null; unidades: number; ventasTotal: number }[];
   };
   const [reportesDetalleMes, setReportesDetalleMes] = useState<ReporteDetalle | null>(null);
@@ -607,7 +624,7 @@ export default function AppHome() {
   const [reportesCalorPedidos, setReportesCalorPedidos] = useState<CalorCelda[] | null>(null);
   const [reportesCalorIG, setReportesCalorIG] = useState<CalorIG[] | null>(null);
   const [reportesCalorCargando, setReportesCalorCargando] = useState(false);
-  type SemanaComp = { semana: number; label: string; desde: string; hasta: string; pedidos: number; ventas: number; gastos: number; costoVentas: number; margenBruto: number; utilidadNeta: number; topProducto: { nombre: string; ventas: number } | null };
+  type SemanaComp = { semana: number; label: string; desde: string; hasta: string; pedidos: number; ventas: number; ingresos: number; egresos: number; balance: number; topProducto: { nombre: string; ventas: number } | null };
   const [reportesSemComp, setReportesSemComp] = useState<SemanaComp[] | null>(null);
   const [reportesSemCompCargando, setReportesSemCompCargando] = useState(false);
   const [superAdminMode, setSuperAdminMode] = useState<boolean>(false);
@@ -676,11 +693,30 @@ export default function AppHome() {
   const [gastosCargando, setGastosCargando] = useState(false);
   const [gastosError, setGastosError] = useState<string | null>(null);
   const [showGastoModal, setShowGastoModal] = useState(false);
-  const [gastoForm, setGastoForm] = useState<{ descripcion: string; categoria: CategoriaGasto; monto: string; fecha: string; medioPago: string; cuentaBancariaId: string; notas: string }>({
-    descripcion: '', categoria: 'otros', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '',
+  /**
+   * Formulario único de Gastos. `tipo` es o una CategoriaGasto o
+   * TIPO_COMPRA_INVENTARIO — en ese caso el gasto se registra como compra
+   * (entra al stock y genera CxP) en vez de como gasto operativo.
+   */
+  const [gastoForm, setGastoForm] = useState<{
+    tipo: string; descripcion: string; monto: string; fecha: string; medioPago: string;
+    cuentaBancariaId: string; notas: string; aCredito: boolean; proveedorId: string; fechaVencimiento: string;
+    items: { productoId: string; cantidad: string; precioUnitario: string }[];
+  }>({
+    tipo: 'otros', descripcion: '', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '',
+    notas: '', aCredito: false, proveedorId: '', fechaVencimiento: '',
+    items: [{ productoId: '', cantidad: '1', precioUnitario: '' }],
   });
   const [guardandoGasto, setGuardandoGasto] = useState(false);
   const [gastoFormError, setGastoFormError] = useState<string | null>(null);
+  const [revirtiendoCompra, setRevirtiendoCompra] = useState<string | null>(null);
+  /** Edición de gasto: el PATCH existía en el API desde siempre pero no tenía UI,
+   *  así que corregir un typo obligaba a borrar y volver a crear — y eso ensucia
+   *  la auditoría con un borrado que en realidad fue una corrección. */
+  const [editandoGasto, setEditandoGasto] = useState<GastoOperativo | null>(null);
+  const [editGastoForm, setEditGastoForm] = useState({ descripcion: '', categoria: 'otros' as CategoriaGasto, monto: '', fecha: '', notas: '' });
+  const [guardandoEditGasto, setGuardandoEditGasto] = useState(false);
+  const [editGastoError, setEditGastoError] = useState<string | null>(null);
 
   // --- Ingresos bancarios manuales ---
   const [ingresos, setIngresos] = useState<IngresoBancario[]>([]);
@@ -697,7 +733,6 @@ export default function AppHome() {
   // ingresos. Antes se renderizaba cada fila existente en cada re-render de
   // la página — y como casi no hay useMemo, eso pasaba en cada tecleo.
   const movimientosPag = usePaginacion(movements, 25);
-  const gastosPag = usePaginacion(gastos, 25);
   const ingresosPag = usePaginacion(ingresos, 25);
   const [ingresoFormError, setIngresoFormError] = useState<string | null>(null);
 
@@ -770,6 +805,10 @@ export default function AppHome() {
 
   // --- Vista de pedidos ---
   const [pedidosVista, setPedidosVista] = useState<'lista' | 'kanban'>('lista');
+  /** Panel de Agrupar/Rango/Ordenar/Vista — colapsado por defecto detrás del botón "Filtros" para no tapar la lista. */
+  const [pedidosFiltrosAbiertos, setPedidosFiltrosAbiertos] = useState(false);
+  /** Kanban de "Pendientes" — agrupa por etapa de flujo (no por estado individual) y excluye entregado/cancelado, a diferencia del Kanban de arriba. */
+  const [showPendientesKanban, setShowPendientesKanban] = useState(false);
   const [pedidoExpandido, setPedidoExpandido] = useState<string | null>(null);
   const [pedidosOrden, setPedidosOrden] = useState<'fecha_desc' | 'fecha_asc' | 'total_desc' | 'total_asc' | 'estado' | 'cliente'>('fecha_desc');
   const [pedidosAgrupacion, setPedidosAgrupacion] = useState<'dia' | 'semana' | 'mes'>('dia');
@@ -782,16 +821,6 @@ export default function AppHome() {
   const [compras, setCompras] = useState<PedidoProveedor[]>([]);
   const [comprasCargando, setComprasCargando] = useState(false);
   const [comprasError, setComprasError] = useState<string | null>(null);
-  const [showCreateCompra, setShowCreateCompra] = useState(false);
-  const [compraForm, setCompraForm] = useState<{
-    proveedorId: string;
-    fechaEsperada: string;
-    notas: string;
-    totalManual: string;
-    items: { productoId: string; concepto: string; esLibre: boolean; cantidad: string; precioUnitario: string }[];
-  }>({ proveedorId: '', fechaEsperada: '', notas: '', totalManual: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
-  const [guardandoCompra, setGuardandoCompra] = useState(false);
-  const [compraFormError, setCompraFormError] = useState<string | null>(null);
   const [selectedCompra, setSelectedCompra] = useState<PedidoProveedor | null>(null);
   const [editingCompra, setEditingCompra] = useState<PedidoProveedor | null>(null);
   const [editCompraForm, setEditCompraForm] = useState<{
@@ -804,9 +833,89 @@ export default function AppHome() {
   const [editCompraError, setEditCompraError] = useState<string | null>(null);
   const [transicionandoCompra, setTransicionandoCompra] = useState(false);
 
+  /**
+   * Listado unificado de Gastos: mezcla los gastos operativos con las compras a
+   * proveedor en una sola línea de tiempo.
+   *
+   * Las dos siguen siendo tablas distintas en la base (una compra mueve stock y
+   * genera CxP; un gasto no), pero para el dueño ambas son lo mismo: plata que
+   * sale. Tener dos secciones separadas hacía que la de Compras quedara sin
+   * usar. Acá se juntan solo para mostrar — nada se migró ni se borró, y las
+   * compras viejas siguen abriendo su propio detalle con sus recepciones.
+   */
+  type FilaGastoUnificada = {
+    id: string
+    tipo: 'gasto' | 'compra'
+    fecha: string
+    descripcion: string
+    etiquetaTipo: string
+    monto: number
+    proveedorNombre: string | null
+    /**
+     * Si todavía se debe plata por esta fila. Se mira el saldo REAL de la
+     * cuenta por pagar, no si existe: una compra pagada también genera su CxP
+     * (queda saldada por el abono automático), así que preguntar solo por la
+     * existencia marcaba "Debiendo" todo lo que se pagó al contado.
+     */
+    debiendo: boolean
+    /** Solo compras: permite mostrar el estado y decidir si se puede revertir. */
+    compra?: PedidoProveedor
+    gasto?: GastoOperativo
+  };
+
+  const gastosUnificados = useMemo<FilaGastoUnificada[]>(() => {
+    // Se debe plata si la CxP que generó todavía tiene saldo. Sin CxP, el
+    // gasto salió de la cuenta en el momento: no se debe nada.
+    const seDebe = (facturaCompraId: string | null | undefined): boolean => {
+      if (!facturaCompraId) return false;
+      const cxp = invoices.find((i) => i.id === facturaCompraId);
+      return cxp ? cxp.saldo_pendiente > 0 : true;
+    };
+
+    const deGastos: FilaGastoUnificada[] = gastos.map((g) => ({
+      id: `g-${g.id}`,
+      tipo: 'gasto',
+      fecha: g.fecha,
+      descripcion: g.descripcion,
+      etiquetaTipo: LABEL_CATEGORIA_GASTO[g.categoria] ?? g.categoria,
+      monto: g.monto,
+      proveedorNombre: g.proveedorId ? (suppliers.find((s) => s.id === g.proveedorId)?.nombre ?? null) : null,
+      debiendo: seDebe(g.facturaCompraId),
+      gasto: g,
+    }));
+
+    // Solo las compras cuya mercancía efectivamente entró son un egreso. Una
+    // OC vieja en borrador o enviada no movió ni stock ni plata todavía: si se
+    // listara acá inflaría el total del período y aparecería dos veces en la
+    // pantalla, porque ya tiene su propio panel de "pendientes de recibir".
+    const deCompras: FilaGastoUnificada[] = compras
+      .filter((c) => c.estado === 'recibido' || c.estado === 'recibido_parcial')
+      .map((c) => ({
+        id: `c-${c.id}`,
+        tipo: 'compra',
+        fecha: c.fecha,
+        descripcion: c.notas?.trim() || `Compra ${c.numero}`,
+        etiquetaTipo: 'Compra de inventario',
+        monto: c.total,
+        proveedorNombre: c.proveedorId ? (suppliers.find((s) => s.id === c.proveedorId)?.nombre ?? null) : null,
+        debiendo: seDebe(c.facturaCompraId),
+        compra: c,
+      }));
+
+    return [...deGastos, ...deCompras].sort((a, b) => b.fecha.localeCompare(a.fecha));
+  }, [gastos, compras, suppliers, invoices]);
+
+  const gastosPag = usePaginacion(gastosUnificados, 25);
+
   // --- SUB-TABS INTERNAS ---
-  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos'>(
-    () => valorInicialDeUrl('finanzas', FINANZAS_SUBTABS_VALIDAS, 'resumen'),
+  // `'compras'` sigue siendo un valor válido en la URL para no romper links y
+  // marcadores viejos, pero ya no tiene pestaña propia: cae en Gastos, que es
+  // donde ahora se registran y se ven las compras.
+  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos' | 'flujo'>(
+    () => {
+      const inicial = valorInicialDeUrl('finanzas', FINANZAS_SUBTABS_VALIDAS, 'resumen');
+      return inicial === 'compras' ? 'gastos' : inicial;
+    },
   );
 
   // --- BUSCADORES Y FILTROS ---
@@ -820,6 +929,51 @@ export default function AppHome() {
   const [inventarioVariantesCargando, setInventarioVariantesCargando] = useState<Set<string>>(new Set());
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>('all');
   const [crmTypeFilter, setCrmTypeFilter] = useState<'all' | 'clientes' | 'proveedores'>('clientes');
+
+  // --- Inventario: colecciones (categorías) colapsables y con orden propio ---
+  // Preferencia por navegador (no por cuenta) — igual que un acordeón de UI,
+  // no tiene sentido sincronizarla entre dispositivos ni tenants.
+  const INVENTARIO_COLAPSADAS_KEY = 'gestapp_inventario_categorias_colapsadas';
+  const INVENTARIO_ORDEN_KEY = 'gestapp_inventario_orden_categorias';
+  const [categoriasColapsadas, setCategoriasColapsadas] = useState<Set<string>>(() => {
+    if (typeof window === 'undefined') return new Set();
+    try {
+      const raw = window.localStorage.getItem(INVENTARIO_COLAPSADAS_KEY);
+      return raw ? new Set(JSON.parse(raw) as string[]) : new Set();
+    } catch { return new Set(); }
+  });
+  const [ordenCategorias, setOrdenCategorias] = useState<string[]>(() => {
+    if (typeof window === 'undefined') return [];
+    try {
+      const raw = window.localStorage.getItem(INVENTARIO_ORDEN_KEY);
+      return raw ? (JSON.parse(raw) as string[]) : [];
+    } catch { return []; }
+  });
+  useEffect(() => {
+    try { window.localStorage.setItem(INVENTARIO_COLAPSADAS_KEY, JSON.stringify([...categoriasColapsadas])); } catch { /* localStorage puede fallar en modo privado — la preferencia simplemente no persiste */ }
+  }, [categoriasColapsadas]);
+  useEffect(() => {
+    try { window.localStorage.setItem(INVENTARIO_ORDEN_KEY, JSON.stringify(ordenCategorias)); } catch { /* ídem */ }
+  }, [ordenCategorias]);
+  const toggleCategoriaColapsada = (key: string) => {
+    setCategoriasColapsadas(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+  /** Mueve una categoría un puesto arriba/abajo dentro del orden guardado, arrancando desde el orden visible actual si todavía no hay uno propio. */
+  const moverCategoria = (keysVisibles: string[], key: string, direccion: -1 | 1) => {
+    setOrdenCategorias(prev => {
+      const base = prev.length > 0 ? [...prev] : [...keysVisibles];
+      for (const k of keysVisibles) if (!base.includes(k)) base.push(k);
+      const i = base.indexOf(key);
+      const j = i + direccion;
+      if (i === -1 || j < 0 || j >= base.length) return prev;
+      [base[i], base[j]] = [base[j] as string, base[i] as string];
+      return base;
+    });
+  };
 
   // --- ESTADOS DE DIÁLOGOS Y WIZARDS ---
   // 1. Crear producto
@@ -1109,6 +1263,9 @@ export default function AppHome() {
   // producto — viaja como `{ concepto, precioUnitario }` (ver `api.crearPedido`).
   const [shippingEnabled, setShippingEnabled] = useState(false);
   const [shippingPrice, setShippingPrice] = useState('');
+
+  // 3b. Dashboard — "Registrar Ingreso": elegir entre Abono (a factura CxC) o Ingreso manual
+  const [showRegistrarIngresoChoice, setShowRegistrarIngresoChoice] = useState(false);
 
   // 4. Registrar abono
   const [showAllCxC, setShowAllCxC] = useState(false);
@@ -1597,7 +1754,8 @@ export default function AppHome() {
         setActiveTab(e.tab as typeof TABS_VALIDAS[number]);
       }
       if (e.finanzas && (FINANZAS_SUBTABS_VALIDAS as readonly string[]).includes(e.finanzas)) {
-        setFinanceSubTab(e.finanzas as typeof FINANZAS_SUBTABS_VALIDAS[number]);
+        const sub = e.finanzas as typeof FINANZAS_SUBTABS_VALIDAS[number];
+        setFinanceSubTab(sub === 'compras' ? 'gastos' : sub);
       }
       if (e.com && (COM_SUBTABS_VALIDAS as readonly string[]).includes(e.com)) {
         setComunicacionesSubTab(e.com as typeof COM_SUBTABS_VALIDAS[number]);
@@ -1708,32 +1866,153 @@ export default function AppHome() {
 
   useEffect(() => { void fetchGastos(); }, [fetchGastos]);
 
+  const gastoFormVacio = {
+    tipo: 'otros', descripcion: '', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '',
+    notas: '', aCredito: false, proveedorId: '', fechaVencimiento: '',
+    items: [{ productoId: '', cantidad: '1', precioUnitario: '' }],
+  };
+
+  /**
+   * Una sola puerta de entrada para todo lo que sale de plata. Según el tipo,
+   * el registro va a `gastos_operativos` (gasto operativo) o a
+   * `pedidos_proveedor` (compra de mercancía, que además entra al stock).
+   */
   const handleCrearGasto = async (e: React.FormEvent) => {
     e.preventDefault();
-    const monto = parseFloat(gastoForm.monto);
-    if (!gastoForm.descripcion.trim() || !monto || monto <= 0) {
-      setGastoFormError('Descripción y monto son obligatorios.');
+    setGastoFormError(null);
+
+    const esCompra = gastoForm.tipo === TIPO_COMPRA_INVENTARIO;
+
+    if (!gastoForm.descripcion.trim()) {
+      setGastoFormError('Escribí de qué se trata.');
       return;
     }
+    if (gastoForm.aCredito && !gastoForm.proveedorId) {
+      setGastoFormError('Para dejarlo debiendo, elegí a qué proveedor.');
+      return;
+    }
+    if (!gastoForm.aCredito && !gastoForm.cuentaBancariaId && esCompra) {
+      setGastoFormError('Indicá de qué cuenta salió el dinero, o marcalo como que quedó debiendo.');
+      return;
+    }
+
     setGuardandoGasto(true);
-    setGastoFormError(null);
     try {
-      await api.crearGasto({
-        descripcion: gastoForm.descripcion.trim(),
-        categoria: gastoForm.categoria,
-        monto,
-        fecha: gastoForm.fecha || undefined,
-        medioPago: gastoForm.medioPago || undefined,
-        cuentaBancariaId: gastoForm.cuentaBancariaId || undefined,
-        notas: gastoForm.notas || undefined,
-      });
+      if (esCompra) {
+        if (!gastoForm.proveedorId) {
+          setGastoFormError('Elegí el proveedor al que le compraste.');
+          setGuardandoGasto(false);
+          return;
+        }
+        const items = gastoForm.items
+          .filter((it) => it.productoId && parseFloat(it.cantidad) > 0)
+          .map((it) => ({
+            productoId: it.productoId,
+            cantidad: parseFloat(it.cantidad),
+            ...(it.precioUnitario ? { precioUnitario: parseFloat(it.precioUnitario) } : {}),
+          }));
+        if (items.length === 0) {
+          setGastoFormError('Agregá al menos un producto con su cantidad.');
+          setGuardandoGasto(false);
+          return;
+        }
+        const totalManual = gastoForm.monto ? parseFloat(gastoForm.monto) : undefined;
+        await api.crearCompraDirecta({
+          proveedorId: gastoForm.proveedorId,
+          descripcion: gastoForm.descripcion.trim(),
+          fecha: gastoForm.fecha || undefined,
+          items,
+          pagado: !gastoForm.aCredito,
+          cuentaBancariaId: !gastoForm.aCredito ? gastoForm.cuentaBancariaId : undefined,
+          medioPago: gastoForm.medioPago || undefined,
+          fechaVencimientoCxP: gastoForm.aCredito ? (gastoForm.fechaVencimiento || undefined) : undefined,
+          totalManual,
+        });
+      } else {
+        const monto = parseFloat(gastoForm.monto);
+        if (!monto || monto <= 0) {
+          setGastoFormError('El monto debe ser mayor que cero.');
+          setGuardandoGasto(false);
+          return;
+        }
+        await api.crearGasto({
+          descripcion: gastoForm.descripcion.trim(),
+          categoria: gastoForm.tipo as CategoriaGasto,
+          monto,
+          fecha: gastoForm.fecha || undefined,
+          medioPago: gastoForm.medioPago || undefined,
+          cuentaBancariaId: !gastoForm.aCredito ? (gastoForm.cuentaBancariaId || undefined) : undefined,
+          notas: gastoForm.notas || undefined,
+          aCredito: gastoForm.aCredito,
+          proveedorId: gastoForm.aCredito ? gastoForm.proveedorId : undefined,
+          fechaVencimiento: gastoForm.aCredito ? (gastoForm.fechaVencimiento || undefined) : undefined,
+        });
+      }
       setShowGastoModal(false);
-      setGastoForm({ descripcion: '', categoria: 'otros', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '' });
-      await Promise.all([fetchGastos(), fetchCuentasBancarias(), fetchResumen()]);
+      setGastoForm(gastoFormVacio);
+      await Promise.all([fetchGastos(), fetchCompras(), fetchCuentasBancarias(), fetchResumen(), fetchInventario(), fetchFinanzas()]);
     } catch (error) {
-      setGastoFormError(error instanceof ApiError ? error.message : 'No se pudo registrar el gasto.');
+      setGastoFormError(error instanceof ApiError ? error.message : 'No se pudo registrar.');
     } finally {
       setGuardandoGasto(false);
+    }
+  };
+
+  /** Deshace una compra recibida: saca el stock que entró y anula la CxP. */
+  const handleRevertirCompra = async (compra: PedidoProveedor) => {
+    const ok = window.confirm(
+      `¿Revertir la compra ${compra.numero}?\n\n` +
+      `Se descuenta del inventario la mercancía que había entrado y se anula la cuenta por pagar.\n` +
+      `El historial de movimientos queda: se agregan ajustes negativos, no se borra nada.`,
+    );
+    if (!ok) return;
+    setRevirtiendoCompra(compra.id);
+    try {
+      await api.revertirRecepcionCompra(compra.id);
+      await Promise.all([fetchCompras(), fetchInventario(), fetchFinanzas(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setGastosError(error instanceof ApiError ? error.message : 'No se pudo revertir la compra.');
+    } finally {
+      setRevirtiendoCompra(null);
+    }
+  };
+
+  const openEditGasto = (gasto: GastoOperativo) => {
+    setEditandoGasto(gasto);
+    setEditGastoForm({
+      descripcion: gasto.descripcion,
+      categoria: gasto.categoria,
+      monto: String(gasto.monto),
+      fecha: gasto.fecha,
+      notas: gasto.notas ?? '',
+    });
+    setEditGastoError(null);
+  };
+
+  const handleGuardarEditGasto = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editandoGasto) return;
+    const monto = parseFloat(editGastoForm.monto);
+    if (!editGastoForm.descripcion.trim() || !monto || monto <= 0) {
+      setEditGastoError('Descripción y monto son obligatorios.');
+      return;
+    }
+    setGuardandoEditGasto(true);
+    setEditGastoError(null);
+    try {
+      await api.actualizarGasto(editandoGasto.id, {
+        descripcion: editGastoForm.descripcion.trim(),
+        categoria: editGastoForm.categoria,
+        monto,
+        fecha: editGastoForm.fecha || undefined,
+        notas: editGastoForm.notas || null,
+      });
+      setEditandoGasto(null);
+      await Promise.all([fetchGastos(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setEditGastoError(error instanceof ApiError ? error.message : 'No se pudo guardar el gasto.');
+    } finally {
+      setGuardandoEditGasto(false);
     }
   };
 
@@ -1820,6 +2099,39 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
 
   useEffect(() => { void fetchResumen(); }, [fetchResumen]);
+
+  // --- Flujo de caja quincenal --- (día 1-15 y 16-fin de mes, cada uno
+  // calculado con el mismo endpoint de resumen financiero que usa un rango
+  // de fechas propio, así no se duplica la lógica de ingresos/egresos).
+  const hoyFlujo = new Date();
+  const [flujoAño, setFlujoAño] = useState(hoyFlujo.getFullYear());
+  const [flujoMes, setFlujoMes] = useState(hoyFlujo.getMonth() + 1);
+  const [flujoQ1, setFlujoQ1] = useState<ResumenFinanciero | null>(null);
+  const [flujoQ2, setFlujoQ2] = useState<ResumenFinanciero | null>(null);
+  const [flujoCargando, setFlujoCargando] = useState(false);
+  const [flujoError, setFlujoError] = useState<string | null>(null);
+  const fetchFlujoCaja = useCallback(async (año: number, mes: number) => {
+    if (!usuario?.tenantId) return;
+    setFlujoCargando(true);
+    setFlujoError(null);
+    try {
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const ultimoDia = new Date(año, mes, 0).getDate();
+      const [{ resumen: q1 }, { resumen: q2 }] = await Promise.all([
+        api.resumenFinanciero(`${año}-${pad(mes)}-01`, `${año}-${pad(mes)}-15`),
+        api.resumenFinanciero(`${año}-${pad(mes)}-16`, `${año}-${pad(mes)}-${pad(ultimoDia)}`),
+      ]);
+      setFlujoQ1(q1);
+      setFlujoQ2(q2);
+    } catch (error) {
+      setFlujoError(error instanceof ApiError ? error.message : 'No se pudo calcular el flujo de caja quincenal.');
+    } finally {
+      setFlujoCargando(false);
+    }
+  }, [usuario?.tenantId]);
+  useEffect(() => {
+    if (activeTab === 'finanzas' && financeSubTab === 'flujo') void fetchFlujoCaja(flujoAño, flujoMes);
+  }, [activeTab, financeSubTab, flujoAño, flujoMes, fetchFlujoCaja]);
 
   // --- Reportes ---
 
@@ -2280,36 +2592,6 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
 
   useEffect(() => { void fetchCompras(); }, [fetchCompras]);
-
-  const handleCrearCompra = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setCompraFormError(null);
-    if (compraForm.items.length === 0) { setCompraFormError('Agrega al menos un ítem.'); return; }
-    setGuardandoCompra(true);
-    try {
-      const items = compraForm.items.map(item => {
-        if (item.esLibre) {
-          return { concepto: item.concepto, cantidad: parseFloat(item.cantidad) || 1, precioUnitario: parseFloat(item.precioUnitario) || 0 };
-        }
-        return { productoId: item.productoId, cantidad: parseFloat(item.cantidad) || 1, precioUnitario: parseFloat(item.precioUnitario) || 0 };
-      });
-      const totalManual = compraForm.totalManual ? parseFloat(compraForm.totalManual) : undefined;
-      await api.crearCompra({
-        proveedorId: compraForm.proveedorId || null,
-        fechaEsperada: compraForm.fechaEsperada || undefined,
-        notas: compraForm.notas || undefined,
-        totalManual,
-        items,
-      });
-      setShowCreateCompra(false);
-      setCompraForm({ proveedorId: '', fechaEsperada: '', notas: '', totalManual: '', items: [{ productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] });
-      await fetchCompras();
-    } catch (error) {
-      setCompraFormError(error instanceof ApiError ? error.message : 'No se pudo crear la orden de compra.');
-    } finally {
-      setGuardandoCompra(false);
-    }
-  };
 
   const handleTransicionarCompra = async (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
     // Sin proveedor no hay a quién registrarle la deuda — el backend ya lo
@@ -3020,7 +3302,12 @@ export default function AppHome() {
   const facturasVencidas = useMemo(() => invoices.filter((i) => i.estado === 'vencida'), [invoices]);
 
   // Indicador de carga del dashboard — se muestra skeleton en las métricas hasta que todos los datos lleguen.
-  const dashboardCargando = inventarioCargando || finanzasCargando || bankAccountsCargando || pedidosCargando;
+  const dashboardCargando = inventarioCargando || finanzasCargando || bankAccountsCargando || pedidosCargando || resumenCargando;
+
+  // Ingresos del mes — misma lógica que Reportes/Flujo de Caja: CxC cobrada +
+  // ingresos manuales. `resumenFinanciero` ya llega acotado al mes en curso
+  // (fetchResumen() sin fechas → el backend usa el mes actual por defecto).
+  const ingresosMes = resumenFinanciero ? resumenFinanciero.ingresosCxC + resumenFinanciero.ingresosManuales : 0;
 
   // Cuadrícula del calendario mensual — semanas completas (puede incluir días
   // del mes anterior/siguiente para rellenar la primera/última semana) y un
@@ -3431,13 +3718,22 @@ export default function AppHome() {
     })();
   };
 
+  // Sin usuario autenticado: el guard de arriba ya disparó el redirect a
+  // /login — no renderizamos el dashboard mientras eso ocurre, si no se ve
+  // el tablero vacío ("Sin empresa", $0 en todo) antes de salir de la página.
+  if (!usuario) {
+    return <LoadingScreen />;
+  }
+
   // 9. WhatsApp - Enviar mensaje de prueba
   return (
-    <main className="w-screen h-screen bg-white flex flex-col font-sans overflow-hidden">
+    <main className="w-screen h-screen h-[100dvh] bg-white flex flex-col font-sans overflow-hidden">
         
-        {/* NAVBAR SUPERIOR */}
-        <header className="border-b-2 border-black px-3 sm:px-6 py-3 sm:py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white z-10 gap-3">
-          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        {/* NAVBAR SUPERIOR — una sola fila siempre: la lupa queda arriba a la
+            derecha en vez de bajar a una segunda fila en mobile. "Salir" se
+            movió al menú lateral (ver abajo del todo del drawer). */}
+        <header className="border-b-2 border-black px-3 sm:px-6 py-3 sm:py-4 flex items-center justify-between bg-white z-10 gap-3">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0 flex-1">
             <button
               onClick={() => setSidebarOpen(true)}
               className="lg:hidden neo-btn p-2 shrink-0"
@@ -3479,13 +3775,12 @@ export default function AppHome() {
             )}
           </div>
 
-          <div className="flex items-center gap-4 text-xs font-mono">
-            {/* Buscador global — solo tiene sentido dentro de una empresa. */}
-            {tenant && !superAdminMode && (
-              <div className="hidden sm:block">
-                <BuscadorGlobal onIrA={irAResultadoBusqueda} />
-              </div>
-            )}
+          <div className="flex items-center gap-2 sm:gap-4 text-xs font-mono shrink-0">
+            {/* Buscador global — solo tiene sentido dentro de una empresa.
+                Colapsado a un ícono de lupa en todas las vistas; se expande
+                al hacer click (ver BuscadorGlobal) para no ocupar espacio
+                permanente en el header. */}
+            {tenant && !superAdminMode && <BuscadorGlobal onIrA={irAResultadoBusqueda} />}
 
             <div className="text-right hidden md:block">
               <div className="font-bold text-black flex items-center gap-1.5 justify-end">
@@ -3494,13 +3789,6 @@ export default function AppHome() {
               </div>
               <span className="text-neutral-500 font-medium">{usuario?.email ?? ''}</span>
             </div>
-
-            <button
-              onClick={() => void logout()}
-              className="border-2 border-black bg-white hover:bg-neutral-100 font-bold px-3 py-1.5 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] active:translate-x-[1px] active:translate-y-[1px] active:shadow-none transition-all"
-            >
-              Cerrar Sesión
-            </button>
           </div>
         </header>
 
@@ -3526,7 +3814,7 @@ export default function AppHome() {
               <span className="font-mono font-black text-sm tracking-tighter bg-black text-white px-2 py-1 select-none">
                 {"// GESTAPP"}
               </span>
-              <button onClick={() => setSidebarOpen(false)} className="neo-btn p-1.5" aria-label="Cerrar menú">
+              <button onClick={() => setSidebarOpen(false)} className="neo-btn p-3 sm:p-1.5" aria-label="Cerrar menú">
                 <X size={16} />
               </button>
             </div>
@@ -3559,19 +3847,12 @@ export default function AppHome() {
                 </span>
               </button>
 
-              {/* Compras/OC vive en el mismo panel que Finanzas, pero se entra
-                  desde acá: el dueño piensa "pedidos que me hacen" (Pedidos) y
-                  "pedidos que yo hago" (Compras). Tenerlo tres clics adentro de
-                  contabilidad no correspondía a cómo se usa. */}
-              <button
-                onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('compras'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'finanzas' && financeSubTab === 'compras' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                }`}
-              >
-                <PackagePlus size={18} />
-                <span>Compras / OC</span>
-              </button>
+              {/* "Compras / OC" dejó de ser una sección propia: para el dueño una
+                  orden de compra y un gasto son lo mismo (plata que sale), y tener
+                  dos lugares hacía que este quedara sin usar. Ahora se registra
+                  desde Gastos, eligiendo el tipo "Compra de inventario" — el
+                  atajo del menú lateral se oculta a pedido, sigue disponible
+                  como subpestaña dentro de Finanzas. */}
 
               <button
                 onClick={() => { setActiveTab('inventario'); setSuperAdminMode(false); setSidebarOpen(false); }}
@@ -3591,7 +3872,7 @@ export default function AppHome() {
               <button
                 onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('resumen'); setSuperAdminMode(false); setSidebarOpen(false); }}
                 className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                  activeTab === 'finanzas' && financeSubTab !== 'compras' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
+                  activeTab === 'finanzas' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
                 }`}
               >
                 <DollarSign size={18} />
@@ -3618,31 +3899,9 @@ export default function AppHome() {
                 <span>Clientes (CRM)</span>
               </button>
 
-              {/* Calendario y Notas, Redes Sociales, Reportes y Actividad:
-                  pausadas (ver SECCIONES_PAUSADAS) — código y datos intactos. */}
-              {!SECCIONES_PAUSADAS && (
-                <>
-                  <button
-                    onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('calendario'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                    className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                      activeTab === 'comunicaciones' && comunicacionesSubTab !== 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                    }`}
-                  >
-                    <CalendarDays size={18} />
-                    <span>Calendario y Notas</span>
-                  </button>
-
-                  <button
-                    onClick={() => { setActiveTab('comunicaciones'); setComunicacionesSubTab('redes'); setSuperAdminMode(false); setSidebarOpen(false); }}
-                    className={`w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-transparent hover:border-black active:bg-neutral-50 ${
-                      activeTab === 'comunicaciones' && comunicacionesSubTab === 'redes' && !superAdminMode ? 'bg-brand-blue text-white border-black' : 'text-black'
-                    }`}
-                  >
-                    <Instagram size={18} />
-                    <span>Redes Sociales</span>
-                  </button>
-                </>
-              )}
+              {/* Calendario, Notas y Redes Sociales ocultos del menú lateral a
+                  pedido — el módulo de Comunicaciones sigue funcionando, solo
+                  no tiene entrada visible en la navegación. */}
 
               {/* Reportes y Actividad son admin-only en el backend (márgenes,
                   utilidad, log de auditoría): se ocultan para que un empleado
@@ -3710,10 +3969,23 @@ export default function AppHome() {
                 <span className="text-green-600 font-extrabold">ONLINE</span>
               </div>
             </div>
+
+            {/* Cerrar sesión — antes vivía como botón en el header; se movió
+                acá abajo del todo del menú lateral para no competir con la
+                lupa por espacio en la barra superior. */}
+            <div className="p-4 border-t border-black">
+              <button
+                onClick={() => void logout()}
+                className="w-full text-left font-mono font-bold text-sm px-4 py-3 flex items-center gap-3 border-2 border-black bg-white hover:bg-brand-red hover:text-white hover:border-brand-red transition-colors"
+              >
+                <LogOut size={18} />
+                <span>Cerrar Sesión</span>
+              </button>
+            </div>
           </aside>
 
           {/* COLUMNA 2: ESPACIO DE TRABAJO CENTRAL */}
-          <section className="flex-1 p-3 sm:p-6 md:p-10 overflow-y-auto bg-neutral-50/50 flex flex-col gap-6 sm:gap-8">
+          <section className="flex-1 p-3 pb-24 sm:p-6 sm:pb-6 md:p-10 overflow-y-auto bg-neutral-50/50 flex flex-col gap-6 sm:gap-8">
 
             {/* --- MODO SUPER ADMIN --- */}
             {superAdminMode ? (
@@ -3826,15 +4098,21 @@ export default function AppHome() {
                       </div>
 
                       <div className="neo-card bg-white">
-                        <span className="font-mono text-[11px] text-neutral-500 font-bold">VENTAS DEL MES</span>
+                        <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS DEL MES</span>
                         {dashboardCargando ? (
                           <div className="h-8 w-36 bg-neutral-100 border border-neutral-300 mt-2 animate-pulse" />
                         ) : (
-                          <span className="text-2xl font-black text-black tracking-tight mt-2 block">${ventasMetrics.totalMes.toLocaleString('es-CO')} COP</span>
+                          <span className="text-2xl font-black text-black tracking-tight mt-2 block">${ingresosMes.toLocaleString('es-CO')} COP</span>
                         )}
                         <div className="flex items-center gap-1 text-[11px] text-green-600 font-bold mt-1">
                           <TrendingUp size={12} />
-                          {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : <span>{ventasMetrics.countMes} {ventasMetrics.countMes === 1 ? 'pedido' : 'pedidos'} este mes</span>}
+                          {dashboardCargando ? <div className="h-3 w-24 bg-neutral-100 border border-neutral-200 animate-pulse" /> : (
+                            <span>
+                              {ventasMetrics.countMes} {ventasMetrics.countMes === 1 ? 'pedido' : 'pedidos'} este mes
+                              {' · '}
+                              <span className="italic font-normal text-neutral-500">&quot;Ventas: ${ventasMetrics.totalMes.toLocaleString('es-CO')}&quot;</span>
+                            </span>
+                          )}
                         </div>
                       </div>
 
@@ -3878,11 +4156,11 @@ export default function AppHome() {
                         Hacer Pedido
                       </button>
                       <button
-                        onClick={() => { setActiveTab('finanzas'); setFinanceSubTab('cxc'); setShowCreateAbono(true); }}
+                        onClick={() => setShowRegistrarIngresoChoice(true)}
                         className="border-2 border-black bg-brand-blue text-white font-mono font-bold text-sm py-3 px-4 flex items-center justify-center gap-2 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)]"
                       >
                         <DollarSign size={16} />
-                        Agregar Abono
+                        Registrar Ingreso
                       </button>
                       <button
                         onClick={() => setShowGastoModal(true)}
@@ -3919,7 +4197,7 @@ export default function AppHome() {
                             <button
                               type="button"
                               onClick={() => setDashboardWeekOffset((o) => o - 1)}
-                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                              className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"
                               title="1 día atrás"
                             >
                               <ChevronLeft size={14} />
@@ -3937,7 +4215,7 @@ export default function AppHome() {
                             <button
                               type="button"
                               onClick={() => setDashboardWeekOffset((o) => o + 1)}
-                              className="neo-btn p-1.5 hover:bg-neutral-100"
+                              className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"
                               title="1 día adelante"
                             >
                               <ChevronRight size={14} />
@@ -4294,8 +4572,10 @@ export default function AppHome() {
                         {(() => {
                           const visibles = productosVisibles;
 
-                          // Agrupamos por categoría (orden alfabético; "Sin categoría" siempre al final)
-                          // así la tabla refleja la organización del inventario en vez de una lista plana.
+                          // Agrupamos por categoría — orden: primero el orden propio guardado
+                          // (`ordenCategorias`, editable con las flechas del encabezado), luego
+                          // alfabético para las que aún no se han reordenado; "Sin categoría"
+                          // siempre al final. Cada grupo se puede colapsar independientemente.
                           const SIN_CATEGORIA = '__sin_categoria__';
                           const grupos = new Map<string, { nombre: string; productos: typeof visibles }>();
                           for (const p of visibles) {
@@ -4307,8 +4587,14 @@ export default function AppHome() {
                           const gruposOrdenados = [...grupos.entries()].sort(([keyA, a], [keyB, b]) => {
                             if (keyA === SIN_CATEGORIA) return 1;
                             if (keyB === SIN_CATEGORIA) return -1;
+                            const iA = ordenCategorias.indexOf(keyA);
+                            const iB = ordenCategorias.indexOf(keyB);
+                            if (iA !== -1 && iB !== -1) return iA - iB;
+                            if (iA !== -1) return -1;
+                            if (iB !== -1) return 1;
                             return a.nombre.localeCompare(b.nombre);
                           });
+                          const keysReordenables = gruposOrdenados.map(([key]) => key).filter((key) => key !== SIN_CATEGORIA);
 
                           if (gruposOrdenados.length === 0) {
                             return (
@@ -4322,16 +4608,51 @@ export default function AppHome() {
                             );
                           }
 
-                          return gruposOrdenados.map(([key, grupo]) => (
+                          return gruposOrdenados.map(([key, grupo]) => {
+                            const colapsada = categoriasColapsadas.has(key);
+                            const posReordenable = keysReordenables.indexOf(key);
+                            return (
                             <tbody key={key}>
                               <tr className="bg-brand-sage/40 border-y border-black">
-                                <td colSpan={7} className="px-3 py-1.5 font-mono font-bold text-[11px] uppercase tracking-wide text-black flex items-center gap-2">
-                                  <Tag size={12} />
-                                  <span>{grupo.nombre}</span>
-                                  <span className="text-neutral-500 font-normal normal-case">({grupo.productos.length} {grupo.productos.length === 1 ? 'producto' : 'productos'})</span>
+                                <td colSpan={7} className="px-3 py-1.5 font-mono font-bold text-[11px] uppercase tracking-wide text-black">
+                                  <div className="flex items-center gap-2">
+                                    <button
+                                      type="button"
+                                      onClick={() => toggleCategoriaColapsada(key)}
+                                      className="p-2 sm:p-0.5 hover:bg-black/10 rounded shrink-0"
+                                      title={colapsada ? 'Expandir colección' : 'Colapsar colección'}
+                                    >
+                                      <ChevronDown size={13} className={`transition-transform ${colapsada ? '-rotate-90' : ''}`} />
+                                    </button>
+                                    <Tag size={12} />
+                                    <span>{grupo.nombre}</span>
+                                    <span className="text-neutral-500 font-normal normal-case">({grupo.productos.length} {grupo.productos.length === 1 ? 'producto' : 'productos'})</span>
+                                    {posReordenable !== -1 && (
+                                      <div className="flex items-center gap-1.5 sm:gap-0.5 ml-auto">
+                                        <button
+                                          type="button"
+                                          disabled={posReordenable === 0}
+                                          onClick={() => moverCategoria(keysReordenables, key, -1)}
+                                          className="p-2 sm:p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
+                                          title="Subir en el orden"
+                                        >
+                                          <ChevronUp size={13} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          disabled={posReordenable === keysReordenables.length - 1}
+                                          onClick={() => moverCategoria(keysReordenables, key, 1)}
+                                          className="p-2 sm:p-0.5 hover:bg-black/10 rounded disabled:opacity-25 disabled:hover:bg-transparent"
+                                          title="Bajar en el orden"
+                                        >
+                                          <ChevronDown size={13} />
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
-                              {grupo.productos.map((p) => {
+                              {!colapsada && grupo.productos.map((p) => {
                                 const stock = productStocks[p.id] ?? 0;
                                 const isCrit = stock <= p.stock_minimo;
                                 const variantesAbiertas = p.tiene_variantes && inventarioVariantesExpandido.has(p.id);
@@ -4383,16 +4704,16 @@ export default function AppHome() {
                                     </td>
                                     <td className="p-3 text-center">
                                       <div className="flex items-center justify-center gap-1.5">
-                                        <button type="button" onClick={() => openStockEntry(p)} className="neo-btn p-1.5 hover:bg-emerald-50 hover:text-emerald-700" title="Registrar entrada de stock">
+                                        <button type="button" onClick={() => openStockEntry(p)} className="neo-btn p-3 sm:p-1.5 hover:bg-emerald-50 hover:text-emerald-700" title="Registrar entrada de stock">
                                           <PackagePlus size={12} />
                                         </button>
-                                        <button type="button" onClick={() => { setStockAdjustProduct(p); setStockAdjustForm({ cantidad: '', motivo: 'merma', notas: '' }); setStockAdjustError(null); }} className="neo-btn p-1.5 hover:bg-orange-50 hover:text-orange-700" title="Registrar baja de stock">
+                                        <button type="button" onClick={() => { setStockAdjustProduct(p); setStockAdjustForm({ cantidad: '', motivo: 'merma', notas: '' }); setStockAdjustError(null); }} className="neo-btn p-3 sm:p-1.5 hover:bg-orange-50 hover:text-orange-700" title="Registrar baja de stock">
                                           <PackageMinus size={12} />
                                         </button>
-                                        <button type="button" onClick={() => openEditProduct(p)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar producto">
+                                        <button type="button" onClick={() => openEditProduct(p)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Editar producto">
                                           <Pencil size={12} />
                                         </button>
-                                        <button type="button" onClick={() => void handleDeleteProduct(p)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar producto">
+                                        <button type="button" onClick={() => void handleDeleteProduct(p)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar producto">
                                           <Trash2 size={12} />
                                         </button>
                                       </div>
@@ -4449,7 +4770,8 @@ export default function AppHome() {
                                 );
                               })}
                             </tbody>
-                          ));
+                            );
+                          });
                         })()}
                       </table>
                     </div>
@@ -4540,7 +4862,7 @@ export default function AppHome() {
                                   {/* Col 1: nombre + número */}
                                   <div className="flex flex-col min-w-0">
                                     <span className="font-bold text-black truncate leading-tight">{getOrderDisplayName(ord)}</span>
-                                    <span className="font-mono text-[11px] text-neutral-600 leading-tight">{ord.numero}</span>
+                                    <span className="font-mono text-xs text-neutral-600 leading-tight">{ord.numero}</span>
                                   </div>
 
                                   {/* Cols 2-4: en mobile son una fila flex que envuelve; desde sm: "desaparecen" (contents) y vuelven a ser columnas 2/3/4 del grid de arriba. */}
@@ -4642,10 +4964,44 @@ export default function AppHome() {
                       return (
                         <div className="flex flex-col gap-2">
 
-                          {/* Agrupación + slider + orden + vista + crear */}
-                          <div className="bg-white border-2 border-black p-3">
-                          <div className="flex flex-wrap gap-3 items-end justify-between">
-                            <div className="flex flex-wrap gap-3 items-end">
+                          {/* Barra de acciones: toggle de Filtros (Agrupar/Rango/Ordenar/Vista,
+                              colapsado por defecto) + Pendientes + Crear Pedido, siempre visibles. */}
+                          <div className="bg-white border-2 border-black p-3 flex flex-col gap-3">
+                          <div className="flex flex-wrap gap-2 items-center justify-between">
+                            <button
+                              type="button"
+                              onClick={() => setPedidosFiltrosAbiertos(v => !v)}
+                              className={`neo-btn text-xs py-2 px-3 flex items-center gap-1.5 shrink-0 ${pedidosFiltrosAbiertos ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                            >
+                              <Filter size={14} />
+                              <span>Filtros</span>
+                              {pedidosFiltrosAbiertos ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setShowPendientesKanban(true)}
+                                className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
+                              >
+                                <KanbanSquare size={14} />
+                                <span>Pendientes</span>
+                                <span className="bg-brand-blue text-white text-[11px] px-1.5 py-0.5 rounded font-sans">
+                                  {orders.filter(o => ['borrador', 'confirmado', 'en_preparacion', 'despachado'].includes(o.estado)).length}
+                                </span>
+                              </button>
+
+                              <button
+                                onClick={() => setShowCreateOrder(true)}
+                                className="neo-btn-primary text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
+                              >
+                                <Plus size={14} />
+                                <span>Crear Pedido</span>
+                              </button>
+                            </div>
+                          </div>
+
+                          {pedidosFiltrosAbiertos && (
+                          <div className="flex flex-wrap gap-3 items-end border-t border-neutral-200 pt-3">
 
                               {/* Agrupación */}
                               <div className="flex flex-col gap-1">
@@ -4669,8 +5025,37 @@ export default function AppHome() {
                                 </div>
                               </div>
 
-                              {/* Dual-range slider */}
-                              <div className="flex flex-col gap-1 min-w-[180px]">
+                              {/* Rango en celular: chips de preset.
+                                  El slider de abajo tiene dos thumbs de 14px que se
+                                  superponen — con el dedo es imposible agarrar el que
+                                  uno quiere, así que en móvil se ofrecen los rangos
+                                  que la gente realmente pide. */}
+                              <div className="flex flex-col gap-1 sm:hidden">
+                                <span className="font-mono text-[11px] text-neutral-600 uppercase font-bold">Rango</span>
+                                <div className="flex flex-wrap gap-1.5">
+                                  {([
+                                    ['Hoy', 0],
+                                    ['7 días', 7],
+                                    ['30 días', 30],
+                                    ['90 días', 90],
+                                  ] as const).map(([etiqueta, dias]) => {
+                                    const activo = pedidosAgrupacion === 'dia' && pedidosRangoA === dias && pedidosRangoB === 0;
+                                    return (
+                                      <button
+                                        key={etiqueta}
+                                        type="button"
+                                        onClick={() => { setPedidosAgrupacion('dia'); setPedidosRangoA(dias); setPedidosRangoB(0); }}
+                                        className={`font-mono text-[11px] font-bold px-3 py-2 border-2 border-black ${activo ? 'bg-black text-white' : 'bg-white hover:bg-neutral-50'}`}
+                                      >
+                                        {etiqueta}
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Dual-range slider — desde sm:, donde hay mouse o más espacio. */}
+                              <div className="hidden sm:flex flex-col gap-1 min-w-[180px]">
                                 <div className="flex justify-between">
                                   <span className="font-mono text-[11px] text-neutral-600 uppercase font-bold">Rango</span>
                                   <span className="font-mono text-[11px] font-bold text-black">
@@ -4751,19 +5136,12 @@ export default function AppHome() {
                                 </div>
                               </div>
                             </div>
-
-                            <button
-                              onClick={() => setShowCreateOrder(true)}
-                              className="neo-btn-primary text-xs py-2 px-4 flex items-center justify-center gap-1.5 shrink-0"
-                            >
-                              <Plus size={14} />
-                              <span>Crear Pedido</span>
-                            </button>
-                          </div>
+                          )}
                           </div>{/* cierre recuadro controles */}
 
-                          {/* Tabs de estado — recuadro propio, debajo */}
-                          <div className="bg-white border-2 border-black p-2.5 flex flex-wrap gap-1.5 items-center">
+                          {/* Tabs de estado — recuadro propio, debajo. Scroll horizontal en vez de
+                              envolver en varias filas: con 7 estados esa fila se comía media pantalla. */}
+                          <div className="bg-white border-2 border-black p-2.5 flex flex-nowrap gap-1.5 items-center overflow-x-auto scrollbar-thin">
                             {estadoTabs.map(({ val, label, inactiveCls, activeCls }) => {
                               const count = val === 'all' ? orders.length : orders.filter(o => o.estado === val).length;
                               const isActive = orderStatusFilter === val;
@@ -4772,7 +5150,7 @@ export default function AppHome() {
                                   key={val}
                                   type="button"
                                   onClick={() => setOrderStatusFilter(val)}
-                                  className={`font-mono text-[11px] font-bold px-2.5 py-1 border-2 transition-colors ${
+                                  className={`font-mono text-[11px] font-bold px-2.5 py-1 border-2 transition-colors shrink-0 whitespace-nowrap ${
                                     isActive ? activeCls : inactiveCls
                                   }`}
                                 >
@@ -4918,20 +5296,21 @@ export default function AppHome() {
 
                                 return (
                                   <div key={ord.id} className={`border ${estadoClases[ord.estado] ?? 'bg-white border-neutral-300'} mb-1`}>
-                                    {/* Row — en mobile apila [nombre+numero] arriba y [estado][total][acciones] en una fila que envuelve abajo; desde sm: vuelve al grid de 4 columnas fijas. */}
-                                    <div className="grid grid-cols-1 sm:[grid-template-columns:1fr_7rem_8rem_auto] items-center gap-x-3 gap-y-1.5 px-3 py-2 text-xs">
+                                    {/* Row rediseñada: código de pedido + cliente arriba, estado/pago/total
+                                        abajo, acciones a la derecha reducidas a solo íconos (gestionar +
+                                        expandir/colapsar) para que quepan sin encimarse en celular. */}
+                                    <div className="flex items-start gap-2 px-3 py-2 text-xs">
 
-                                      {/* Col 1: nombre + número */}
-                                      <div className="flex flex-col min-w-0">
-                                        <span className="font-bold text-black truncate leading-tight">{getOrderDisplayName(ord)}</span>
-                                        <span className="font-mono text-[11px] text-neutral-600 leading-tight">{ord.numero}</span>
-                                      </div>
-
-                                      {/* Cols 2-4: fila flex que envuelve en mobile; sm:contents las restaura como columnas 2/3/4. */}
-                                      <div className="flex items-center gap-2 flex-wrap sm:contents">
-                                        {/* Col 2: estado (ancho fijo, siempre alineado) */}
-                                        <div>
-                                          <span className={`inline-block border border-black text-[11px] font-mono font-bold px-1.5 py-0.5 sm:w-full text-center ${
+                                      {/* Info: código + cliente, luego estado + pago + total */}
+                                      <div className="flex-1 min-w-0 flex flex-col gap-1">
+                                        <div className="flex items-baseline gap-2 flex-wrap">
+                                          <span className="font-mono font-black text-black text-sm leading-tight">{ord.numero}</span>
+                                          <span className="bg-green-100 text-black text-xs font-bold px-2 py-0.5 rounded truncate max-w-[60%]">
+                                            {client?.nombre ?? 'Sin cliente'}
+                                          </span>
+                                        </div>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <span className={`inline-block border border-black text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                             ord.estado === 'borrador' ? 'bg-neutral-200 text-neutral-700' :
                                             ord.estado === 'confirmado' ? 'bg-blue-200 text-blue-800' :
                                             ord.estado === 'en_preparacion' ? 'bg-yellow-200 text-yellow-800' :
@@ -4939,31 +5318,35 @@ export default function AppHome() {
                                             ord.estado === 'entregado' ? 'bg-green-200 text-green-800' :
                                             'bg-red-200 text-red-800'
                                           }`}>{ord.estado.replace('_', ' ').toUpperCase()}</span>
-                                        </div>
-
-                                        {/* Col 3: total + saldo */}
-                                        <div className="flex flex-col sm:items-end min-w-0">
-                                          <span className="font-mono font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
                                           {cxcRow && cxcRow.saldo_pendiente > 0 ? (
-                                            <span className="font-mono text-[11px] font-bold text-brand-red">Debe ${cxcRow.saldo_pendiente.toLocaleString('es-CO')}</span>
+                                            <span className="bg-red-100 text-brand-red text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">Debe ${cxcRow.saldo_pendiente.toLocaleString('es-CO')}</span>
                                           ) : cxcRow && cxcRow.saldo_pendiente === 0 ? (
-                                            <span className="font-mono text-[11px] font-bold text-green-700">Pagado ✓</span>
+                                            <span className="bg-green-100 text-green-800 text-[11px] font-mono font-bold px-1.5 py-0.5 rounded">Pagado ✓</span>
                                           ) : null}
+                                          <span className="font-mono font-bold text-black ml-auto">${ord.total.toLocaleString('es-CO')}</span>
                                         </div>
+                                      </div>
 
-                                        {/* Col 4: acciones */}
-                                        <div className="flex items-center gap-1.5 shrink-0 ml-auto sm:ml-0">
-                                          <button
-                                            type="button"
-                                            onClick={() => setPedidoExpandido(isExpanded ? null : ord.id)}
-                                            className="font-mono text-[11px] font-bold border border-black bg-white px-2 py-1 hover:bg-neutral-100"
-                                          >{isExpanded ? 'Ocultar' : 'Ver detalle'}</button>
-                                          <button
-                                            type="button"
-                                            onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
-                                            className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-blue hover:text-white"
-                                          >Gestionar</button>
-                                        </div>
+                                      {/* Acciones: gestionar arriba, expandir/colapsar abajo — solo íconos */}
+                                      <div className="flex flex-col items-center gap-1 shrink-0">
+                                        <button
+                                          type="button"
+                                          title="Gestionar pedido"
+                                          aria-label="Gestionar pedido"
+                                          onClick={() => { setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
+                                          className="neo-btn p-1.5 hover:bg-brand-blue hover:text-white"
+                                        >
+                                          <Settings size={14} />
+                                        </button>
+                                        <button
+                                          type="button"
+                                          title={isExpanded ? 'Ocultar detalle' : 'Ver detalle'}
+                                          aria-label={isExpanded ? 'Ocultar detalle' : 'Ver detalle'}
+                                          onClick={() => setPedidoExpandido(isExpanded ? null : ord.id)}
+                                          className="neo-btn p-1.5 hover:bg-neutral-100"
+                                        >
+                                          {isExpanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                                        </button>
                                       </div>
                                     </div>
 
@@ -5131,21 +5514,22 @@ export default function AppHome() {
                   <div className="flex flex-col gap-4">
                     
                     {/* Tabs de Finanzas */}
-                    <div className="flex flex-wrap border-b-2 border-black bg-white">
-                      {(['resumen', 'cxc', 'cxp', 'gastos', 'ingresos'] as const).map((tab) => (
+                    <div className="flex flex-nowrap overflow-x-auto sm:flex-wrap border-b-2 border-black bg-white scrollbar-thin">
+                      {(['resumen', 'cxc', 'cxp', 'gastos', 'ingresos', 'flujo'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setFinanceSubTab(tab)}
-                          className={`font-mono text-xs font-bold px-4 py-3 border-r-2 border-black transition-all ${
+                          className={`font-mono text-xs font-bold px-4 py-3 border-r-2 border-black transition-all whitespace-nowrap shrink-0 ${
                             financeSubTab === tab
                               ? 'bg-brand-blue text-white'
                               : 'text-black hover:bg-neutral-50'
                           }`}
                         >
-                          {tab === 'resumen' && 'Resumen Financiero'}
+                          {tab === 'resumen' && 'Resumen'}
                           {tab === 'cxc' && 'CxC · Por Cobrar'}
                           {tab === 'cxp' && 'CxP · Por Pagar'}
-                          {tab === 'gastos' && 'Gastos Op.'}
+                          {tab === 'gastos' && 'Gastos y Compras'}
+                          {tab === 'flujo' && 'Flujo de Caja'}
                           {tab === 'ingresos' && 'Ingresos'}
                         </button>
                       ))}
@@ -5285,14 +5669,14 @@ export default function AppHome() {
                                     className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-sage/40"
                                     title="Transferir desde esta cuenta"
                                   >⇌ Transferir</button>
-                                  <button type="button" onClick={() => openEditBankAccountModal(ac)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar"><Pencil size={13} /></button>
+                                  <button type="button" onClick={() => openEditBankAccountModal(ac)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Editar"><Pencil size={13} /></button>
                                   {confirmDeleteBankAccountId === ac.id ? (
                                     <div className="flex items-center gap-1">
                                       <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn py-0.5 px-2 bg-brand-red text-white text-[11px] font-mono font-bold">Eliminar</button>
                                       <button type="button" onClick={() => setConfirmDeleteBankAccountId(null)} className="neo-btn py-0.5 px-2 text-[11px] font-mono">No</button>
                                     </div>
                                   ) : (
-                                    <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar"><Trash2 size={13} /></button>
+                                    <button type="button" onClick={() => void handleDeleteBankAccount(ac)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar"><Trash2 size={13} /></button>
                                   )}
                                 </div>
                               </div>
@@ -5358,8 +5742,8 @@ export default function AppHome() {
                                   </div>
                                   <div className="flex items-center gap-2 shrink-0">
                                     <span className="font-mono text-[11px] text-neutral-500">{fechaCorta(ab.fecha)}</span>
-                                    <button type="button" onClick={() => openEditAbono(ab)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar abono"><Pencil size={12} /></button>
-                                    <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
+                                    <button type="button" onClick={() => openEditAbono(ab)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Editar abono"><Pencil size={12} /></button>
+                                    <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
                                   </div>
                                 </div>
                               );
@@ -5385,15 +5769,15 @@ export default function AppHome() {
                                 setShowCreateAbono(true);
                               }
                             }}
-                            className="neo-btn-secondary text-xs py-1.5 flex items-center gap-1.5"
+                            className="neo-btn-secondary text-xs py-2.5 sm:py-1.5 flex items-center gap-1.5"
                           >
                             <Plus size={14} />
                             <span>Registrar Recaudo / Abono</span>
                           </button>
                         </div>
 
-                        <div className="neo-card bg-white p-0">
-                          <table className="w-full text-left border-collapse text-xs">
+                        <div className="neo-card bg-white p-0 sm:overflow-x-auto border-0 shadow-none sm:border-2 sm:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                          <table className="tabla-cards w-full sm:min-w-[700px] text-left border-collapse text-xs">
                             <thead>
                               <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
                                 <th className="p-3">FACTURA</th>
@@ -5415,14 +5799,14 @@ export default function AppHome() {
                                   return (
                                     <>
                                       <tr key={inv.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                        <td className="p-3 font-mono font-bold text-black">{inv.numero}</td>
-                                        <td className="p-3 font-semibold text-black">{client?.nombre}</td>
-                                        <td className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
-                                        <td className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
+                                        <td data-label="Factura" className="p-3 font-mono font-bold text-black">{inv.numero}</td>
+                                        <td data-label="Cliente" className="p-3 font-semibold text-black">{client?.nombre}</td>
+                                        <td data-label="Valor inicial" className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
+                                        <td data-label="Saldo" className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
                                           ${inv.saldo_pendiente.toLocaleString('es-CO')}
                                         </td>
-                                        <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
-                                        <td className="p-3 text-center">
+                                        <td data-label="Vencimiento" className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
+                                        <td data-label="Estado" className="p-3 text-center">
                                           <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                             inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
                                             inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
@@ -5431,15 +5815,15 @@ export default function AppHome() {
                                             {inv.estado.toUpperCase()}
                                           </span>
                                         </td>
-                                        <td className="p-3 text-center">
+                                        <td data-label="" className="p-3 text-center">
                                           <div className="flex items-center justify-center gap-1.5">
                                             {abonosInv.length > 0 && (
-                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver abonos">
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver abonos">
                                                 {expanded ? '▲' : `▼ ${abonosInv.length}`}
                                               </button>
                                             )}
-                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
-                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
+                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
+                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
                                           </div>
                                         </td>
                                       </tr>
@@ -5453,7 +5837,7 @@ export default function AppHome() {
                                                   <span className="text-neutral-500 w-24">{fechaCorta(ab.fecha)}</span>
                                                   <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
                                                   <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
-                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
+                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
                                                 </div>
                                               ))}
                                             </div>
@@ -5511,8 +5895,8 @@ export default function AppHome() {
                             <span className="font-mono text-xs text-neutral-500">Total saldo: <strong className="text-black">${invoices.filter(i => i.tipo === 'cxp').reduce((a, b) => a + b.saldo_pendiente, 0).toLocaleString('es-CO')}</strong></span>
                           </div>
                         </div>
-                        <div className="neo-card bg-white p-0">
-                          <table className="w-full text-left border-collapse text-xs">
+                        <div className="neo-card bg-white p-0 sm:overflow-x-auto border-0 shadow-none sm:border-2 sm:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                          <table className="tabla-cards w-full sm:min-w-[700px] text-left border-collapse text-xs">
                             <thead>
                               <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
                                 <th className="p-3">CÓDIGO</th>
@@ -5534,14 +5918,14 @@ export default function AppHome() {
                                   return (
                                     <>
                                       <tr key={inv.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                        <td className="p-3 font-mono font-bold text-black">{inv.numero}</td>
-                                        <td className="p-3 font-semibold text-black">{supp?.nombre ?? '—'}</td>
-                                        <td className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
-                                        <td className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
+                                        <td data-label="Código" className="p-3 font-mono font-bold text-black">{inv.numero}</td>
+                                        <td data-label="Proveedor" className="p-3 font-semibold text-black">{supp?.nombre ?? '—'}</td>
+                                        <td data-label="Total" className="p-3 text-right font-mono text-neutral-600">${inv.total.toLocaleString('es-CO')}</td>
+                                        <td data-label="Saldo" className={`p-3 text-right font-mono font-bold ${inv.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
                                           ${inv.saldo_pendiente.toLocaleString('es-CO')}
                                         </td>
-                                        <td className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
-                                        <td className="p-3 text-center">
+                                        <td data-label="Vence" className="p-3 text-center font-mono text-neutral-600">{inv.fecha_vencimiento}</td>
+                                        <td data-label="Estado" className="p-3 text-center">
                                           <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
                                             inv.estado === 'pagada' ? 'bg-green-100 text-green-800 border-green-400' :
                                             inv.estado === 'vencida' ? 'bg-brand-red text-white border-black' :
@@ -5550,10 +5934,10 @@ export default function AppHome() {
                                             {inv.estado.toUpperCase()}
                                           </span>
                                         </td>
-                                        <td className="p-3 text-center">
+                                        <td data-label="" className="p-3 text-center">
                                           <div className="flex items-center justify-center gap-1.5">
                                             {abonosInv.length > 0 && (
-                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver pagos">
+                                              <button type="button" onClick={() => setExpandedAbonosInvoiceId(expanded ? null : inv.id)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100 font-mono text-[11px]" title="Ver pagos">
                                                 {expanded ? '▲' : `▼ ${abonosInv.length}`}
                                               </button>
                                             )}
@@ -5567,8 +5951,8 @@ export default function AppHome() {
                                                 $ Pagar
                                               </button>
                                             )}
-                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
-                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
+                                            <button type="button" onClick={() => openEditInvoice(inv)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Editar factura"><Pencil size={12} /></button>
+                                            <button type="button" onClick={() => void handleDeleteInvoice(inv)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar factura"><Trash2 size={12} /></button>
                                           </div>
                                         </td>
                                       </tr>
@@ -5582,7 +5966,7 @@ export default function AppHome() {
                                                   <span className="text-neutral-500 w-24">{fechaCorta(ab.fecha)}</span>
                                                   <span className="flex-1 text-neutral-600 truncate">{ab.referencia || '—'}</span>
                                                   <span className="font-bold text-brand-red">-${ab.monto.toLocaleString('es-CO')}</span>
-                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar pago"><Trash2 size={12} /></button>
+                                                  <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar pago"><Trash2 size={12} /></button>
                                                 </div>
                                               ))}
                                             </div>
@@ -5601,188 +5985,140 @@ export default function AppHome() {
                       </div>
                     )}
 
-                    {/* COMPRAS / ÓRDENES DE COMPRA TAB */}
-                    {financeSubTab === 'compras' && (
-                      <div className="flex flex-col gap-4">
-                        <div className="flex justify-between items-center bg-white border-2 border-black p-3">
-                          <div>
-                            <span className="font-mono text-xs font-bold">ÓRDENES DE COMPRA</span>
-                            <span className="ml-2 text-xs text-neutral-500">({compras.length} en total)</span>
-                          </div>
-                          <button
-                            onClick={() => setShowCreateCompra(true)}
-                            className="neo-btn-secondary text-xs py-1.5 flex items-center gap-1.5"
-                          >
-                            <Plus size={14} /> Nueva Orden de Compra
-                          </button>
-                        </div>
+                    {/* La pestaña de Compras se eliminó: las compras ahora viven
+                        dentro de Gastos, en la lista unificada de abajo. */}
 
-                        {comprasError && (
-                          <div className="bg-red-50 border-2 border-red-600 text-red-700 p-3 text-xs font-mono">
-                            {comprasError}
-                            <button type="button" onClick={() => void fetchCompras()} className="ml-2 underline">Reintentar</button>
-                          </div>
-                        )}
-
-                        {comprasCargando && (
-                          <div className="bg-white border-2 border-black p-3 text-xs font-mono text-neutral-500">Cargando órdenes de compra...</div>
-                        )}
-
-                        <div className="neo-card bg-white p-0">
-                          <table className="w-full text-left border-collapse text-xs">
-                            <thead>
-                              <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
-                                <th className="p-3">OC NÚM.</th>
-                                <th className="p-3">PROVEEDOR</th>
-                                <th className="p-3 text-right">TOTAL</th>
-                                <th className="p-3 text-center">FECHA ESP.</th>
-                                <th className="p-3 text-center">ESTADO</th>
-                                <th className="p-3 text-center">CxP</th>
-                                <th className="p-3 text-center">ACCIONES</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {compras.map((oc) => {
-                                const prov = suppliers.find(s => s.id === oc.proveedorId);
-                                const cxpFactura = oc.facturaCompraId ? invoices.find(i => i.id === oc.facturaCompraId) : null;
-                                const transicionesValidas = TRANSICIONES_VALIDAS_PROVEEDOR[oc.estado];
-                                return (
-                                  <tr key={oc.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                    <td className="p-3 font-mono font-bold text-black">
-                                      <button type="button" onClick={() => setSelectedCompra(oc)} className="hover:underline text-brand-blue">{oc.numero}</button>
-                                    </td>
-                                    <td className="p-3 font-semibold text-black">{prov?.nombre ?? <span className="text-neutral-600 italic">Sin proveedor</span>}</td>
-                                    <td className="p-3 text-right font-mono text-neutral-700">${oc.total.toLocaleString('es-CO')}</td>
-                                    <td className="p-3 text-center font-mono text-neutral-500">{oc.fechaEsperada ?? '—'}</td>
-                                    <td className="p-3 text-center">
-                                      <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
-                                        oc.estado === 'recibido' ? 'bg-green-100 text-green-800 border-green-400' :
-                                        oc.estado === 'cancelado' ? 'bg-neutral-100 text-neutral-500 border-neutral-400' :
-                                        oc.estado === 'enviado' ? 'bg-brand-blue/10 text-brand-blue border-brand-blue' :
-                                        oc.estado === 'recibido_parcial' ? 'bg-brand-yellow/20 text-neutral-700 border-brand-yellow' :
-                                        'bg-white text-neutral-700 border-neutral-400'
-                                      }`}>
-                                        {oc.estado.replace('_', ' ').toUpperCase()}
-                                      </span>
-                                    </td>
-                                    <td className="p-3 text-center font-mono text-xs">
-                                      {cxpFactura ? (
-                                        <span className={`text-[11px] font-bold ${cxpFactura.saldo_pendiente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
-                                          {cxpFactura.numero}
-                                        </span>
-                                      ) : (
-                                        <span className="text-neutral-600 text-[11px]">—</span>
-                                      )}
-                                    </td>
-                                    <td className="p-3 text-center">
-                                      <div className="flex items-center justify-center gap-1">
-                                        {transicionesValidas.map(est => (
-                                          <button
-                                            key={est}
-                                            type="button"
-                                            disabled={transicionandoCompra}
-                                            onClick={() => void handleTransicionarCompra(oc, est)}
-                                            className="neo-btn px-1.5 py-1 text-[11px] font-mono hover:bg-brand-blue/10 disabled:opacity-50"
-                                            title={`Pasar a ${est}`}
-                                          >
-                                            {est === 'enviado' ? '→ Enviado' :
-                                             est === 'recibido_parcial' ? '→ Parcial' :
-                                             est === 'recibido' ? '→ Recibido' :
-                                             est === 'cancelado' ? '✕' : est}
-                                          </button>
-                                        ))}
-                                        <button type="button" onClick={() => void handleEliminarCompra(oc)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar OC"><Trash2 size={11} /></button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                              {compras.length === 0 && !comprasCargando && (
-                                <tr>
-                                  <td colSpan={7} className="p-6 text-center font-mono text-xs text-neutral-600">
-                                    No hay órdenes de compra registradas.
-                                    <button type="button" onClick={() => setShowCreateCompra(true)} className="ml-1 underline text-brand-blue">Crear la primera</button>
-                                  </td>
-                                </tr>
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
-                    )}
 
                     {/* BANCOS TAB */}
 
                     {/* GASTOS OPERATIVOS TAB */}
                     {financeSubTab === 'gastos' && (
                       <div className="flex flex-col gap-4">
-                        <div className="flex items-center justify-between bg-white border-2 border-black p-3">
+                        <div className="flex flex-wrap items-center justify-between gap-2 bg-white border-2 border-black p-3">
                           <div>
-                            <span className="font-mono text-xs font-bold">GASTOS OPERATIVOS</span>
-                            <span className="ml-2 text-xs text-neutral-500">Total del período: <strong>${gastos.reduce((a, g) => a + g.monto, 0).toLocaleString('es-CO')}</strong></span>
+                            <span className="font-mono text-xs font-bold">GASTOS Y COMPRAS</span>
+                            <span className="ml-2 text-xs text-neutral-500">Total del período: <strong>${gastosUnificados.reduce((a, g) => a + g.monto, 0).toLocaleString('es-CO')}</strong></span>
                           </div>
                           <button
-                            onClick={() => setShowGastoModal(true)}
-                            className="neo-btn-secondary text-xs py-1.5 flex items-center gap-1.5"
+                            onClick={() => { setGastoForm(gastoFormVacio); setGastoFormError(null); setShowGastoModal(true); }}
+                            className="neo-btn-secondary text-xs py-2.5 sm:py-1.5 flex items-center gap-1.5"
                           >
                             <Plus size={14} /> Registrar Gasto
                           </button>
                         </div>
 
-                        {gastosCargando && <p className="text-xs text-neutral-500 font-mono p-4">Cargando gastos…</p>}
+                        {(gastosCargando || comprasCargando) && <p className="text-xs text-neutral-500 font-mono p-4">Cargando…</p>}
                         {gastosError && <p className="text-xs text-brand-red font-mono p-4">{gastosError}</p>}
+                        {comprasError && <p className="text-xs text-brand-red font-mono p-4">{comprasError}</p>}
 
-                        <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
-                        <div className="neo-card bg-white p-0 overflow-x-auto">
-                          <table className="w-full min-w-[700px] text-left border-collapse text-xs">
+                        {/* Compras viejas que quedaron sin recibir. Ya no se crean así
+                            (una compra nueva nace recibida), pero las que estaban en
+                            vuelo se pueden terminar de recibir desde acá. */}
+                        {compras.filter(c => c.estado === 'borrador' || c.estado === 'enviado' || c.estado === 'recibido_parcial').length > 0 && (
+                          <div className="neo-card bg-brand-yellow/15 border-brand-yellow flex flex-col gap-2">
+                            <h3 className="font-mono text-xs font-bold flex items-center gap-2">
+                              <AlertTriangle size={14} className="text-brand-yellow" />
+                              COMPRAS PENDIENTES DE RECIBIR
+                            </h3>
+                            <p className="text-[11px] font-mono text-neutral-600">
+                              Pediste esta mercancía pero todavía no la marcaste como recibida, así que no entró al inventario.
+                            </p>
+                            <div className="flex flex-col gap-1.5">
+                              {compras.filter(c => c.estado === 'borrador' || c.estado === 'enviado' || c.estado === 'recibido_parcial').map(c => (
+                                <div key={c.id} className="bg-white border border-black px-3 py-2 flex flex-wrap items-center gap-2 text-xs">
+                                  <span className="font-bold">{c.numero}</span>
+                                  <span className="text-neutral-600">{suppliers.find(s => s.id === c.proveedorId)?.nombre ?? 'Sin proveedor'}</span>
+                                  <span className="font-mono font-bold">${c.total.toLocaleString('es-CO')}</span>
+                                  <span className="font-mono text-[11px] uppercase border border-black px-1.5 py-0.5 bg-neutral-100">{c.estado.replace('_', ' ')}</span>
+                                  <button type="button" onClick={() => setSelectedCompra(c)} className="neo-btn px-3 py-2.5 sm:px-2 sm:py-1 text-[11px] font-mono font-bold ml-auto">Gestionar</button>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="neo-card bg-white p-0 sm:overflow-x-auto border-0 shadow-none sm:border-2 sm:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                          <table className="tabla-cards w-full sm:min-w-[760px] text-left border-collapse text-xs">
                             <thead>
                               <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
                                 <th className="p-3">DESCRIPCIÓN</th>
-                                <th className="p-3">CATEGORÍA</th>
+                                <th className="p-3">TIPO</th>
                                 <th className="p-3 text-right">MONTO</th>
                                 <th className="p-3 text-center">FECHA</th>
-                                <th className="p-3">MEDIO PAGO</th>
-                                <th className="p-3">CUENTA</th>
+                                <th className="p-3">PROVEEDOR / CUENTA</th>
+                                <th className="p-3 text-center">ESTADO</th>
                                 <th className="p-3 text-center">ACCIONES</th>
                               </tr>
                             </thead>
                             <tbody>
-                              {gastosPag.visibles.map((g) => {
-                                const cuenta = bankAccounts.find(b => b.id === g.cuentaBancariaId);
+                              {gastosPag.visibles.map((fila) => {
+                                const g = fila.gasto;
+                                const cuenta = g ? bankAccounts.find(b => b.id === g.cuentaBancariaId) : undefined;
+                                const aCredito = fila.debiendo;
                                 return (
-                                  <tr key={g.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                    <td className="p-3 font-semibold text-black">{g.descripcion}</td>
-                                    <td className="p-3">
-                                      <span className="inline-block border border-neutral-300 text-[11px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
-                                        {LABEL_CATEGORIA_GASTO[g.categoria]}
+                                  <tr key={fila.id} className="border-b border-neutral-200 hover:bg-neutral-50">
+                                    <td data-label="Descripción" className="p-3 font-semibold text-black">{fila.descripcion}</td>
+                                    <td data-label="Tipo" className="p-3">
+                                      <span className={`inline-block border text-[11px] font-mono font-bold px-1.5 py-0.5 ${
+                                        fila.tipo === 'compra' ? 'border-black bg-brand-sage/40' : 'border-neutral-300 bg-neutral-50'
+                                      }`}>
+                                        {fila.etiquetaTipo}
                                       </span>
                                     </td>
-                                    <td className="p-3 text-right font-mono font-bold text-brand-red">
-                                      -${g.monto.toLocaleString('es-CO')}
+                                    <td data-label="Monto" className="p-3 text-right font-mono font-bold text-brand-red">
+                                      -${fila.monto.toLocaleString('es-CO')}
                                     </td>
-                                    <td className="p-3 text-center font-mono text-neutral-600">{fechaCorta(g.fecha)}</td>
-                                    <td className="p-3 text-neutral-600">{g.medioPago ?? '—'}</td>
-                                    <td className="p-3 text-neutral-600">{cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—'}</td>
-                                    <td className="p-3 text-center">
-                                      <button
-                                        type="button"
-                                        onClick={() => void handleEliminarGasto(g)}
-                                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
-                                        title="Eliminar gasto"
-                                      >
-                                        <Trash2 size={12} />
-                                      </button>
+                                    <td data-label="Fecha" className="p-3 text-center font-mono text-neutral-600">{fechaCorta(fila.fecha)}</td>
+                                    <td data-label="Proveedor" className="p-3 text-neutral-600">
+                                      {fila.proveedorNombre ?? (cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—')}
+                                    </td>
+                                    <td data-label="Estado" className="p-3 text-center">
+                                      <span className={`inline-block text-[11px] font-mono font-bold px-1.5 py-0.5 border ${
+                                        aCredito ? 'border-amber-500 bg-amber-50 text-amber-800' : 'border-green-400 bg-green-50 text-green-800'
+                                      }`}>
+                                        {aCredito ? 'Debiendo' : 'Pagado'}
+                                      </span>
+                                    </td>
+                                    <td data-label="" className="p-3">
+                                      <div className="flex items-center justify-center gap-1.5">
+                                        {fila.tipo === 'compra' && fila.compra && (
+                                          <>
+                                            <button type="button" onClick={() => setSelectedCompra(fila.compra!)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Ver detalle">
+                                              <Search size={12} />
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={revirtiendoCompra === fila.compra.id}
+                                              onClick={() => void handleRevertirCompra(fila.compra!)}
+                                              className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red disabled:opacity-50"
+                                              title="Revertir: saca el stock que entró y anula la cuenta por pagar"
+                                            >
+                                              {revirtiendoCompra === fila.compra.id ? '…' : <Undo2 size={12} />}
+                                            </button>
+                                          </>
+                                        )}
+                                        {fila.tipo === 'gasto' && g && (
+                                          <>
+                                            <button type="button" onClick={() => openEditGasto(g)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Editar gasto">
+                                              <Pencil size={12} />
+                                            </button>
+                                            <button type="button" onClick={() => void handleEliminarGasto(g)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar gasto">
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </>
+                                        )}
+                                      </div>
                                     </td>
                                   </tr>
                                 );
                               })}
-                              {gastos.length === 0 && !gastosCargando && (
-                                <tr><td colSpan={7} className="p-8 text-center text-xs text-neutral-500 font-mono">No hay gastos operativos registrados.</td></tr>
+                              {gastosUnificados.length === 0 && !gastosCargando && !comprasCargando && (
+                                <tr><td colSpan={7} className="p-8 text-center text-xs text-neutral-500 font-mono">Todavía no registraste ningún gasto ni compra.</td></tr>
                               )}
                             </tbody>
                           </table>
                           <div className="px-3 pb-3">
-                            <Paginador {...gastosPag} etiqueta="gastos" />
+                            <Paginador {...gastosPag} etiqueta="registros" />
                           </div>
                         </div>
                       </div>
@@ -5802,7 +6138,7 @@ export default function AppHome() {
                               setIngresoFormError(null);
                               setShowIngresoModal(true);
                             }}
-                            className="neo-btn-secondary text-xs py-1.5 flex items-center gap-1.5"
+                            className="neo-btn-secondary text-xs py-2.5 sm:py-1.5 flex items-center gap-1.5"
                           >
                             <Plus size={14} /> Registrar Ingreso
                           </button>
@@ -5811,9 +6147,8 @@ export default function AppHome() {
                         {ingresosCargando && <p className="text-xs text-neutral-500 font-mono p-4">Cargando ingresos…</p>}
                         {ingresosError && <p className="text-xs text-brand-red font-mono p-4">{ingresosError}</p>}
 
-                        <p className="sm:hidden text-[11px] font-mono text-neutral-600 text-center">← desliza para ver más →</p>
-                        <div className="neo-card bg-white p-0 overflow-x-auto">
-                          <table className="w-full min-w-[700px] text-left border-collapse text-xs">
+                        <div className="neo-card bg-white p-0 sm:overflow-x-auto border-0 shadow-none sm:border-2 sm:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
+                          <table className="tabla-cards w-full sm:min-w-[700px] text-left border-collapse text-xs">
                             <thead>
                               <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold text-black">
                                 <th className="p-3">DESCRIPCIÓN</th>
@@ -5830,23 +6165,23 @@ export default function AppHome() {
                                 const cuenta = bankAccounts.find(b => b.id === ing.cuentaBancariaId);
                                 return (
                                   <tr key={ing.id} className="border-b border-neutral-200 hover:bg-neutral-50">
-                                    <td className="p-3 font-semibold text-black">{ing.descripcion}</td>
-                                    <td className="p-3">
+                                    <td data-label="Descripción" className="p-3 font-semibold text-black">{ing.descripcion}</td>
+                                    <td data-label="Categoría" className="p-3">
                                       <span className="inline-block border border-neutral-300 text-[11px] font-mono font-bold px-1.5 py-0.5 bg-neutral-50">
                                         {ing.categoria.replace('_', ' ').toUpperCase()}
                                       </span>
                                     </td>
-                                    <td className="p-3 text-right font-mono font-bold text-green-700">
+                                    <td data-label="Monto" className="p-3 text-right font-mono font-bold text-green-700">
                                       +${ing.monto.toLocaleString('es-CO')}
                                     </td>
-                                    <td className="p-3 text-center font-mono text-neutral-600">{ing.fecha}</td>
-                                    <td className="p-3 text-neutral-600">{ing.medioPago ?? '—'}</td>
-                                    <td className="p-3 text-neutral-600">{cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—'}</td>
-                                    <td className="p-3 text-center">
+                                    <td data-label="Fecha" className="p-3 text-center font-mono text-neutral-600">{ing.fecha}</td>
+                                    <td data-label="Medio de pago" className="p-3 text-neutral-600">{ing.medioPago ?? '—'}</td>
+                                    <td data-label="Cuenta destino" className="p-3 text-neutral-600">{cuenta ? `${cuenta.banco} · ${cuenta.numero}` : '—'}</td>
+                                    <td data-label="" className="p-3 text-center">
                                       <button
                                         type="button"
                                         onClick={() => void handleEliminarIngreso(ing)}
-                                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                        className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                                         title="Eliminar ingreso"
                                       >
                                         <Trash2 size={12} />
@@ -5864,6 +6199,89 @@ export default function AppHome() {
                             <Paginador {...ingresosPag} etiqueta="ingresos" />
                           </div>
                         </div>
+                      </div>
+                    )}
+
+                    {/* FLUJO DE CAJA QUINCENAL — separa el mes en día 1-15 y 16-fin, cada
+                        quincena con su propio ingresos/egresos (mismo cálculo que el
+                        Resumen, pero acotado a la mitad del mes correspondiente). */}
+                    {financeSubTab === 'flujo' && (
+                      <div className="flex flex-col gap-4">
+                        <div className="flex flex-wrap items-center gap-3 bg-white border-2 border-black p-3">
+                          <span className="font-mono text-xs font-bold text-neutral-500 uppercase">Mes</span>
+                          <div className="flex items-center gap-2 ml-auto">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (flujoMes === 1) { setFlujoMes(12); setFlujoAño(a => a - 1); }
+                                else setFlujoMes(m => m - 1);
+                              }}
+                              className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"
+                            ><ChevronLeft size={16} /></button>
+                            <span className="font-mono text-xs sm:text-sm font-bold w-28 sm:w-40 text-center capitalize">
+                              {new Date(flujoAño, flujoMes - 1, 1).toLocaleDateString('es-CO', { month: 'long', year: 'numeric' })}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (flujoMes === 12) { setFlujoMes(1); setFlujoAño(a => a + 1); }
+                                else setFlujoMes(m => m + 1);
+                              }}
+                              className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"
+                            ><ChevronRight size={16} /></button>
+                            <button type="button" onClick={() => void fetchFlujoCaja(flujoAño, flujoMes)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
+                          </div>
+                        </div>
+
+                        {flujoCargando && <div className="flex items-center gap-2 text-xs font-mono text-neutral-500 p-2"><RefreshCw size={13} className="animate-spin" /> Calculando flujo de caja…</div>}
+                        {flujoError && <p className="text-xs font-mono text-brand-red p-2">{flujoError}</p>}
+
+                        {!flujoCargando && flujoQ1 && flujoQ2 && (() => {
+                          const flujoMesTotal = flujoQ1.flujoNeto + flujoQ2.flujoNeto;
+                          const quincenas = [
+                            { titulo: '1RA QUINCENA (1 – 15)', d: flujoQ1 },
+                            { titulo: '2DA QUINCENA (16 – fin de mes)', d: flujoQ2 },
+                          ];
+                          return (
+                            <>
+                              <div className={`neo-card ${flujoMesTotal >= 0 ? 'bg-green-50' : 'bg-red-50'}`}>
+                                <span className="font-mono text-[11px] text-neutral-500 font-bold">FLUJO NETO DEL MES</span>
+                                <span className={`text-2xl font-black block mt-1 ${flujoMesTotal >= 0 ? 'text-green-700' : 'text-brand-red'}`}>
+                                  {moneySigned(flujoMesTotal)}
+                                </span>
+                                <span className="text-[11px] text-neutral-500 font-mono">Suma de las dos quincenas</span>
+                              </div>
+
+                              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {quincenas.map(({ titulo, d }) => {
+                                  const ingresosQ = d.ingresosCxC + d.ingresosManuales;
+                                  const egresosQ = d.egresosCxP + d.egresosGastos;
+                                  return (
+                                    <div key={titulo} className="neo-card bg-white flex flex-col gap-3">
+                                      <h4 className="font-mono text-xs font-bold border-b border-black pb-2">{titulo}</h4>
+                                      <div className={`p-2 border ${d.flujoNeto >= 0 ? 'border-green-400 bg-green-50' : 'border-red-400 bg-red-50'}`}>
+                                        <span className="font-mono text-[11px] text-neutral-500 font-bold">FLUJO NETO</span>
+                                        <span className={`text-lg font-black block ${d.flujoNeto >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{moneySigned(d.flujoNeto)}</span>
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-2 text-xs">
+                                        <div className="border border-black p-2">
+                                          <span className="font-mono text-[11px] text-neutral-500 font-bold block">INGRESOS</span>
+                                          <span className="font-black text-green-700">+{money(ingresosQ)}</span>
+                                          <span className="block text-[11px] font-mono text-neutral-500">CxC {money(d.ingresosCxC)} · Manual {money(d.ingresosManuales)}</span>
+                                        </div>
+                                        <div className="border border-black p-2">
+                                          <span className="font-mono text-[11px] text-neutral-500 font-bold block">EGRESOS</span>
+                                          <span className="font-black text-brand-red">-{money(egresosQ)}</span>
+                                          <span className="block text-[11px] font-mono text-neutral-500">CxP {money(d.egresosCxP)} · Gastos {money(d.egresosGastos)}</span>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </>
+                          );
+                        })()}
                       </div>
                     )}
 
@@ -5964,7 +6382,7 @@ export default function AppHome() {
                                       <span className="text-[11px] text-neutral-600 font-mono">
                                         Pedidos: {pedidosCliente.length}
                                       </span>
-                                      <span className={`text-[11px] font-mono font-bold ${saldoCliente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
+                                      <span className={`text-xs font-mono font-bold ${saldoCliente > 0 ? 'text-brand-red' : 'text-green-700'}`}>
                                         Saldo: ${saldoCliente.toLocaleString('es-CO')}
                                       </span>
                                     </div>
@@ -6025,7 +6443,7 @@ export default function AppHome() {
                                 <button
                                   type="button"
                                   onClick={() => (client ? openEditCustomer(client) : supp ? openEditSupplier(supp) : undefined)}
-                                  className="neo-btn p-1.5 hover:bg-neutral-100"
+                                  className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"
                                   title={client ? 'Editar cliente' : 'Editar proveedor'}
                                 >
                                   <Pencil size={13} />
@@ -6033,7 +6451,7 @@ export default function AppHome() {
                                 <button
                                   type="button"
                                   onClick={() => (client ? void handleDeleteCustomer(client) : supp ? void handleDeleteSupplier(supp) : undefined)}
-                                  className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                  className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                                   title={client ? 'Eliminar cliente' : 'Eliminar proveedor'}
                                 >
                                   <Trash2 size={13} />
@@ -6100,7 +6518,7 @@ export default function AppHome() {
                                           <div key={ord.id} className="flex items-center justify-between border border-black/15 bg-white px-2.5 py-1.5 text-[11px] font-mono">
                                             <div className="flex flex-col min-w-0 flex-1 mr-2">
                                               <span className="font-bold text-black truncate">{getOrderDisplayName(ord)}</span>
-                                              <span className="text-neutral-500 text-[11px]">{ord.numero} · {new Date(ord.fecha).toLocaleDateString('es-CO')}</span>
+                                              <span className="text-neutral-500 text-xs">{ord.numero} · {new Date(ord.fecha).toLocaleDateString('es-CO')}</span>
                                             </div>
                                             <span className="border border-black/20 bg-neutral-50 px-1.5 py-0.5 text-[11px] font-bold uppercase tracking-wide text-neutral-700">
                                               {ord.estado.replace('_', ' ')}
@@ -6189,12 +6607,12 @@ export default function AppHome() {
                   <div className="flex flex-col gap-4">
 
                     {/* Sub-tabs */}
-                    <div className="flex border-b-2 border-black bg-white">
+                    <div className="flex flex-nowrap overflow-x-auto sm:flex-wrap border-b-2 border-black bg-white scrollbar-thin">
                       {(['redes', 'calendario', 'notas'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setComunicacionesSubTab(tab)}
-                          className={`font-mono text-xs font-bold px-4 py-3 border-r-2 border-black transition-all ${
+                          className={`font-mono text-xs font-bold px-4 py-3 border-r-2 border-black transition-all whitespace-nowrap shrink-0 ${
                             comunicacionesSubTab === tab
                               ? 'bg-brand-blue text-white'
                               : 'text-black hover:bg-neutral-50'
@@ -6498,7 +6916,7 @@ export default function AppHome() {
                                               checklistItems: esLista ? parsearChecklist(nota.contenido) : [],
                                             });
                                           }}
-                                          className="neo-btn p-1.5 hover:bg-neutral-100"
+                                          className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"
                                           title="Editar"
                                         >
                                           <Pencil size={12} />
@@ -6506,7 +6924,7 @@ export default function AppHome() {
                                         <button
                                           type="button"
                                           onClick={() => void handleEliminarNota(nota)}
-                                          className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
+                                          className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red"
                                           title="Eliminar"
                                         >
                                           <Trash2 size={12} />
@@ -6543,7 +6961,7 @@ export default function AppHome() {
                                   <button type="button" onClick={() => setNotaForm(f => ({ ...f, tipoContenido: 'texto' }))} className={`px-3 py-1 ${!isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>Texto</button>
                                   <button type="button" onClick={() => setNotaForm(f => ({ ...f, tipoContenido: 'lista' }))} className={`px-3 py-1 border-l-2 border-black ${isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>☑ Lista</button>
                                 </div>
-                                <button onClick={() => setShowCreateNota(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                                <button onClick={() => setShowCreateNota(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
                               </div>
                             </div>
                             <form onSubmit={(e) => void handleCrearNota(e)} className="flex flex-col gap-3.5 text-xs">
@@ -6642,7 +7060,7 @@ export default function AppHome() {
                                   <button type="button" onClick={() => setNotaEditForm(f => ({ ...f, tipoContenido: 'texto' }))} className={`px-3 py-1 ${!isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>Texto</button>
                                   <button type="button" onClick={() => setNotaEditForm(f => ({ ...f, tipoContenido: 'lista' }))} className={`px-3 py-1 border-l-2 border-black ${isLista ? 'bg-black text-white' : 'hover:bg-neutral-100'}`}>☑ Lista</button>
                                 </div>
-                                <button onClick={() => setEditingNota(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                                <button onClick={() => setEditingNota(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
                               </div>
                             </div>
                             <form onSubmit={(e) => void handleGuardarEdicionNota(e)} className="flex flex-col gap-3.5 text-xs">
@@ -6807,10 +7225,10 @@ export default function AppHome() {
                     <div className="flex items-center gap-3 bg-white border-2 border-black p-3">
                       <span className="font-mono text-xs font-bold text-neutral-500 uppercase">Año</span>
                       <div className="flex items-center gap-2 ml-auto">
-                        <button type="button" onClick={() => { const y = reportesAño - 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-1.5 hover:bg-neutral-100"><ChevronLeft size={16} /></button>
+                        <button type="button" onClick={() => { const y = reportesAño - 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"><ChevronLeft size={16} /></button>
                         <span className="font-mono text-sm font-bold w-16 text-center">{reportesAño}</span>
-                        <button type="button" onClick={() => { const y = reportesAño + 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-1.5 hover:bg-neutral-100"><ChevronRight size={16} /></button>
-                        <button type="button" onClick={() => void fetchReportesOverview(reportesAño)} className="neo-btn p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
+                        <button type="button" onClick={() => { const y = reportesAño + 1; setReportesAño(y); void fetchReportesOverview(y); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100"><ChevronRight size={16} /></button>
+                        <button type="button" onClick={() => void fetchReportesOverview(reportesAño)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100" title="Recargar"><RefreshCw size={14} /></button>
                       </div>
                     </div>
 
@@ -6850,8 +7268,8 @@ export default function AppHome() {
                                     <span className={`font-bold text-xs block ${isSelected ? 'text-white' : 'text-black'}`}>{periodo.pedidos}</span>
                                   </div>
                                   <div>
-                                    <span className={`font-mono text-[11px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-600'}`}>Ganancia aprox.</span>
-                                    <span className={`font-bold text-xs block ${isSelected ? 'text-white' : periodo.gananciaAprox >= 0 ? 'text-green-700' : 'text-red-600'}`}>${periodo.gananciaAprox.toLocaleString('es-CO')}</span>
+                                    <span className={`font-mono text-[11px] font-bold uppercase ${isSelected ? 'text-neutral-300' : 'text-neutral-600'}`}>Balance (flujo caja)</span>
+                                    <span className={`font-bold text-xs block ${isSelected ? 'text-white' : periodo.balance >= 0 ? 'text-green-700' : 'text-red-600'}`}>{moneySigned(periodo.balance)}</span>
                                   </div>
                                   <span className={`font-mono text-[11px] mt-0.5 ${isSelected ? 'text-neutral-600' : 'text-neutral-600'}`}>{isSelected ? '▲ cerrar' : '▼ ver detalle'}</span>
                                 </>
@@ -6873,7 +7291,7 @@ export default function AppHome() {
                           <h3 className="font-mono text-sm font-black">
                             {reportesOverview?.find(p => p.mes === reportesMesSel)?.label ?? ''}
                           </h3>
-                          <button type="button" onClick={() => { setReportesMesSel(null); setReportesDetalleMes(null); setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                          <button type="button" onClick={() => { setReportesMesSel(null); setReportesDetalleMes(null); setReportesSemanaSel(null); setReportesDetalleSemana(null); setReportesIA(null); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
                         </div>
 
                         {/* Filtro por semana */}
@@ -7022,42 +7440,23 @@ export default function AppHome() {
                                   {exportarPDFError && <p className="text-[11px] font-mono text-brand-red text-right max-w-xs">{exportarPDFError}</p>}
                                 </div>
                                 <div ref={reporteCapturaRef} className="flex flex-col gap-6 bg-white">
+                                {/* Flujo de caja del período: plata que entró vs. plata que salió —
+                                    ingresos = CxC cobrada + ingresos manuales; egresos = CxP pagada +
+                                    gastos operativos que salieron de caja. */}
                                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                                   {([
-                                    { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''}`, delta: d.ventas.delta, color: 'text-green-700', warn: null },
-                                    // El margen se calcula contra el COSTO DE LO VENDIDO, no contra las
-                                    // compras del mes. Si hay ventas sin costo cargado se avisa, porque
-                                    // en ese caso el margen mostrado es optimista.
-                                    { label: 'MARGEN BRUTO', value: `$${d.margenBruto.total.toLocaleString('es-CO')}`, sub: `${d.margenBruto.porcentaje}% sobre ventas · costo $${d.costoVentas.total.toLocaleString('es-CO')}`, delta: d.margenBruto.delta, color: d.margenBruto.total >= 0 ? 'text-green-700' : 'text-brand-red', warn: d.margenBruto.ventasSinCosto > 0 ? `$${d.margenBruto.ventasSinCosto.toLocaleString('es-CO')} en ventas sin costo cargado — el margen real es menor` : null },
-                                    { label: 'COMPRAS / OC', value: `$${d.compras.total.toLocaleString('es-CO')}`, sub: `${d.compras.oc} orden${d.compras.oc !== 1 ? 'es' : ''} · reposición, no costo de venta`, delta: d.compras.delta !== null ? -d.compras.delta : null, color: 'text-black', warn: null },
-                                    { label: 'UTILIDAD NETA', value: `$${d.utilidadNeta.toLocaleString('es-CO')}`, sub: `Gastos: $${d.gastos.total.toLocaleString('es-CO')}`, delta: null, color: d.utilidadNeta >= 0 ? 'text-green-700' : 'text-brand-red', warn: null },
-                                  ] as { label: string; value: string; sub: string; delta: number | null; color: string; warn: string | null }[]).map((kpi) => (
+                                    { label: 'VENTAS TOTALES', value: `$${d.ventas.total.toLocaleString('es-CO')}`, sub: `${d.ventas.pedidos} pedido${d.ventas.pedidos !== 1 ? 's' : ''} · ticket $${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}`, delta: d.ventas.delta, color: 'text-green-700' },
+                                    { label: 'INGRESOS', value: `$${d.ingresos.total.toLocaleString('es-CO')}`, sub: `CxC cobrada $${d.ingresos.cxcCobrada.toLocaleString('es-CO')} + manuales $${d.ingresos.manuales.toLocaleString('es-CO')}`, delta: d.ingresos.delta, color: 'text-green-700' },
+                                    { label: 'EGRESOS', value: `$${d.egresos.total.toLocaleString('es-CO')}`, sub: `CxP pagada $${d.egresos.cxpPagada.toLocaleString('es-CO')} + gastos $${d.egresos.gastos.toLocaleString('es-CO')}`, delta: d.egresos.delta, color: 'text-brand-red' },
+                                    { label: 'BALANCE (FLUJO DE CAJA)', value: moneySigned(d.balance.total), sub: 'Ingresos − egresos', delta: d.balance.delta, color: d.balance.total >= 0 ? 'text-green-700' : 'text-brand-red' },
+                                  ] as { label: string; value: string; sub: string; delta: number | null; color: string }[]).map((kpi) => (
                                     <div key={kpi.label} className="border border-black p-3 flex flex-col gap-1 bg-neutral-50">
                                       <span className="font-mono text-[11px] text-neutral-500 font-bold">{kpi.label}</span>
                                       <span className={`text-xl font-black ${kpi.color}`}>{kpi.value}</span>
                                       <span className="text-[11px] font-mono text-neutral-500">{kpi.sub}</span>
                                       {kpi.delta !== null && <span className={`text-[11px] font-mono font-bold ${kpi.delta >= 0 ? 'text-green-700' : 'text-brand-red'}`}>{kpi.delta >= 0 ? '▲' : '▼'} {Math.abs(kpi.delta)}% vs anterior</span>}
-                                      {kpi.warn && <span className="text-[11px] font-mono font-bold text-amber-700 leading-tight">⚠ {kpi.warn}</span>}
                                     </div>
                                   ))}
-                                </div>
-
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-                                  <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">CxC COBRADA</span>
-                                    <span className="text-lg font-black text-green-700 block mt-1">${d.cxcCobrada.toLocaleString('es-CO')}</span>
-                                    <span className="text-[11px] font-mono text-neutral-600">Abonos de clientes</span>
-                                  </div>
-                                  <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">INGRESOS MANUALES</span>
-                                    <span className="text-lg font-black text-black block mt-1">${d.ingresosManuales.toLocaleString('es-CO')}</span>
-                                    <span className="text-[11px] font-mono text-neutral-600">Capital, préstamos, etc.</span>
-                                  </div>
-                                  <div className="border border-black p-3 bg-neutral-50">
-                                    <span className="font-mono text-[11px] text-neutral-500 font-bold">TICKET PROMEDIO</span>
-                                    <span className="text-lg font-black text-black block mt-1">${d.ventas.ticketPromedio.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</span>
-                                    <span className="text-[11px] font-mono text-neutral-600">Por pedido</span>
-                                  </div>
                                 </div>
 
                                 {d.topProductos.length > 0 && (
@@ -7105,7 +7504,7 @@ export default function AppHome() {
                                               </div>
                                               <span className="hidden sm:inline font-mono font-bold text-black shrink-0 w-24 text-right">${c.ventas.toLocaleString('es-CO')}</span>
                                               {c.saldoPendiente > 0 && (
-                                                <span className="font-mono text-[11px] font-bold text-brand-red shrink-0">Debe ${c.saldoPendiente.toLocaleString('es-CO')}</span>
+                                                <span className="font-mono text-xs font-bold text-brand-red shrink-0">Debe ${c.saldoPendiente.toLocaleString('es-CO')}</span>
                                               )}
                                             </div>
                                           </div>
@@ -7255,8 +7654,8 @@ export default function AppHome() {
                                             <th className="text-left py-1 pr-2 font-bold">Semana</th>
                                             <th className="text-right py-1 px-2 font-bold">Pedidos</th>
                                             <th className="text-right py-1 px-2 font-bold">Ventas</th>
-                                            <th className="text-right py-1 px-2 font-bold">Gastos</th>
-                                            <th className="text-right py-1 px-2 font-bold">Margen</th>
+                                            <th className="text-right py-1 px-2 font-bold">Egresos</th>
+                                            <th className="text-right py-1 px-2 font-bold">Balance</th>
                                             <th className="text-left py-1 pl-2 font-bold">Top producto</th>
                                           </tr>
                                         </thead>
@@ -7264,7 +7663,7 @@ export default function AppHome() {
                                           {reportesSemComp.map((s, i) => {
                                             const maxVentas = Math.max(1, ...reportesSemComp.map(x => x.ventas));
                                             const pct = Math.round((s.ventas / maxVentas) * 100);
-                                            const margenPos = s.margenBruto >= 0;
+                                            const balancePos = s.balance >= 0;
                                             return (
                                               <tr key={s.semana} className={`border-b border-neutral-200 ${i === 0 ? 'bg-yellow-50' : ''}`}>
                                                 <td className="py-1 pr-2">
@@ -7280,9 +7679,9 @@ export default function AppHome() {
                                                     <span className="font-bold">${(s.ventas/1000).toFixed(0)}k</span>
                                                   </div>
                                                 </td>
-                                                <td className="text-right py-1 px-2 text-neutral-500">${(s.gastos/1000).toFixed(0)}k</td>
-                                                <td className={`text-right py-1 px-2 font-bold ${margenPos ? 'text-green-700' : 'text-red-600'}`}>
-                                                  {margenPos ? '+' : ''}{(s.margenBruto/1000).toFixed(0)}k
+                                                <td className="text-right py-1 px-2 text-neutral-500">${(s.egresos/1000).toFixed(0)}k</td>
+                                                <td className={`text-right py-1 px-2 font-bold ${balancePos ? 'text-green-700' : 'text-red-600'}`}>
+                                                  {balancePos ? '+' : ''}{(s.balance/1000).toFixed(0)}k
                                                 </td>
                                                 <td className="pl-2 py-1 text-[11px] text-neutral-500 truncate max-w-[90px]">
                                                   {s.topProducto ? <><span className="text-black font-bold">{s.topProducto.nombre}</span> ${(s.topProducto.ventas/1000).toFixed(0)}k</> : '—'}
@@ -7360,7 +7759,7 @@ export default function AppHome() {
                     <div className="flex items-center gap-2 bg-white border-2 border-black p-3">
                       <Footprints size={16} />
                       <h2 className="font-mono text-sm font-bold uppercase">Historial de actividad</h2>
-                      <button type="button" onClick={() => void fetchAuditoria(1)} className="neo-btn p-1.5 hover:bg-neutral-100 ml-auto" title="Recargar"><RefreshCw size={14} /></button>
+                      <button type="button" onClick={() => void fetchAuditoria(1)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-100 ml-auto" title="Recargar"><RefreshCw size={14} /></button>
                     </div>
 
                     {/* Filtros */}
@@ -7480,11 +7879,11 @@ export default function AppHome() {
                     {/* Paginación */}
                     {auditoriaTotal > AUDITORIA_PAGE_SIZE && (
                       <div className="flex items-center justify-center gap-3 py-2">
-                        <button type="button" disabled={auditoriaPage <= 1} onClick={() => void fetchAuditoria(auditoriaPage - 1)} className="neo-btn p-1.5 disabled:opacity-30"><ChevronLeft size={14} /></button>
+                        <button type="button" disabled={auditoriaPage <= 1} onClick={() => void fetchAuditoria(auditoriaPage - 1)} className="neo-btn p-3 sm:p-1.5 disabled:opacity-30"><ChevronLeft size={14} /></button>
                         <span className="font-mono text-xs text-neutral-500">
                           Página {auditoriaPage} de {Math.max(1, Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE))}
                         </span>
-                        <button type="button" disabled={auditoriaPage >= Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE)} onClick={() => void fetchAuditoria(auditoriaPage + 1)} className="neo-btn p-1.5 disabled:opacity-30"><ChevronRight size={14} /></button>
+                        <button type="button" disabled={auditoriaPage >= Math.ceil(auditoriaTotal / AUDITORIA_PAGE_SIZE)} onClick={() => void fetchAuditoria(auditoriaPage + 1)} className="neo-btn p-3 sm:p-1.5 disabled:opacity-30"><ChevronRight size={14} /></button>
                       </div>
                     )}
                   </div>
@@ -7627,7 +8026,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">REGISTRAR NUEVO PRODUCTO</h3>
-              <button onClick={() => setShowCreateProduct(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateProduct(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             {/* Alta rápida vs. formulario completo. Rápido pide lo mínimo y
@@ -7851,13 +8250,108 @@ export default function AppHome() {
       )}
 
 
+      {/* Modal: Kanban de Pedidos Pendientes — agrupado en 2 etapas de flujo
+          (a diferencia del Kanban de la vista Lista/Kanban, que tiene una
+          columna por cada estado individual): "Borrador + Confirmado" es lo
+          que todavía no arranca preparación; "En preparación + Despachado"
+          es lo que ya está en movimiento. Entregado/cancelado quedan fuera
+          a propósito — ya no son "pendientes". */}
+      {showPendientesKanban && (() => {
+        const columnas: { titulo: string; estados: Order['estado'][]; cls: string }[] = [
+          { titulo: 'BORRADOR + CONFIRMADO', estados: ['borrador', 'confirmado'], cls: 'bg-neutral-50 border-neutral-400' },
+          { titulo: 'EN PREPARACIÓN + DESPACHADO', estados: ['en_preparacion', 'despachado'], cls: 'bg-blue-50 border-blue-400' },
+        ];
+        const estadoBadge: Record<string, string> = {
+          borrador: 'bg-neutral-200 text-neutral-700',
+          confirmado: 'bg-blue-200 text-blue-800',
+          en_preparacion: 'bg-yellow-200 text-yellow-800',
+          despachado: 'bg-blue-500 text-white',
+        };
+        const estadoLabel: Record<string, string> = {
+          borrador: 'Borrador', confirmado: 'Confirmado', en_preparacion: 'En prep.', despachado: 'Despachado',
+        };
+        return (
+          <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+            <div className="neo-card bg-white w-full max-w-4xl flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
+              <div className="flex justify-between items-center border-b border-black pb-2">
+                <h3 className="font-mono text-sm font-bold text-black flex items-center gap-2">
+                  <KanbanSquare size={16} /> PEDIDOS PENDIENTES
+                </h3>
+                <button onClick={() => setShowPendientesKanban(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {columnas.map(col => {
+                  const items = orders
+                    .filter(o => col.estados.includes(o.estado))
+                    .sort((a, b) => new Date(a.fecha).getTime() - new Date(b.fecha).getTime());
+                  return (
+                    <div key={col.titulo} className={`border-2 ${col.cls} flex flex-col`}>
+                      <div className="px-3 py-2 border-b-2 border-black bg-white/80">
+                        <div className="font-mono text-[11px] font-bold uppercase">{col.titulo}</div>
+                        <div className="font-mono text-xs text-neutral-500">{items.length} pedido{items.length !== 1 ? 's' : ''}</div>
+                      </div>
+                      <div className="flex flex-col gap-2 p-2 flex-1 overflow-y-auto max-h-[60vh]">
+                        {items.length === 0 && (
+                          <p className="text-[11px] text-neutral-600 font-mono italic text-center py-4">Vacío</p>
+                        )}
+                        {items.map(ord => {
+                          const client = customers.find(c => c.id === ord.cliente_id);
+                          const dias = Math.max(0, Math.floor((Date.now() - new Date(ord.fecha).getTime()) / (1000 * 60 * 60 * 24)));
+                          return (
+                            <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[11px]">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-bold text-black leading-tight truncate">{client?.nombre ?? 'Sin cliente'}</span>
+                                <span className={`shrink-0 inline-block border border-black text-[10px] font-mono font-bold px-1.5 py-0.5 ${estadoBadge[ord.estado] ?? ''}`}>
+                                  {estadoLabel[ord.estado] ?? ord.estado}
+                                </span>
+                              </div>
+                              <div className="font-mono text-neutral-600">{ord.numero}</div>
+                              <div className="flex items-center justify-between">
+                                <span className="font-mono font-bold">${ord.total.toLocaleString('es-CO')}</span>
+                                <span className={`font-mono ${dias >= 3 ? 'text-brand-red font-bold' : 'text-neutral-500'}`}>
+                                  {dias === 0 ? 'Hoy' : dias === 1 ? 'Hace 1 día' : `Hace ${dias} días`}
+                                </span>
+                              </div>
+                              <div className="flex items-center gap-1.5 mt-1">
+                                <select
+                                  defaultValue=""
+                                  onChange={(e) => { if (e.target.value) { handleTransitionOrder(ord.id, e.target.value as Order['estado']); e.target.value = ''; } }}
+                                  className="flex-1 border border-black bg-white font-mono text-[11px] py-0.5 px-1 cursor-pointer hover:bg-neutral-50"
+                                >
+                                  <option value="" disabled>Mover a…</option>
+                                  {(['borrador', 'confirmado', 'en_preparacion', 'despachado', 'entregado', 'cancelado'] as Order['estado'][])
+                                    .filter(e => e !== ord.estado)
+                                    .map(e => (
+                                      <option key={e} value={e}>{e.replace('_', ' ')}</option>
+                                    ))}
+                                </select>
+                                <button
+                                  type="button"
+                                  onClick={() => { setShowPendientesKanban(false); setOrderManager(ord); setOrderManagerNotas(ord.notas ?? ''); setAbonoForm({ monto: '', medioPago: 'efectivo', referencia: '', cuentaBancariaId: '' }); setAbonoError(null); }}
+                                  className="neo-btn px-2 py-1 text-[11px] font-mono font-bold hover:bg-brand-blue hover:text-white"
+                                >Gestionar</button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* 3. Modal: Crear Pedido */}
       {showCreateOrder && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="neo-card bg-white max-w-lg w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR NUEVO PEDIDO</h3>
-              <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', email: '', telefono: '' }); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', email: '', telefono: '' }); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateOrder} className="flex flex-col gap-4 text-xs">
@@ -7876,16 +8370,13 @@ export default function AppHome() {
 
                 {!showInlineNewClient ? (
                   <>
-                    <select
+                    <Combobox
                       value={selectedCustomerId}
-                      onChange={(e) => setSelectedCustomerId(e.target.value)}
-                      className="neo-input"
-                    >
-                      <option value="">— Sin cliente —</option>
-                      {customers.map((c) => (
-                        <option key={c.id} value={c.id}>{c.nombre}{c.nit ? ` (${c.nit})` : ''}</option>
-                      ))}
-                    </select>
+                      onChange={setSelectedCustomerId}
+                      emptyOptionLabel="— Sin cliente —"
+                      placeholder="Buscar cliente por nombre o NIT…"
+                      options={customers.map((c) => ({ value: c.id, label: c.nombre, sublabel: c.nit ?? undefined }))}
+                    />
                     {/* Condiciones de crédito del cliente elegido. El aviso de
                         cupo AVISA, no bloquea: seguir vendiéndole a alguien que
                         ya debe es decisión del dueño, no del software. */}
@@ -7974,6 +8465,29 @@ export default function AppHome() {
                   <p className="font-mono text-[10px] text-neutral-500 uppercase tracking-wider mb-1.5">
                     Toca para agregar · vuelve a tocar para sumar
                   </p>
+
+                  {/* Buscador, para cuando la rejilla deja de alcanzar. Con pocos
+                      productos se agrega tocando el dibujo; con un catálogo grande
+                      eso obliga a barrer con la vista, y buscar por nombre o SKU es
+                      más rápido. Selecciona y agrega igual que un toque: el valor
+                      vuelve a '' para poder encadenar varios seguidos. */}
+                  {products.length > 8 && (
+                    <div className="mb-2">
+                      <Combobox
+                        value=""
+                        onChange={(productoId) => {
+                          const p = products.find((prod) => prod.id === productoId);
+                          if (p) agregarProductoAlPedido(p);
+                        }}
+                        placeholder="Buscar producto por nombre o SKU…"
+                        options={products.map((p) => ({
+                          value: p.id,
+                          label: p.nombre,
+                          sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0} ${p.unidad}`,
+                        }))}
+                      />
+                    </div>
+                  )}
                   <div className="flex flex-wrap gap-1.5">
                     {products.length === 0 && (
                       <span className="font-mono text-[11px] text-neutral-500">
@@ -8289,13 +8803,59 @@ export default function AppHome() {
         </div>
       )}
 
+      {/* 3b. Modal: Dashboard "Registrar Ingreso" — elegir Abono o Ingreso manual */}
+      {showRegistrarIngresoChoice && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative">
+            <div className="flex justify-between items-center border-b border-black pb-2">
+              <h3 className="font-mono text-sm font-bold text-black">REGISTRAR INGRESO</h3>
+              <button onClick={() => setShowRegistrarIngresoChoice(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+            <p className="text-xs text-neutral-600 font-mono">¿Qué tipo de ingreso quieres registrar?</p>
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRegistrarIngresoChoice(false);
+                  setActiveTab('finanzas'); setFinanceSubTab('cxc'); setShowCreateAbono(true);
+                }}
+                className="border-2 border-black bg-brand-blue text-white font-mono font-bold text-sm py-4 px-4 flex items-center gap-3 hover:opacity-90 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.3)] text-left"
+              >
+                <DollarSign size={20} className="shrink-0" />
+                <span>
+                  <span className="block">Abono</span>
+                  <span className="block text-[11px] font-normal opacity-80">Pago de un cliente a una factura pendiente (CxC)</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRegistrarIngresoChoice(false);
+                  setActiveTab('finanzas'); setFinanceSubTab('ingresos');
+                  setIngresoForm({ descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: bankAccounts[0]?.id ?? '', notas: '' });
+                  setIngresoFormError(null);
+                  setShowIngresoModal(true);
+                }}
+                className="border-2 border-black bg-white text-black font-mono font-bold text-sm py-4 px-4 flex items-center gap-3 hover:bg-neutral-50 active:translate-y-0.5 shadow-[3px_3px_0px_0px_rgba(0,0,0,0.15)] text-left"
+              >
+                <Plus size={20} className="shrink-0" />
+                <span>
+                  <span className="block">Ingreso manual</span>
+                  <span className="block text-[11px] font-normal text-neutral-500">Capital, préstamo, devolución u otro ingreso sin factura</span>
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* 4. Modal: Registrar Abono */}
       {showCreateAbono && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">REGISTRAR PAGO / ABONO</h3>
-              <button onClick={() => setShowCreateAbono(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateAbono(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateAbono} className="flex flex-col gap-3.5 text-xs">
@@ -8376,7 +8936,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">NUEVO EVENTO DE CALENDARIO</h3>
-              <button onClick={() => setShowCreateEvent(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateEvent(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateCalendarEvent} className="flex flex-col gap-3.5 text-xs">
@@ -8460,180 +9020,6 @@ export default function AppHome() {
 
       {/* 5. Modal: WhatsApp Business Test */}
       {/* Modal: Nueva Orden de Compra */}
-      {showCreateCompra && (
-        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
-          <div className="neo-card bg-white w-full max-w-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center border-b border-black pb-2 sticky top-0 bg-white z-10">
-              <h3 className="font-mono text-sm font-bold">NUEVA ORDEN DE COMPRA</h3>
-              <button onClick={() => setShowCreateCompra(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
-            </div>
-
-            <form onSubmit={(e) => void handleCrearCompra(e)} className="flex flex-col gap-4 text-xs">
-              {compraFormError && (
-                <div className="bg-red-50 border-2 border-red-500 text-red-700 p-2 font-mono text-xs">{compraFormError}</div>
-              )}
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">PROVEEDOR</label>
-                  <select
-                    value={compraForm.proveedorId}
-                    onChange={(e) => setCompraForm({ ...compraForm, proveedorId: e.target.value })}
-                    className="neo-input font-mono"
-                  >
-                    <option value="">Sin proveedor asignado</option>
-                    {suppliers.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono font-bold">FECHA ESPERADA DE ENTREGA</label>
-                  <input
-                    type="date"
-                    value={compraForm.fechaEsperada}
-                    onChange={(e) => setCompraForm({ ...compraForm, fechaEsperada: e.target.value })}
-                    className="neo-input font-mono"
-                  />
-                </div>
-              </div>
-
-              <div className="flex flex-col gap-1">
-                <label className="font-mono font-bold">NOTAS (opcional)</label>
-                <textarea
-                  rows={2}
-                  value={compraForm.notas}
-                  onChange={(e) => setCompraForm({ ...compraForm, notas: e.target.value })}
-                  className="neo-input resize-y"
-                  placeholder="Instrucciones, referencias, condiciones..."
-                />
-              </div>
-
-              {/* Total real */}
-              <div className="flex flex-col gap-1">
-                <label className="font-mono font-bold">TOTAL REAL (opcional)</label>
-                <input
-                  type="number"
-                  min="0"
-                  step="any"
-                  value={compraForm.totalManual}
-                  onChange={(e) => setCompraForm({ ...compraForm, totalManual: e.target.value })}
-                  className="neo-input font-mono"
-                  placeholder="Deja vacío para calcular automáticamente desde los ítems"
-                />
-                <span className="font-mono text-[11px] text-neutral-600">Si el costo real difiere del precio de catálogo, ponlo aquí. Sobreescribe el total calculado.</span>
-              </div>
-
-              {/* Ítems */}
-              <div className="flex flex-col gap-2">
-                <div className="flex items-center justify-between border-b border-black pb-1">
-                  <label className="font-mono font-bold">ÍTEMS DE LA ORDEN</label>
-                  <button
-                    type="button"
-                    onClick={() => setCompraForm({ ...compraForm, items: [...compraForm.items, { productoId: '', concepto: '', esLibre: false, cantidad: '1', precioUnitario: '0' }] })}
-                    className="neo-btn text-[11px] px-2 py-1 flex items-center gap-1"
-                  >
-                    <Plus size={10} /> Añadir ítem
-                  </button>
-                </div>
-
-                {compraForm.items.map((item, idx) => (
-                  <div key={idx} className="border border-neutral-200 p-3 flex flex-col gap-2 bg-neutral-50">
-                    <div className="flex items-center justify-between gap-2">
-                      <label className="flex items-center gap-1.5 text-[11px] font-mono cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={item.esLibre}
-                          onChange={(e) => {
-                            const updated = [...compraForm.items];
-                            updated[idx] = { ...item, esLibre: e.target.checked };
-                            setCompraForm({ ...compraForm, items: updated });
-                          }}
-                          className="w-3 h-3 border border-black accent-black"
-                        />
-                        Ítem libre (sin producto del catálogo)
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setCompraForm({ ...compraForm, items: compraForm.items.filter((_, i) => i !== idx) })}
-                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-
-                    {item.esLibre ? (
-                      <input
-                        type="text"
-                        placeholder="Descripción del ítem..."
-                        value={item.concepto}
-                        onChange={(e) => {
-                          const updated = [...compraForm.items];
-                          updated[idx] = { ...item, concepto: e.target.value };
-                          setCompraForm({ ...compraForm, items: updated });
-                        }}
-                        className="neo-input text-xs"
-                        required
-                      />
-                    ) : (
-                      <select
-                        value={item.productoId}
-                        onChange={(e) => {
-                          const updated = [...compraForm.items];
-                          updated[idx] = { ...item, productoId: e.target.value };
-                          setCompraForm({ ...compraForm, items: updated });
-                        }}
-                        className="neo-input font-mono text-xs"
-                        required
-                      >
-                        <option value="">Seleccionar producto...</option>
-                        {products.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
-                      </select>
-                    )}
-
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                      <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[11px] font-bold">CANTIDAD</label>
-                        <input
-                          type="number" min="0.001" step="0.001" required
-                          value={item.cantidad}
-                          onChange={(e) => {
-                            const updated = [...compraForm.items];
-                            updated[idx] = { ...item, cantidad: e.target.value };
-                            setCompraForm({ ...compraForm, items: updated });
-                          }}
-                          className="neo-input font-mono text-xs"
-                        />
-                      </div>
-                      <div className="flex flex-col gap-1">
-                        <label className="font-mono text-[11px] font-bold">PRECIO UNITARIO (COP)</label>
-                        <input
-                          type="number" min="0" step="1" required
-                          value={item.precioUnitario}
-                          onChange={(e) => {
-                            const updated = [...compraForm.items];
-                            updated[idx] = { ...item, precioUnitario: e.target.value };
-                            setCompraForm({ ...compraForm, items: updated });
-                          }}
-                          className="neo-input font-mono text-xs"
-                        />
-                      </div>
-                    </div>
-                  </div>
-                ))}
-
-                {/* Total estimado */}
-                <div className="flex justify-end text-xs font-mono font-bold border-t border-black pt-2">
-                  TOTAL ESTIMADO: $
-                  {compraForm.items.reduce((acc, item) => acc + ((parseFloat(item.cantidad) || 0) * (parseFloat(item.precioUnitario) || 0)), 0).toLocaleString('es-CO')}
-                </div>
-              </div>
-
-              <button type="submit" disabled={guardandoCompra} className="neo-btn bg-brand-blue text-white hover:opacity-90 py-2.5 disabled:opacity-50">
-                {guardandoCompra ? 'GUARDANDO...' : 'CREAR ORDEN DE COMPRA'}
-              </button>
-            </form>
-          </div>
-        </div>
-      )}
 
       {/* Modal: Detalle Orden de Compra */}
       {selectedCompra && (
@@ -8658,7 +9044,21 @@ export default function AppHome() {
                     <Pencil size={12} /> Editar OC
                   </button>
                 )}
-                <button onClick={() => setSelectedCompra(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+                {/* Borrar solo tiene sentido en una compra que todavía no movió nada:
+                    el backend rechaza el DELETE si ya hay mercancía recibida o CxP. */}
+                {!['recibido', 'recibido_parcial'].includes(selectedCompra.estado) && !selectedCompra.facturaCompraId && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (!window.confirm(`¿Eliminar la compra ${selectedCompra.numero}? Queda en la papelera por 30 días.`)) return;
+                      void handleEliminarCompra(selectedCompra);
+                    }}
+                    className="neo-btn text-xs px-3 py-1.5 flex items-center gap-1.5 hover:bg-red-50 hover:text-brand-red"
+                  >
+                    <Trash2 size={12} /> Eliminar
+                  </button>
+                )}
+                <button onClick={() => setSelectedCompra(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
               </div>
             </div>
 
@@ -8673,7 +9073,8 @@ export default function AppHome() {
             {/* Ítems */}
             <div className="flex flex-col gap-1">
               <h4 className="font-mono font-bold text-xs border-b border-black pb-1">ÍTEMS</h4>
-              <table className="w-full text-xs border-collapse">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[440px] text-xs border-collapse">
                 <thead>
                   <tr className="bg-neutral-100 font-mono font-bold text-[11px]">
                     <th className="p-2 text-left">PRODUCTO / CONCEPTO</th>
@@ -8707,6 +9108,7 @@ export default function AppHome() {
                   })}
                 </tbody>
               </table>
+              </div>
             </div>
 
             {/* Transiciones disponibles */}
@@ -8751,7 +9153,7 @@ export default function AppHome() {
           <div className="neo-card bg-white w-full max-w-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2 sticky top-0 bg-white z-10">
               <h3 className="font-mono text-sm font-bold">EDITAR {editingCompra.numero}</h3>
-              <button onClick={() => setEditingCompra(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingCompra(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={(e) => void handleGuardarEditCompra(e)} className="flex flex-col gap-4 text-xs">
@@ -8811,7 +9213,7 @@ export default function AppHome() {
                       </label>
                       <button type="button"
                         onClick={() => setEditCompraForm({ ...editCompraForm, items: editCompraForm.items.filter((_, i) => i !== idx) })}
-                        className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red">
+                        className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red">
                         <Trash2 size={12} />
                       </button>
                     </div>
@@ -8956,7 +9358,7 @@ export default function AppHome() {
                 <div>
                   <h2 className="font-mono font-black text-base text-black">{getOrderDisplayName(ord)}</h2>
                   <div className="flex items-center gap-2 mt-1">
-                    <span className="font-mono text-[11px] text-neutral-500">{ord.numero}</span>
+                    <span className="font-mono text-xs text-neutral-500">{ord.numero}</span>
                     <span className={`text-[11px] font-mono font-bold border-[1.5px] border-black px-1.5 py-0.5 ${
                       ord.estado === 'borrador' ? 'bg-neutral-100 text-neutral-700' :
                       ord.estado === 'confirmado' ? 'bg-brand-blue/20 text-brand-blue' :
@@ -9038,7 +9440,7 @@ export default function AppHome() {
                               <span className="text-neutral-600">{new Date(ab.fecha).toLocaleDateString('es-CO')}</span>
                               <span className="flex-1 text-neutral-500 truncate">{ab.referencia || '—'}</span>
                               <span className="font-bold text-green-700">+${ab.monto.toLocaleString('es-CO')}</span>
-                              <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
+                              <button type="button" onClick={() => void handleDeleteAbono(ab)} className="neo-btn p-3 sm:p-1.5 hover:bg-red-50 hover:text-brand-red" title="Eliminar abono"><Trash2 size={12} /></button>
                             </div>
                           ))}
                         </div>
@@ -9240,7 +9642,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR PRODUCTO</h3>
-              <button onClick={() => setEditingProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingProduct(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditProduct(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9324,7 +9726,7 @@ export default function AppHome() {
               <h3 className="font-mono text-sm font-bold text-black flex items-center gap-2">
                 <Tag size={16} /> VARIANTES — {variantesProduct.nombre}
               </h3>
-              <button onClick={() => setVariantesProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setVariantesProduct(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             {variantesError && <p className="text-brand-red font-mono text-[11px] border border-brand-red p-2">{variantesError}</p>}
@@ -9448,7 +9850,7 @@ export default function AppHome() {
                 <PackagePlus size={16} />
                 ENTRADA DE STOCK
               </h3>
-              <button onClick={() => setStockEntryProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setStockEntryProduct(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <p className="text-xs font-mono text-neutral-600">
               Producto: <span className="font-bold text-black">{stockEntryProduct.nombre}</span>
@@ -9502,7 +9904,7 @@ export default function AppHome() {
                 <PackageMinus size={16} />
                 BAJA DE STOCK
               </h3>
-              <button onClick={() => setStockAdjustProduct(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setStockAdjustProduct(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <p className="text-xs font-mono text-neutral-600">
               Producto: <span className="font-bold text-black">{stockAdjustProduct.nombre}</span>
@@ -9561,7 +9963,7 @@ export default function AppHome() {
                 <Tag size={16} />
                 ADMINISTRAR CATEGORÍAS
               </h3>
-              <button onClick={() => setShowCategoryAdmin(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCategoryAdmin(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -9637,7 +10039,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR CLIENTE</h3>
-              <button onClick={() => setShowCreateCustomer(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateCustomer(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCreateCustomer(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9695,7 +10097,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR PROVEEDOR</h3>
-              <button onClick={() => setShowCreateSupplier(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCreateSupplier(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCreateSupplier(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9747,7 +10149,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR CLIENTE</h3>
-              <button onClick={() => setEditingCustomer(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingCustomer(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditCustomer(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9820,7 +10222,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR PROVEEDOR</h3>
-              <button onClick={() => setEditingSupplier(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingSupplier(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditSupplier(e)} className="flex flex-col gap-3.5 text-xs">
               <div className="flex flex-col gap-1">
@@ -9863,7 +10265,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR PEDIDO {editingOrder.numero}</h3>
-              <button onClick={() => setEditingOrder(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingOrder(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditOrder(e)} className="flex flex-col gap-3.5 text-xs">
               <p className="text-[11px] text-neutral-500 font-mono">El estado, los ítems y el total se gestionan desde sus propios flujos — aquí solo puedes ajustar el cliente asociado y las notas.</p>
@@ -9890,7 +10292,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR FACTURA {editingInvoice.numero}</h3>
-              <button onClick={() => setEditingInvoice(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingInvoice(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditInvoice(e)} className="flex flex-col gap-3.5 text-xs">
               <p className="text-[11px] text-neutral-500 font-mono">El total, el saldo y el estado los recalcula siempre el servidor — aquí solo puedes ajustar la fecha de vencimiento y las notas.</p>
@@ -9914,7 +10316,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-sm w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">EDITAR ABONO</h3>
-              <button onClick={() => setEditingAbono(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setEditingAbono(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleSaveEditAbono(e)} className="flex flex-col gap-3.5 text-xs">
               <p className="text-[11px] text-neutral-500 font-mono">El monto de un abono no se puede editar — si fue un error, elimínalo (puedes deshacerlo) y registra uno nuevo.</p>
@@ -9948,7 +10350,7 @@ export default function AppHome() {
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <h3 className="font-mono text-sm font-bold">REGISTRAR PAGO · {selectedCxpInvoice.numero}</h3>
-              <button onClick={() => setShowCxpAbonoModal(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowCxpAbonoModal(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCxpAbono(e)} className="p-4 flex flex-col gap-3">
               <div className="flex justify-between text-xs font-mono bg-neutral-50 border border-neutral-200 p-3">
@@ -10009,7 +10411,7 @@ export default function AppHome() {
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <h3 className="font-mono text-sm font-bold">TRANSFERENCIA ENTRE CUENTAS</h3>
-              <button onClick={() => { setShowTransferenciaModal(false); setTransferenciaError(null); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => { setShowTransferenciaModal(false); setTransferenciaError(null); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCrearTransferencia(e)} className="p-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1">
@@ -10074,14 +10476,101 @@ export default function AppHome() {
       )}
 
       {/* ─── MODAL: GASTO OPERATIVO ───────────────────────────────────────── */}
+      {/* Modal: Editar Gasto — el PATCH del API existía sin UI, así que corregir
+          un typo obligaba a borrar y recrear, ensuciando la auditoría. */}
+      {editandoGasto && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
+          <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
+            <div className="border-b-2 border-black p-4 flex justify-between items-center">
+              <h3 className="font-mono text-sm font-bold">EDITAR GASTO</h3>
+              <button onClick={() => setEditandoGasto(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+            <form onSubmit={(e) => void handleGuardarEditGasto(e)} className="p-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">DESCRIPCIÓN *</label>
+                <input type="text" value={editGastoForm.descripcion} onChange={e => setEditGastoForm(f => ({ ...f, descripcion: e.target.value }))} className="neo-input" required />
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">TIPO</label>
+                  <select value={editGastoForm.categoria} onChange={e => setEditGastoForm(f => ({ ...f, categoria: e.target.value as CategoriaGasto }))} className="neo-input font-mono text-sm">
+                    {CATEGORIAS_GASTO_LOCAL.map(c => (<option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>))}
+                  </select>
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">MONTO *</label>
+                  <MoneyInput
+                    aria-label="Monto del gasto"
+                    value={editGastoForm.monto === '' ? '' : Number(editGastoForm.monto)}
+                    onChange={(v) => setEditGastoForm(f => ({ ...f, monto: v === '' ? '' : String(v) }))}
+                    className="neo-input font-mono w-full"
+                    required
+                  />
+                </div>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">FECHA</label>
+                <input type="date" value={editGastoForm.fecha} onChange={e => setEditGastoForm(f => ({ ...f, fecha: e.target.value }))} className="neo-input font-mono" />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">NOTAS</label>
+                <textarea value={editGastoForm.notas} onChange={e => setEditGastoForm(f => ({ ...f, notas: e.target.value }))} className="neo-input resize-none h-16" />
+              </div>
+              <p className="text-[11px] font-mono text-neutral-600">
+                Si cambiás el monto y el gasto salió de una cuenta bancaria, el saldo se ajusta solo.
+              </p>
+              {editGastoError && <p className="text-xs text-brand-red font-mono">{editGastoError}</p>}
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                <button type="submit" disabled={guardandoEditGasto} className="neo-btn-secondary flex-1 py-2 font-bold">
+                  {guardandoEditGasto ? 'Guardando…' : 'Guardar cambios'}
+                </button>
+                <button type="button" onClick={() => setEditandoGasto(null)} className="neo-btn flex-1 py-2">Cancelar</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {showGastoModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
-              <h3 className="font-mono text-sm font-bold">REGISTRAR GASTO OPERATIVO</h3>
-              <button onClick={() => setShowGastoModal(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <h3 className="font-mono text-sm font-bold">REGISTRAR GASTO</h3>
+              <button onClick={() => setShowGastoModal(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
+            {(() => {
+              const esCompra = gastoForm.tipo === TIPO_COMPRA_INVENTARIO;
+              const totalItems = gastoForm.items.reduce((acc, it) => {
+                const cant = parseFloat(it.cantidad) || 0;
+                const precio = it.precioUnitario
+                  ? parseFloat(it.precioUnitario)
+                  : (products.find(p => p.id === it.productoId)?.precio_costo ?? 0);
+                return acc + cant * precio;
+              }, 0);
+
+              return (
             <form onSubmit={(e) => void handleCrearGasto(e)} className="p-4 flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono text-xs font-bold">TIPO *</label>
+                <select
+                  value={gastoForm.tipo}
+                  onChange={e => setGastoForm(f => ({ ...f, tipo: e.target.value }))}
+                  className="neo-input font-mono text-sm"
+                >
+                  <option value={TIPO_COMPRA_INVENTARIO}>📦 Compra de inventario / mercancía</option>
+                  <optgroup label="Gastos del negocio">
+                    {CATEGORIAS_GASTO_LOCAL.map(c => (
+                      <option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>
+                    ))}
+                  </optgroup>
+                </select>
+                {esCompra && (
+                  <span className="text-[11px] text-neutral-600">
+                    La mercancía entra al inventario y se genera la cuenta por pagar al proveedor.
+                  </span>
+                )}
+              </div>
+
               <div className="flex flex-col gap-1">
                 <label className="font-mono text-xs font-bold">DESCRIPCIÓN *</label>
                 <input
@@ -10089,68 +10578,199 @@ export default function AppHome() {
                   value={gastoForm.descripcion}
                   onChange={e => setGastoForm(f => ({ ...f, descripcion: e.target.value }))}
                   className="neo-input"
-                  placeholder="Ej: Arriendo local mes de junio"
+                  placeholder={esCompra ? 'Ej: Compra de mercancía a Textiles SAS' : 'Ej: Arriendo local mes de junio'}
                   required
                 />
               </div>
+
+              {/* Ítems — solo para compras de inventario */}
+              {esCompra && (
+                <div className="flex flex-col gap-2 border border-black/20 bg-neutral-50 p-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="font-mono text-xs font-bold">PRODUCTOS QUE ENTRAN</label>
+                    <button
+                      type="button"
+                      onClick={() => setGastoForm(f => ({ ...f, items: [...f.items, { productoId: '', cantidad: '1', precioUnitario: '' }] }))}
+                      className="text-brand-blue hover:underline font-bold text-[11px]"
+                    >+ Agregar producto</button>
+                  </div>
+                  {gastoForm.items.map((item, idx) => (
+                    <div key={idx} className="flex flex-wrap gap-2 items-end">
+                      <div className="flex-1 min-w-[160px]">
+                        <Combobox
+                          value={item.productoId}
+                          onChange={(productoId) => setGastoForm(f => {
+                            const items = [...f.items];
+                            const prod = products.find(p => p.id === productoId);
+                            items[idx] = {
+                              ...items[idx]!,
+                              productoId,
+                              // Precarga el costo conocido — se puede editar si esta vez salió distinto.
+                              precioUnitario: items[idx]!.precioUnitario || (prod ? String(prod.precio_costo) : ''),
+                            };
+                            return { ...f, items };
+                          })}
+                          emptyOptionLabel="Seleccionar producto…"
+                          placeholder="Buscar por nombre o SKU…"
+                          options={products.map(p => ({ value: p.id, label: p.nombre, sublabel: `${p.sku} · Dispo ${productStocks[p.id] ?? 0}` }))}
+                        />
+                      </div>
+                      <div className="w-20">
+                        <label className="font-mono text-[11px] font-bold block">CANT.</label>
+                        <input
+                          type="number" min="0.001" step="0.001"
+                          value={item.cantidad}
+                          onChange={e => setGastoForm(f => {
+                            const items = [...f.items];
+                            items[idx] = { ...items[idx]!, cantidad: e.target.value };
+                            return { ...f, items };
+                          })}
+                          className="neo-input py-1.5 text-center font-mono w-full"
+                        />
+                      </div>
+                      <div className="w-32">
+                        <label className="font-mono text-[11px] font-bold block">COSTO UNIT.</label>
+                        <MoneyInput
+                          aria-label="Costo unitario"
+                          value={item.precioUnitario === '' ? '' : Number(item.precioUnitario)}
+                          onChange={(v) => setGastoForm(f => {
+                            const items = [...f.items];
+                            items[idx] = { ...items[idx]!, precioUnitario: v === '' ? '' : String(v) };
+                            return { ...f, items };
+                          })}
+                          className="neo-input font-mono py-1.5 w-full text-xs"
+                          placeholder="0"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setGastoForm(f => ({
+                          ...f,
+                          items: f.items.length === 1 ? f.items : f.items.filter((_, i) => i !== idx),
+                        }))}
+                        className="font-mono font-bold text-base hover:text-brand-red px-2 pb-1"
+                      >×</button>
+                    </div>
+                  ))}
+                  <div className="text-[11px] font-mono text-neutral-600 text-right">
+                    Suma de los productos: <strong className="text-black">${totalItems.toLocaleString('es-CO', { maximumFractionDigits: 0 })}</strong>
+                  </div>
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-bold">CATEGORÍA</label>
-                  <select value={gastoForm.categoria} onChange={e => setGastoForm(f => ({ ...f, categoria: e.target.value as CategoriaGasto }))} className="neo-input font-mono text-sm">
-                    {CATEGORIAS_GASTO_LOCAL.map(c => (
-                      <option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>
-                    ))}
-                  </select>
-                </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-bold">MONTO *</label>
+                  <label className="font-mono text-xs font-bold">{esCompra ? 'TOTAL REAL (opcional)' : 'MONTO *'}</label>
                   <MoneyInput
-                    aria-label="Monto del gasto"
+                    aria-label={esCompra ? 'Total real de la compra' : 'Monto del gasto'}
                     value={gastoForm.monto === '' ? '' : Number(gastoForm.monto)}
                     onChange={(v) => setGastoForm(f => ({ ...f, monto: v === '' ? '' : String(v) }))}
                     className="neo-input font-mono w-full"
-                    required
-                    placeholder="0"
+                    required={!esCompra}
+                    placeholder={esCompra ? String(Math.round(totalItems)) : '0'}
                   />
+                  {esCompra && (
+                    <span className="text-[11px] text-neutral-600">Dejalo vacío si es igual a la suma de arriba. Útil si hubo flete o descuento.</span>
+                  )}
                 </div>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
                   <label className="font-mono text-xs font-bold">FECHA</label>
                   <input type="date" value={gastoForm.fecha} onChange={e => setGastoForm(f => ({ ...f, fecha: e.target.value }))} className="neo-input font-mono" />
                 </div>
-                <div className="flex flex-col gap-1">
-                  <label className="font-mono text-xs font-bold">MEDIO DE PAGO</label>
-                  <select value={gastoForm.medioPago} onChange={e => setGastoForm(f => ({ ...f, medioPago: e.target.value }))} className="neo-input font-mono text-sm">
-                    <option value="">— Sin especificar —</option>
-                    <option value="efectivo">Efectivo</option>
-                    <option value="transferencia">Transferencia</option>
-                    <option value="tarjeta">Tarjeta</option>
-                    <option value="cheque">Cheque</option>
-                  </select>
+              </div>
+
+              {/* Pagado vs a crédito */}
+              <div className="flex flex-col gap-2 border border-black/20 bg-neutral-50 p-2.5">
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setGastoForm(f => ({ ...f, aCredito: false }))}
+                    className={`flex-1 min-w-[130px] font-mono text-xs font-bold px-3 py-3 sm:py-2 border-2 border-black ${!gastoForm.aCredito ? 'bg-black text-white' : 'bg-white hover:bg-neutral-100'}`}
+                  >Ya lo pagué</button>
+                  <button
+                    type="button"
+                    onClick={() => setGastoForm(f => ({ ...f, aCredito: true }))}
+                    className={`flex-1 min-w-[130px] font-mono text-xs font-bold px-3 py-3 sm:py-2 border-2 border-black ${gastoForm.aCredito ? 'bg-black text-white' : 'bg-white hover:bg-neutral-100'}`}
+                  >Quedé debiendo</button>
                 </div>
+
+                {gastoForm.aCredito ? (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">¿A QUIÉN LE DEBÉS? *</label>
+                      <Combobox
+                        value={gastoForm.proveedorId}
+                        onChange={(proveedorId) => setGastoForm(f => ({ ...f, proveedorId }))}
+                        emptyOptionLabel="Seleccionar proveedor…"
+                        placeholder="Buscar proveedor…"
+                        options={suppliers.map(s => ({ value: s.id, label: s.nombre, sublabel: s.nit ?? undefined }))}
+                      />
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">FECHA DE VENCIMIENTO</label>
+                      <input type="date" value={gastoForm.fechaVencimiento} onChange={e => setGastoForm(f => ({ ...f, fechaVencimiento: e.target.value }))} className="neo-input font-mono" />
+                      <span className="text-[11px] text-neutral-600">Si lo dejás vacío, vence en 30 días.</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">
+                        ¿DE QUÉ CUENTA SALIÓ? {esCompra ? '*' : ''}
+                      </label>
+                      <select value={gastoForm.cuentaBancariaId} onChange={e => setGastoForm(f => ({ ...f, cuentaBancariaId: e.target.value }))} className="neo-input font-mono">
+                        <option value="">{esCompra ? '— Elegí una cuenta —' : '— No descontar de ninguna —'}</option>
+                        {bankAccounts.map(b => (
+                          <option key={b.id} value={b.id}>{b.banco} · {b.numero} (${b.saldo.toLocaleString('es-CO')})</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="flex flex-col gap-1">
+                      <label className="font-mono text-xs font-bold">MEDIO DE PAGO</label>
+                      <select value={gastoForm.medioPago} onChange={e => setGastoForm(f => ({ ...f, medioPago: e.target.value }))} className="neo-input font-mono text-sm">
+                        <option value="">— Sin especificar —</option>
+                        <option value="efectivo">Efectivo</option>
+                        <option value="transferencia">Transferencia</option>
+                        <option value="tarjeta">Tarjeta</option>
+                        <option value="cheque">Cheque</option>
+                      </select>
+                    </div>
+                  </>
+                )}
+
+                {/* Una compra siempre necesita proveedor: genera la cuenta por pagar
+                    aunque se pague en el acto. */}
+                {esCompra && !gastoForm.aCredito && (
+                  <div className="flex flex-col gap-1">
+                    <label className="font-mono text-xs font-bold">PROVEEDOR *</label>
+                    <Combobox
+                      value={gastoForm.proveedorId}
+                      onChange={(proveedorId) => setGastoForm(f => ({ ...f, proveedorId }))}
+                      emptyOptionLabel="Seleccionar proveedor…"
+                      placeholder="Buscar proveedor…"
+                      options={suppliers.map(s => ({ value: s.id, label: s.nombre, sublabel: s.nit ?? undefined }))}
+                    />
+                  </div>
+                )}
               </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs font-bold">DESCONTAR DE CUENTA BANCARIA</label>
-                <select value={gastoForm.cuentaBancariaId} onChange={e => setGastoForm(f => ({ ...f, cuentaBancariaId: e.target.value }))} className="neo-input font-mono">
-                  <option value="">— No descontar —</option>
-                  {bankAccounts.map(b => (
-                    <option key={b.id} value={b.id}>{b.banco} · {b.numero} (${b.saldo.toLocaleString('es-CO')})</option>
-                  ))}
-                </select>
-              </div>
-              <div className="flex flex-col gap-1">
-                <label className="font-mono text-xs font-bold">NOTAS</label>
-                <textarea value={gastoForm.notas} onChange={e => setGastoForm(f => ({ ...f, notas: e.target.value }))} className="neo-input resize-none h-16" placeholder="Observaciones adicionales..." />
-              </div>
+
+              {!esCompra && (
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono text-xs font-bold">NOTAS</label>
+                  <textarea value={gastoForm.notas} onChange={e => setGastoForm(f => ({ ...f, notas: e.target.value }))} className="neo-input resize-none h-16" placeholder="Observaciones adicionales..." />
+                </div>
+              )}
+
               {gastoFormError && <p className="text-xs text-brand-red font-mono">{gastoFormError}</p>}
-              <div className="flex gap-2 pt-2">
+              <div className="flex flex-col sm:flex-row gap-2 pt-2">
                 <button type="submit" disabled={guardandoGasto} className="neo-btn-secondary flex-1 py-2 font-bold">
-                  {guardandoGasto ? 'Registrando…' : '+ Registrar Gasto'}
+                  {guardandoGasto ? 'Registrando…' : esCompra ? '+ Registrar Compra' : '+ Registrar Gasto'}
                 </button>
                 <button type="button" onClick={() => setShowGastoModal(false)} className="neo-btn flex-1 py-2">Cancelar</button>
               </div>
             </form>
+              );
+            })()}
           </div>
         </div>
       )}
@@ -10161,7 +10781,7 @@ export default function AppHome() {
           <div className="bg-white border-2 border-black w-full max-w-md shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] max-h-[90vh] overflow-y-auto">
             <div className="border-b-2 border-black p-4 flex justify-between items-center">
               <h3 className="font-mono text-sm font-bold">REGISTRAR INGRESO BANCARIO</h3>
-              <button onClick={() => setShowIngresoModal(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowIngresoModal(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <form onSubmit={(e) => void handleCrearIngreso(e)} className="p-4 flex flex-col gap-3">
               <div className="flex flex-col gap-1">
@@ -10246,10 +10866,11 @@ export default function AppHome() {
                 <h3 className="font-mono text-sm font-bold">RECEPCIÓN {recepcionTarget.estado === 'recibido_parcial' ? 'PARCIAL' : 'TOTAL'}</h3>
                 <p className="text-[11px] text-neutral-500 font-mono">OC {recepcionTarget.compra.numero} — Ingresa las cantidades recibidas</p>
               </div>
-              <button onClick={() => { setShowRecepcionModal(false); setRecepcionTarget(null); }} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => { setShowRecepcionModal(false); setRecepcionTarget(null); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="p-4 flex flex-col gap-4">
-              <table className="w-full text-xs border-collapse">
+              <div className="overflow-x-auto">
+              <table className="w-full min-w-[420px] text-xs border-collapse">
                 <thead>
                   <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold">
                     <th className="p-2 text-left">ÍTEM</th>
@@ -10286,6 +10907,7 @@ export default function AppHome() {
                   })}
                 </tbody>
               </table>
+              </div>
               <div className="flex gap-2">
                 <button
                   type="button"
@@ -10313,7 +10935,7 @@ export default function AppHome() {
                 <h3 className="font-mono text-sm font-bold">🗑 PAPELERA</h3>
                 <p className="text-[11px] text-neutral-500 font-mono">Elementos eliminados recientemente — puedes restaurarlos.</p>
               </div>
-              <button onClick={() => setShowPapelera(false)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => setShowPapelera(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="p-4 overflow-y-auto flex-1">
               {!papeleraCargando && papeleraItems.length === 0 && (
@@ -10346,7 +10968,7 @@ export default function AppHome() {
       {/* ── POPUP: Evento de calendario ── */}
       {eventoPopup && (
         <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4" onClick={() => setEventoPopup(null)}>
-          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col gap-0 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
+          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col gap-0 max-h-[90vh] overflow-y-auto shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
             {/* Header */}
             <div className={`flex items-center justify-between px-4 py-3 border-b-2 border-black ${
               eventoPopup.tipo === 'nota' ? 'bg-brand-yellow/30' :
@@ -10359,7 +10981,7 @@ export default function AppHome() {
                 {eventoPopup.canal === 'tiktok' && <TikTokIcon size={14} />}
                 <span className="font-mono text-xs text-neutral-500">{new Date(eventoPopup.fecha).toLocaleDateString('es-CO')}</span>
               </div>
-              <button type="button" onClick={() => setEventoPopup(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button type="button" onClick={() => setEventoPopup(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="px-4 py-4 flex flex-col gap-4">
               {/* Título */}
@@ -10422,13 +11044,13 @@ export default function AppHome() {
       {/* ── POPUP: Nota interna (desde dashboard) ── */}
       {notaPopup && (
         <div className="fixed inset-0 z-[70] bg-black/60 flex items-center justify-center p-4" onClick={() => setNotaPopup(null)}>
-          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
+          <div className="bg-white border-2 border-black w-full max-w-md flex flex-col max-h-[90vh] overflow-y-auto shadow-[6px_6px_0px_0px_rgba(0,0,0,0.8)]" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-4 py-3 border-b-2 border-black bg-brand-yellow/20">
               <div className="flex items-center gap-2">
                 <StickyNote size={14} />
                 <span className="font-mono text-xs font-bold">NOTA</span>
               </div>
-              <button type="button" onClick={() => setNotaPopup(null)} className="neo-btn p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button type="button" onClick={() => setNotaPopup(null)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
             <div className="px-4 py-4 flex flex-col gap-3">
               <div className="flex items-center gap-2">
@@ -10454,7 +11076,7 @@ export default function AppHome() {
 
       {/* Toast global de "deshacer" — aparece tras eliminar cualquier elemento de cualquier módulo */}
       {undoToast && (
-        <div className="fixed bottom-6 right-6 z-[60] neo-card bg-black text-white max-w-sm w-full sm:w-auto flex items-center gap-4 py-3 px-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.4)]">
+        <div className="fixed bottom-3 left-3 right-3 sm:bottom-6 sm:left-auto sm:right-6 z-[60] neo-card bg-black text-white sm:max-w-sm w-auto flex items-center gap-4 py-3 px-4 shadow-[6px_6px_0px_0px_rgba(0,0,0,0.4)]">
           <span className="text-xs font-mono leading-snug">{undoToast.mensaje}</span>
           <button
             type="button"
