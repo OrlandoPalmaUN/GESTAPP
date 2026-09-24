@@ -58,9 +58,12 @@ export const UNIDADES_COMUNES = [
 export const SPRITES_PRODUCTO = [
   'queso',
   'huevos',
+  /** Media panal — para el huevo que se vende de a 15 en vez de 30. */
+  'huevos_media',
   'suero',
   'mantequilla',
   'arepa',
+  'deditos',
   'botella',
   'bolsa',
   'caja',
