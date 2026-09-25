@@ -130,6 +130,17 @@ export class ApiError extends Error {
 }
 
 /**
+ * Tope duro para cualquier request. El backend vive en el plan gratuito de
+ * Render (se apaga tras 15 min sin tráfico y tarda hasta ~1 min en
+ * despertar) — 45s da margen de sobra para ese cold start sin dejar un
+ * `fetch` colgado para siempre si la red falla de una forma que ni resuelve
+ * ni rechaza la promesa. Sin esto, `AuthProvider` podía quedar con
+ * `cargando=true` indefinidamente y `LoadingGate` mostrando el spinner sin
+ * salida — no había forma de que el usuario llegara ni siquiera a /login.
+ */
+const TIMEOUT_MS = 45_000
+
+/**
  * Wrapper de `fetch` contra la API propia (Fastify). Siempre manda
  * `credentials: 'include'` — la sesión viaja en una cookie httpOnly, no en
  * un header que tengamos que manejar nosotros.
@@ -141,21 +152,34 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   // `DELETE` de eliminarCategoria/eliminarProducto/etc., que no mandan body)
   // va vacío.
   const token = getToken()
-  const res = await fetch(`${API_URL}${path}`, {
-    ...init,
-    credentials: 'include',
-    // `no-store` evita que el navegador/Service Worker sirvan respuestas
-    // viejas en GETs idempotentes — crítico para el dashboard de IG, donde
-    // tras un refresh queremos releer datos frescos y no la copia cacheada.
-    cache: 'no-store',
-    headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      // Enviar como Bearer header además de cookie — resuelve iOS Safari ITP
-      // que bloquea cookies cross-origin (vercel.app → onrender.com)
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...init?.headers,
-    },
-  })
+  const timeoutController = new AbortController()
+  const timeoutId = setTimeout(() => timeoutController.abort(), TIMEOUT_MS)
+  let res: Response
+  try {
+    res = await fetch(`${API_URL}${path}`, {
+      ...init,
+      credentials: 'include',
+      // `no-store` evita que el navegador/Service Worker sirvan respuestas
+      // viejas en GETs idempotentes — crítico para el dashboard de IG, donde
+      // tras un refresh queremos releer datos frescos y no la copia cacheada.
+      cache: 'no-store',
+      signal: init?.signal ?? timeoutController.signal,
+      headers: {
+        ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
+        // Enviar como Bearer header además de cookie — resuelve iOS Safari ITP
+        // que bloquea cookies cross-origin (vercel.app → onrender.com)
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...init?.headers,
+      },
+    })
+  } catch (error) {
+    if (timeoutController.signal.aborted) {
+      throw new ApiError('El servidor tardó demasiado en responder. Intenta de nuevo.', 0)
+    }
+    throw error
+  } finally {
+    clearTimeout(timeoutId)
+  }
 
   if (!res.ok) {
     const body = (await res.json().catch(() => null)) as { message?: string; error?: string } | null

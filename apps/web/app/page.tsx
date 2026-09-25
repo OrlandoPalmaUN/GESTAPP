@@ -1806,10 +1806,6 @@ export default function AppHome() {
     } catch { /* silencioso — es un panel secundario, no bloquea Finanzas */ }
   }, [usuario?.tenantId]);
 
-  useEffect(() => {
-    void fetchTransferencias();
-  }, [fetchTransferencias]);
-
   const handleRevertirTransferencia = async (t: TransferenciaBancaria) => {
     const origen = bankAccounts.find((c) => c.id === t.cuentaOrigenId);
     const destino = bankAccounts.find((c) => c.id === t.cuentaDestinoId);
@@ -1894,8 +1890,6 @@ export default function AppHome() {
       setGastosCargando(false);
     }
   }, [usuario?.tenantId]);
-
-  useEffect(() => { void fetchGastos(); }, [fetchGastos]);
 
   const gastoFormVacio = {
     tipo: 'otros', descripcion: '', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '',
@@ -2070,8 +2064,6 @@ export default function AppHome() {
       setIngresosCargando(false);
     }
   }, [usuario?.tenantId]);
-
-  useEffect(() => { void fetchIngresos(); }, [fetchIngresos]);
 
   const handleCrearIngreso = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2622,7 +2614,25 @@ export default function AppHome() {
     }
   }, [usuario?.tenantId]);
 
-  useEffect(() => { void fetchCompras(); }, [fetchCompras]);
+  /**
+   * Transferencias, gastos, ingresos y compras solo se leen dentro de
+   * Finanzas (tabla de gastos unificados, historial de transferencias,
+   * listado de ingresos — ver `gastosUnificados` más arriba). Los modales que
+   * SÍ son alcanzables desde otras pestañas (Nuevo gasto/transferencia desde
+   * el Dashboard) solo necesitan `products`/`suppliers`/`bankAccounts`, que
+   * siguen cargando siempre — así que difiriendo estas 4 listas a la primera
+   * visita a Finanzas no rompe ningún atajo, y evita 4 peticiones en el
+   * arranque para quien nunca abre esa pestaña.
+   */
+  const finanzasListasCargadas = useRef(false);
+  useEffect(() => {
+    if (activeTab !== 'finanzas' || finanzasListasCargadas.current) return;
+    finanzasListasCargadas.current = true;
+    void fetchTransferencias();
+    void fetchGastos();
+    void fetchIngresos();
+    void fetchCompras();
+  }, [activeTab, fetchTransferencias, fetchGastos, fetchIngresos, fetchCompras]);
 
   const handleTransicionarCompra = async (compra: PedidoProveedor, estado: EstadoPedidoProveedor) => {
     // Sin proveedor no hay a quién registrarle la deuda — el backend ya lo
@@ -2719,7 +2729,14 @@ export default function AppHome() {
     }
   }, [usuario?.tenantId]);
 
-  useEffect(() => { void fetchNotasInternas(); }, [fetchNotasInternas]);
+  // Solo se leen en Comunicaciones (tablero de notas) — el Dashboard muestra
+  // el feed de eventos (`fetchComunicaciones`), no estas notas.
+  const notasInternasCargadas = useRef(false);
+  useEffect(() => {
+    if (activeTab !== 'comunicaciones' || notasInternasCargadas.current) return;
+    notasInternasCargadas.current = true;
+    void fetchNotasInternas();
+  }, [activeTab, fetchNotasInternas]);
 
   // Auto-avance del slider del dashboard cada 10 segundos
   useEffect(() => {
