@@ -100,11 +100,52 @@ export const CATEGORIAS_GASTO = [
 ] as const
 export type CategoriaGasto = (typeof CATEGORIAS_GASTO)[number]
 
+/** Egreso o ingreso — de qué lado del flujo clasifica una categoría. */
+export const FLUJOS_CATEGORIA = ['egreso', 'ingreso'] as const
+export type FlujoCategoria = (typeof FLUJOS_CATEGORIA)[number]
+
+/**
+ * Categoría de gasto/ingreso DEFINIDA POR EL TENANT (tabla `categorias_gasto`,
+ * migración 027). Reemplaza a `CATEGORIAS_GASTO`/`CATEGORIAS_INGRESO` como
+ * fuente de verdad: esos arrays quedan solo como la semilla que la migración
+ * inserta y como referencia de los slugs históricos.
+ */
+export interface CategoriaMovimiento {
+  id: string
+  nombre: string
+  flujo: FlujoCategoria
+  /**
+   * Slug de las categorías sembradas de fábrica (`'arriendo'`, `'nomina'`…).
+   * `null` = la creó el negocio. Sirve para mapear las filas viejas, cuya
+   * columna `categoria` TEXT guarda justamente este valor.
+   */
+  slug: string | null
+  /**
+   * `false` = mueve plata pero NO es gasto/ingreso del negocio (un aporte de
+   * capital, un préstamo al socio). Queda fuera de la utilidad, pero SÍ entra
+   * al flujo de caja: la plata se movió de verdad. Ver migración 027.
+   */
+  afectaUtilidad: boolean
+  orden: number
+  activo: boolean
+  createdAt: string
+}
+
 /** Gasto operativo del negocio (arriendo, servicios, nómina, etc.). */
 export interface GastoOperativo {
   id: string
   descripcion: string
-  categoria: CategoriaGasto
+  /**
+   * Slug histórico (columna `categoria` TEXT). Se conserva por compatibilidad
+   * mientras la columna exista; para mostrar, usar `categoriaNombre`.
+   */
+  categoria: string
+  /** Categoría del tenant. `null` solo en filas que quedaran sin mapear. */
+  categoriaId: string | null
+  /** Nombre resuelto de la categoría — evita que el front tenga que cruzar. */
+  categoriaNombre: string | null
+  /** Del `afecta_utilidad` de su categoría. `null` si no tiene categoría. */
+  afectaUtilidad: boolean | null
   monto: number
   fecha: string
   medioPago: string | null
@@ -125,7 +166,11 @@ export type CategoriaIngreso = (typeof CATEGORIAS_INGRESO)[number]
 export interface IngresoBancario {
   id: string
   descripcion: string
-  categoria: CategoriaIngreso
+  /** Slug histórico. Para mostrar, usar `categoriaNombre`. Ver `GastoOperativo`. */
+  categoria: string
+  categoriaId: string | null
+  categoriaNombre: string | null
+  afectaUtilidad: boolean | null
   monto: number
   fecha: string
   medioPago: string | null
@@ -158,4 +203,53 @@ export function calcularSaldoPendiente(total: number, abonos: Pick<Abono, 'monto
 export function calcularEstadoFactura(saldoPendiente: number, fechaVencimiento: string, hoy: Date = new Date()): EstadoFactura {
   if (saldoPendiente <= 0) return 'pagada'
   return new Date(fechaVencimiento).getTime() < hoy.getTime() ? 'vencida' : 'pendiente'
+}
+
+/** Retiro o devolución — ver `movimientos_socio` (migración 028). */
+export const TIPOS_MOVIMIENTO_SOCIO = ['retiro', 'devolucion'] as const
+export type TipoMovimientoSocio = (typeof TIPOS_MOVIMIENTO_SOCIO)[number]
+
+/**
+ * Plata que el dueño saca del negocio como préstamo (y lo que devuelve).
+ *
+ * NO es un gasto: es un activo que cambia de forma —plata en banco por derecho
+ * de cobro—, así que baja el saldo bancario pero no toca la utilidad. Ver el
+ * comentario de la migración 028.
+ */
+export interface MovimientoSocio {
+  id: string
+  tipo: TipoMovimientoSocio
+  socio: string
+  monto: number
+  fecha: string
+  cuentaBancariaId: string
+  /** Solo en devoluciones: a qué retiro abona. `null` = no imputada a uno puntual. */
+  retiroId: string | null
+  notas: string | null
+  usuarioId: string | null
+  createdAt: string
+  /** Solo en retiros: cuánto de ESTE retiro ya se devolvió. */
+  devuelto?: number
+  /** Solo en retiros: `monto - devuelto`. */
+  saldoPendiente?: number
+}
+
+/** Cuánto sacó y cuánto debe cada socio. Ver GET /finanzas/movimientos-socio/resumen. */
+export interface ResumenSocio {
+  socio: string
+  retirado: number
+  devuelto: number
+  saldoPendiente: number
+}
+
+/**
+ * El número que el dueño quiere ver de un vistazo: la plata del negocio está
+ * partida entre lo que hay en el banco y lo que está prestado afuera.
+ */
+export interface CapitalReal {
+  enBanco: number
+  prestado: number
+  /** `enBanco + prestado` — el capital que el negocio tiene, esté donde esté. */
+  capitalReal: number
+  porSocio: ResumenSocio[]
 }

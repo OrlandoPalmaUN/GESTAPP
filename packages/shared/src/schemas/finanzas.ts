@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { CATEGORIAS_GASTO, CATEGORIAS_INGRESO, TIPOS_CUENTA_BANCARIA, TIPOS_FACTURA } from '../types/finanzas.js'
+import { CATEGORIAS_GASTO, CATEGORIAS_INGRESO, FLUJOS_CATEGORIA, TIPOS_MOVIMIENTO_SOCIO, TIPOS_CUENTA_BANCARIA, TIPOS_FACTURA } from '../types/finanzas.js'
 
 export const tipoFacturaSchema = z.enum(TIPOS_FACTURA)
 export const tipoCuentaBancariaSchema = z.enum(TIPOS_CUENTA_BANCARIA)
@@ -89,9 +89,40 @@ export const crearTransferenciaSchema = z.object({
 export const categoriaGastoSchema = z.enum(CATEGORIAS_GASTO)
 export const categoriaIngresoSchema = z.enum(CATEGORIAS_INGRESO)
 
+export const flujoCategoriaSchema = z.enum(FLUJOS_CATEGORIA)
+
+/**
+ * Crear una categoría de gasto/ingreso propia del tenant (migración 027).
+ *
+ * `afectaUtilidad` por defecto en `true` porque el caso normal es un gasto o
+ * ingreso real del negocio; se baja a `false` para lo que mueve plata sin ser
+ * operativo (aporte de capital, préstamo al socio).
+ */
+export const crearCategoriaMovimientoSchema = z.object({
+  nombre: z.string().trim().min(1, 'El nombre de la categoría es obligatorio.'),
+  flujo: flujoCategoriaSchema,
+  afectaUtilidad: z.boolean().default(true),
+  orden: z.number().int().optional(),
+})
+
+/**
+ * Editar una categoría. `flujo` y `slug` NO se pueden cambiar: mover una
+ * categoría de egreso a ingreso reclasificaría en silencio todos los
+ * movimientos ya registrados con ella, y el slug identifica las sembradas.
+ * Para desactivarla se usa `activo`, que preserva el histórico.
+ */
+export const actualizarCategoriaMovimientoSchema = z.object({
+  nombre: z.string().trim().min(1, 'El nombre no puede quedar vacío.').optional(),
+  afectaUtilidad: z.boolean().optional(),
+  orden: z.number().int().optional(),
+  activo: z.boolean().optional(),
+})
+
 /** Registrar un ingreso manual a una cuenta bancaria. */
 export const crearIngresoBancarioSchema = z.object({
   descripcion: z.string().trim().min(1, 'La descripción es obligatoria.'),
+  /** Categoría del tenant. Es la forma nueva; `categoria` queda por compatibilidad. */
+  categoriaId: z.uuid().optional(),
   categoria: categoriaIngresoSchema.default('otro'),
   monto: z.number().positive('El monto debe ser mayor que cero.'),
   fecha: z.string().optional(),
@@ -105,6 +136,8 @@ export const crearIngresoBancarioSchema = z.object({
 export const crearGastoOperativoSchema = z
   .object({
     descripcion: z.string().trim().min(1, 'La descripción es obligatoria.'),
+    /** Categoría del tenant. Es la forma nueva; `categoria` queda por compatibilidad. */
+    categoriaId: z.uuid().optional(),
     categoria: categoriaGastoSchema.default('otros'),
     monto: z.number().positive('El monto debe ser mayor que cero.'),
     fecha: z.string().optional(),
@@ -142,6 +175,7 @@ export const crearGastoOperativoSchema = z
  */
 export const actualizarGastoOperativoSchema = z.object({
   descripcion: z.string().trim().min(1, 'La descripción no puede quedar vacía.').optional(),
+  categoriaId: z.uuid().optional(),
   categoria: categoriaGastoSchema.optional(),
   monto: z.number().positive('El monto debe ser mayor que cero.').optional(),
   fecha: z.string().optional(),
@@ -154,11 +188,43 @@ export const actualizarGastoOperativoSchema = z.object({
 /** Corregir un ingreso manual — misma lógica de reversa/aplicación que el gasto. */
 export const actualizarIngresoBancarioSchema = z.object({
   descripcion: z.string().trim().min(1, 'La descripción no puede quedar vacía.').optional(),
+  categoriaId: z.uuid().optional(),
   categoria: categoriaIngresoSchema.optional(),
   monto: z.number().positive('El monto debe ser mayor que cero.').optional(),
   fecha: z.string().optional(),
   medioPago: z.string().nullable().optional(),
   /** Obligatoria en ingresos (a diferencia de gastos): no puede quedar en null. */
+  cuentaBancariaId: z.uuid().optional(),
+  notas: z.string().nullable().optional(),
+})
+
+/**
+ * Registrar un retiro o una devolución del socio (migración 028).
+ *
+ * `retiroId` solo aplica a devoluciones: imputa el abono a un retiro concreto
+ * para poder responder "de lo que saqué en marzo, cuánto queda". El API valida
+ * además que no se devuelva más de lo que ese retiro tiene pendiente.
+ */
+export const crearMovimientoSocioSchema = z
+  .object({
+    tipo: z.enum(TIPOS_MOVIMIENTO_SOCIO),
+    socio: z.string().trim().min(1, 'Indicá de quién es el movimiento.'),
+    monto: z.number().positive('El monto debe ser mayor que cero.'),
+    fecha: z.string().optional(),
+    cuentaBancariaId: z.uuid('La cuenta bancaria es obligatoria.'),
+    retiroId: z.uuid().nullable().optional(),
+    notas: z.string().optional(),
+  })
+  .refine((d) => d.tipo === 'devolucion' || !d.retiroId, {
+    message: 'Solo una devolución puede imputarse a un retiro.',
+    path: ['retiroId'],
+  })
+
+/** Corregir un movimiento del socio. El tipo no se cambia: sería otro movimiento. */
+export const actualizarMovimientoSocioSchema = z.object({
+  socio: z.string().trim().min(1).optional(),
+  monto: z.number().positive('El monto debe ser mayor que cero.').optional(),
+  fecha: z.string().optional(),
   cuentaBancariaId: z.uuid().optional(),
   notas: z.string().nullable().optional(),
 })

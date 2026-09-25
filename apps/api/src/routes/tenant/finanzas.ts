@@ -2,25 +2,30 @@ import {
   actualizarAbonoSchema,
   actualizarCuentaBancariaSchema,
   actualizarFacturaSchema,
+  actualizarCategoriaMovimientoSchema,
   actualizarGastoOperativoSchema,
+  actualizarMovimientoSocioSchema,
   actualizarIngresoBancarioSchema,
   calcularEstadoFactura,
   calcularSaldoPendiente,
   crearAbonoSchema,
+  crearCategoriaMovimientoSchema,
   crearCuentaBancariaSchema,
   crearFacturaSchema,
   crearGastoOperativoSchema,
   crearIngresoBancarioSchema,
+  crearMovimientoSocioSchema,
   crearTransferenciaSchema,
   TIPO_DOCUMENTO_POR_TIPO_FACTURA,
   tipoFacturaSchema,
   type Abono,
-  type CategoriaGasto,
-  type CategoriaIngreso,
+  type CategoriaMovimiento,
   type CuentaBancaria,
   type Factura,
   type GastoOperativo,
+  type CapitalReal,
   type IngresoBancario,
+  type MovimientoSocio,
   type ResumenFinanciero,
   type TipoFactura,
   type TransferenciaBancaria,
@@ -78,6 +83,9 @@ interface FilaGasto {
   id: string
   descripcion: string
   categoria: string
+  categoria_id: string | null
+  categoria_nombre: string | null
+  afecta_utilidad: boolean | null
   monto: string
   fecha: Date
   medio_pago: string | null
@@ -93,6 +101,9 @@ interface FilaIngreso {
   id: string
   descripcion: string
   categoria: string
+  categoria_id: string | null
+  categoria_nombre: string | null
+  afecta_utilidad: boolean | null
   monto: string
   fecha: Date
   medio_pago: string | null
@@ -126,11 +137,133 @@ function aTransferencia(row: FilaTransferencia): TransferenciaBancaria {
   }
 }
 
+/**
+ * Columnas de un gasto con su categoría ya resuelta. `categoria_nombre` y
+ * `afecta_utilidad` salen de `categorias_gasto` (migración 027) por LEFT JOIN y
+ * no por subconsulta, para no pagar una query por fila en el listado. LEFT y no
+ * INNER: una fila cuya categoría se desactivó debe seguir apareciendo.
+ */
+interface FilaCategoria {
+  id: string
+  nombre: string
+  flujo: string
+  slug: string | null
+  afecta_utilidad: boolean
+  orden: number
+  activo: boolean
+  created_at: Date
+}
+
+function aCategoria(row: FilaCategoria): CategoriaMovimiento {
+  return {
+    id: row.id,
+    nombre: row.nombre,
+    flujo: row.flujo as CategoriaMovimiento['flujo'],
+    slug: row.slug,
+    afectaUtilidad: row.afecta_utilidad,
+    orden: row.orden,
+    activo: row.activo,
+    createdAt: row.created_at.toISOString(),
+  }
+}
+
+interface FilaMovimientoSocio {
+  id: string
+  tipo: string
+  socio: string
+  monto: string
+  fecha: Date
+  cuenta_bancaria_id: string
+  retiro_id: string | null
+  notas: string | null
+  usuario_id: string | null
+  created_at: Date
+  devuelto?: string | null
+}
+
+function aMovimientoSocio(row: FilaMovimientoSocio): MovimientoSocio {
+  const monto = Number(row.monto)
+  const base: MovimientoSocio = {
+    id: row.id,
+    tipo: row.tipo as MovimientoSocio['tipo'],
+    socio: row.socio,
+    monto,
+    fecha: row.fecha.toISOString().slice(0, 10),
+    cuentaBancariaId: row.cuenta_bancaria_id,
+    retiroId: row.retiro_id,
+    notas: row.notas,
+    usuarioId: row.usuario_id,
+    createdAt: row.created_at.toISOString(),
+  }
+  // Solo los retiros llevan saldo: una devolución no se "devuelve".
+  if (row.tipo === 'retiro' && row.devuelto !== undefined) {
+    const devuelto = Number(row.devuelto ?? 0)
+    base.devuelto = devuelto
+    base.saldoPendiente = Math.max(0, monto - devuelto)
+  }
+  return base
+}
+
+const COLS_GASTO = `g.id, g.descripcion, g.categoria, g.categoria_id,
+         c.nombre AS categoria_nombre, c.afecta_utilidad,
+         g.monto, g.fecha, g.medio_pago, g.cuenta_bancaria_id, g.notas,
+         g.proveedor_id, g.factura_compra_id, g.usuario_id, g.created_at`
+
+const COLS_INGRESO = `i.id, i.descripcion, i.categoria, i.categoria_id,
+         c.nombre AS categoria_nombre, c.afecta_utilidad,
+         i.monto, i.fecha, i.medio_pago, i.cuenta_bancaria_id, i.notas,
+         i.usuario_id, i.created_at`
+
+/**
+ * Deja coherentes las DOS formas de decir la categoría mientras conviven: la
+ * columna `categoria` TEXT (histórica, con el slug) y `categoria_id` (la tabla
+ * del tenant). Ver migración 027.
+ *
+ * Se acepta cualquiera de las dos desde el cliente y se completa la otra:
+ * mandar solo `categoriaId` es lo nuevo; mandar solo `categoria` es lo que
+ * hacía el front viejo y tiene que seguir funcionando. Si no llega ninguna, cae
+ * en la categoría por defecto del flujo para no dejar el movimiento sin
+ * clasificar (desaparecería de los reportes agrupados).
+ */
+async function resolverCategoria(
+  db: NonNullable<FastifyRequest['tenantDb']>,
+  flujo: 'egreso' | 'ingreso',
+  categoriaId: string | undefined,
+  categoriaSlug: string | undefined,
+): Promise<{ categoriaId: string | null; categoria: string }> {
+  const slugPorDefecto = flujo === 'egreso' ? 'otros' : 'otro'
+
+  if (categoriaId) {
+    const { rows } = await db.query<{ id: string; slug: string | null; flujo: string }>(
+      'SELECT id, slug, flujo FROM categorias_gasto WHERE id = $1',
+      [categoriaId],
+    )
+    const cat = rows[0]
+    if (!cat) throw new Error('La categoría indicada no existe.')
+    // Un gasto con categoría de ingreso (o al revés) rompería todo agrupado
+    // por flujo; es más útil fallar que guardarlo torcido.
+    if (cat.flujo !== flujo) {
+      throw new Error(`Esa categoría es de ${cat.flujo}, no se puede usar en un movimiento de ${flujo}.`)
+    }
+    return { categoriaId: cat.id, categoria: cat.slug ?? slugPorDefecto }
+  }
+
+  const slug = categoriaSlug ?? slugPorDefecto
+  const { rows } = await db.query<{ id: string }>(
+    'SELECT id FROM categorias_gasto WHERE flujo = $1 AND slug = $2',
+    [flujo, slug],
+  )
+  return { categoriaId: rows[0]?.id ?? null, categoria: slug }
+}
+
 function aGasto(row: FilaGasto): GastoOperativo {
   return {
     id: row.id,
     descripcion: row.descripcion,
-    categoria: row.categoria as CategoriaGasto,
+    categoria: row.categoria,
+    categoriaId: row.categoria_id,
+    categoriaNombre: row.categoria_nombre,
+    afectaUtilidad: row.afecta_utilidad,
     monto: Number(row.monto),
     fecha: row.fecha.toISOString().slice(0, 10),
     medioPago: row.medio_pago,
@@ -147,7 +280,10 @@ function aIngreso(row: FilaIngreso): IngresoBancario {
   return {
     id: row.id,
     descripcion: row.descripcion,
-    categoria: row.categoria as CategoriaIngreso,
+    categoria: row.categoria,
+    categoriaId: row.categoria_id,
+    categoriaNombre: row.categoria_nombre,
+    afectaUtilidad: row.afecta_utilidad,
     monto: Number(row.monto),
     fecha: row.fecha.toISOString().slice(0, 10),
     medioPago: row.medio_pago,
@@ -492,6 +628,68 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   //                      adelante si todo lo pendiente se cobra/paga en fecha.
   interface FilaFlujoCaja { fecha: string; monto: number }
 
+  interface FilaFlujoConCategoria {
+    fecha: string
+    monto: string
+    categoria_id: string | null
+    categoria_nombre: string
+    afecta_utilidad: boolean
+  }
+
+  /** Una fila del desglose: una categoría del tenant con su monto por período. */
+  interface DesgloseCategoria {
+    categoriaId: string | null
+    nombre: string
+    flujo: 'egreso' | 'ingreso'
+    afectaUtilidad: boolean
+    /** Un valor por período, en el mismo orden que `periodos`. */
+    actual: number[]
+    proyectado: number[]
+  }
+
+  /**
+   * Agrupa los movimientos por categoría y los bucketea por período, separando
+   * actual de proyectado con el mismo criterio que el resto del endpoint (fecha
+   * contra hoy, nada persistido).
+   *
+   * Devuelve una fila POR CATEGORÍA con presencia real en el rango — no el
+   * catálogo completo: mostrar 16 renglones en cero para un negocio que usa
+   * tres haría la tabla ilegible.
+   */
+  function desglosarPorCategoria(
+    filas: FilaFlujoConCategoria[],
+    periodos: { desde: string; hasta: string }[],
+    flujo: 'egreso' | 'ingreso',
+    hoy: string,
+  ): DesgloseCategoria[] {
+    const porCategoria = new Map<string, DesgloseCategoria>()
+    for (const f of filas) {
+      const clave = f.categoria_id ?? '__sin__'
+      let entrada = porCategoria.get(clave)
+      if (!entrada) {
+        entrada = {
+          categoriaId: f.categoria_id,
+          nombre: f.categoria_nombre,
+          flujo,
+          afectaUtilidad: f.afecta_utilidad,
+          actual: periodos.map(() => 0),
+          proyectado: periodos.map(() => 0),
+        }
+        porCategoria.set(clave, entrada)
+      }
+      const idx = periodos.findIndex((p) => f.fecha >= p.desde && f.fecha <= p.hasta)
+      if (idx === -1) continue
+      const balde = f.fecha <= hoy ? entrada.actual : entrada.proyectado
+      balde[idx] = balde[idx]! + Number(f.monto)
+    }
+    // Mayor primero: lo que más pesa se lee arriba.
+    return [...porCategoria.values()].sort((a, b) => {
+      const sa = a.actual.reduce((x, y) => x + y, 0) + a.proyectado.reduce((x, y) => x + y, 0)
+      const sb = b.actual.reduce((x, y) => x + y, 0) + b.proyectado.reduce((x, y) => x + y, 0)
+      return sb - sa
+    })
+  }
+
   function generarPeriodosQuincenales(
     desdeStr: string,
     cantidad: number,
@@ -591,9 +789,13 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
           [rangoDesde, rangoHasta],
         ),
         // Gastos administrativos — actual y proyectado se separan después por fecha vs. hoy.
-        db.query<{ fecha: string; monto: string }>(
-          `SELECT fecha::text AS fecha, monto::text AS monto FROM gastos_operativos
-           WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+        db.query<FilaFlujoConCategoria>(
+          `SELECT g.fecha::text AS fecha, g.monto::text AS monto, g.categoria_id,
+                  COALESCE(c.nombre, 'Sin categoría') AS categoria_nombre,
+                  COALESCE(c.afecta_utilidad, true) AS afecta_utilidad
+           FROM gastos_operativos g
+           LEFT JOIN categorias_gasto c ON c.id = g.categoria_id
+           WHERE g.deleted_at IS NULL AND g.fecha BETWEEN $1 AND $2`,
           [rangoDesde, rangoHasta],
         ),
         // Ingresos — actual: cobros ya recibidos de clientes.
@@ -621,9 +823,13 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
           [rangoDesde, rangoHasta],
         ),
         // Ingresos manuales — actual y proyectado se separan después por fecha vs. hoy.
-        db.query<{ fecha: string; monto: string }>(
-          `SELECT fecha::text AS fecha, monto::text AS monto FROM ingresos_bancarios
-           WHERE deleted_at IS NULL AND fecha BETWEEN $1 AND $2`,
+        db.query<FilaFlujoConCategoria>(
+          `SELECT i.fecha::text AS fecha, i.monto::text AS monto, i.categoria_id,
+                  COALESCE(c.nombre, 'Sin categoría') AS categoria_nombre,
+                  COALESCE(c.afecta_utilidad, true) AS afecta_utilidad
+           FROM ingresos_bancarios i
+           LEFT JOIN categorias_gasto c ON c.id = i.categoria_id
+           WHERE i.deleted_at IS NULL AND i.fecha BETWEEN $1 AND $2`,
           [rangoDesde, rangoHasta],
         ),
       ])
@@ -633,6 +839,12 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
 
       const gastosFilas = aFilas(gastosRes.rows)
       const ingresosFilas = aFilas(ingresosRes.rows)
+
+      // Desglose por categoría del tenant (migración 027). Se calcula aparte de
+      // los totales para no cambiar el contrato existente: `gastosAdministrativos`
+      // e `ingresos` siguen siendo la suma, y esto es el detalle.
+      const desgloseEgresos = desglosarPorCategoria(gastosRes.rows, periodos, 'egreso', hoy)
+      const desgloseIngresos = desglosarPorCategoria(ingresosRes.rows, periodos, 'ingreso', hoy)
 
       const costosOpActual = bucketearPorPeriodo(aFilas(abonosCxpRes.rows), periodos)
       const costosOpProyectado = bucketearPorPeriodo(aFilas(pendienteCxpRes.rows), periodos)
@@ -701,6 +913,14 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
           saldoEnBanco: saldoEnBanco[i],
           flujoAcumulado: flujoAcumulado[i],
         })),
+        // El desglose va FUERA del array de períodos: una categoría es una fila
+        // de la tabla con un valor por columna/período, así que anidarla dentro
+        // de cada período obligaría al front a recomponerla. Cada entrada trae
+        // sus arrays alineados al índice de `periodos`.
+        desglose: {
+          egresos: desgloseEgresos,
+          ingresos: desgloseIngresos,
+        },
       })
     },
   )
@@ -1165,12 +1385,386 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
 
   // ─── GASTOS OPERATIVOS ────────────────────────────────────────────────────
 
+  // ── Préstamos y retiros del socio (migración 028) ────────────────────────
+  //
+  // Todo lo de acá es `soloAdmin`: es la plata del dueño y el dato de cuánto le
+  // debe al negocio, no algo que deba ver un empleado con login.
+
+  // GET /finanzas/movimientos-socio — con el saldo de cada retiro ya calculado.
+  fastify.get('/finanzas/movimientos-socio', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const { rows } = await request.tenantDb.query<FilaMovimientoSocio>(
+      // `devuelto` se DERIVA sumando las devoluciones imputadas, no se guarda —
+      // mismo principio que el saldo de una factura (ver `calcularSaldoPendiente`).
+      `SELECT m.id, m.tipo, m.socio, m.monto, m.fecha, m.cuenta_bancaria_id, m.retiro_id,
+              m.notas, m.usuario_id, m.created_at,
+              COALESCE((
+                SELECT SUM(d.monto) FROM movimientos_socio d
+                WHERE d.retiro_id = m.id AND d.tipo = 'devolucion' AND d.deleted_at IS NULL
+              ), 0)::text AS devuelto
+       FROM movimientos_socio m
+       WHERE m.deleted_at IS NULL
+       ORDER BY m.fecha DESC, m.created_at DESC`,
+    )
+    return reply.send({ movimientos: rows.map(aMovimientoSocio) })
+  })
+
+  // GET /finanzas/movimientos-socio/resumen — el número que el dueño busca:
+  // "en banco X + prestado Y = capital real Z".
+  fastify.get('/finanzas/movimientos-socio/resumen', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const [saldoRes, porSocioRes] = await Promise.all([
+      request.tenantDb.query<{ total: string }>(
+        `SELECT COALESCE(SUM(saldo), 0)::text AS total FROM cuentas_bancarias WHERE deleted_at IS NULL`,
+      ),
+      request.tenantDb.query<{ socio: string; retirado: string; devuelto: string }>(
+        `SELECT socio,
+                COALESCE(SUM(monto) FILTER (WHERE tipo = 'retiro'), 0)::text     AS retirado,
+                COALESCE(SUM(monto) FILTER (WHERE tipo = 'devolucion'), 0)::text AS devuelto
+         FROM movimientos_socio
+         WHERE deleted_at IS NULL
+         GROUP BY socio
+         ORDER BY socio`,
+      ),
+    ])
+
+    const porSocio = porSocioRes.rows.map((r) => {
+      const retirado = Number(r.retirado)
+      const devuelto = Number(r.devuelto)
+      return { socio: r.socio, retirado, devuelto, saldoPendiente: retirado - devuelto }
+    })
+
+    const enBanco = Number(saldoRes.rows[0]!.total)
+    // Lo prestado se suma al banco, no se resta: es plata del negocio que está
+    // afuera. El retiro ya bajó el saldo bancario cuando se registró.
+    const prestado = porSocio.reduce((acc, s) => acc + s.saldoPendiente, 0)
+
+    const resumen: CapitalReal = { enBanco, prestado, capitalReal: enBanco + prestado, porSocio }
+    return reply.send(resumen)
+  })
+
+  // POST /finanzas/movimientos-socio — mueve el saldo bancario en la misma
+  // transacción, igual que hace un ingreso/gasto. NO toca `gastos_operativos`:
+  // si entrara ahí, la utilidad bajaría por algo que no es un gasto.
+  fastify.post('/finanzas/movimientos-socio', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const body = crearMovimientoSocioSchema.safeParse(request.body)
+    if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+
+    const client = request.tenantDb
+    const esRetiro = body.data.tipo === 'retiro'
+    try {
+      await client.query('BEGIN')
+
+      const cuentaRes = await client.query<{ id: string; saldo: string }>(
+        'SELECT id, saldo FROM cuentas_bancarias WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [body.data.cuentaBancariaId],
+      )
+      if (cuentaRes.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.badRequest('La cuenta bancaria seleccionada no existe.')
+      }
+
+      // Se AVISA, no se bloquea, si el retiro deja la cuenta en negativo: quien
+      // decide si saca la plata es el dueño (mismo criterio que el cupo de
+      // crédito del cliente en la migración 022). Pero sí se rechaza sacar de
+      // una cuenta que no alcanza, porque un saldo negativo descuadra el flujo.
+      if (esRetiro && Number(cuentaRes.rows[0]!.saldo) < body.data.monto) {
+        await client.query('ROLLBACK')
+        return reply.badRequest(
+          `La cuenta no tiene saldo suficiente: hay ${cuentaRes.rows[0]!.saldo} y el retiro es de ${body.data.monto}.`,
+        )
+      }
+
+      // Una devolución imputada no puede exceder lo que ese retiro debe.
+      if (body.data.retiroId) {
+        const { rows } = await client.query<{ monto: string; devuelto: string; tipo: string }>(
+          `SELECT m.monto, m.tipo,
+                  COALESCE((
+                    SELECT SUM(d.monto) FROM movimientos_socio d
+                    WHERE d.retiro_id = m.id AND d.tipo = 'devolucion' AND d.deleted_at IS NULL
+                  ), 0)::text AS devuelto
+           FROM movimientos_socio m
+           WHERE m.id = $1 AND m.deleted_at IS NULL FOR UPDATE OF m`,
+          [body.data.retiroId],
+        )
+        const retiro = rows[0]
+        if (!retiro) {
+          await client.query('ROLLBACK')
+          return reply.badRequest('El retiro al que querés imputar la devolución no existe.')
+        }
+        if (retiro.tipo !== 'retiro') {
+          await client.query('ROLLBACK')
+          return reply.badRequest('Solo se puede imputar una devolución a un retiro.')
+        }
+        const pendiente = Number(retiro.monto) - Number(retiro.devuelto)
+        if (body.data.monto > pendiente) {
+          await client.query('ROLLBACK')
+          return reply.badRequest(
+            `Ese retiro solo tiene ${pendiente} pendiente; no se puede devolver ${body.data.monto}.`,
+          )
+        }
+      }
+
+      const fecha = body.data.fecha ?? new Date().toISOString().slice(0, 10)
+      const { rows } = await client.query<FilaMovimientoSocio>(
+        `INSERT INTO movimientos_socio (tipo, socio, monto, fecha, cuenta_bancaria_id, retiro_id, notas, usuario_id)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, tipo, socio, monto, fecha, cuenta_bancaria_id, retiro_id, notas, usuario_id, created_at`,
+        [
+          body.data.tipo,
+          body.data.socio.trim(),
+          body.data.monto,
+          fecha,
+          body.data.cuentaBancariaId,
+          body.data.retiroId ?? null,
+          body.data.notas ?? null,
+          request.user.sub,
+        ],
+      )
+
+      // Retiro: sale plata. Devolución: vuelve.
+      await client.query(
+        `UPDATE cuentas_bancarias SET saldo = saldo ${esRetiro ? '-' : '+'} $1 WHERE id = $2`,
+        [body.data.monto, body.data.cuentaBancariaId],
+      )
+
+      await client.query('COMMIT')
+      return reply.status(201).send({ movimiento: aMovimientoSocio(rows[0]!) })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
+  // PATCH /finanzas/movimientos-socio/:id — corrige monto/cuenta/fecha
+  // revirtiendo el efecto anterior sobre el saldo y aplicando el nuevo, igual
+  // que el PATCH de gastos. El `tipo` no se cambia: un retiro que pasa a
+  // devolución es otro movimiento, no una corrección.
+  fastify.patch<{ Params: { id: string } }>('/finanzas/movimientos-socio/:id', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const body = actualizarMovimientoSocioSchema.safeParse(request.body)
+    if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+    if (Object.keys(body.data).length === 0) return reply.badRequest('No enviaste ningún campo para actualizar.')
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const prevRes = await client.query<{ tipo: string; monto: string; cuenta_bancaria_id: string }>(
+        'SELECT tipo, monto, cuenta_bancaria_id FROM movimientos_socio WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [request.params.id],
+      )
+      if (prevRes.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Movimiento no encontrado.')
+      }
+      const prev = prevRes.rows[0]!
+      const esRetiro = prev.tipo === 'retiro'
+      const montoNuevo = body.data.monto ?? Number(prev.monto)
+      const cuentaNueva = body.data.cuentaBancariaId ?? prev.cuenta_bancaria_id
+
+      // Revertir el efecto viejo y aplicar el nuevo. Si no cambió ni el monto ni
+      // la cuenta las dos operaciones se cancelan, así que no hace falta
+      // detectarlo aparte.
+      await client.query(
+        `UPDATE cuentas_bancarias SET saldo = saldo ${esRetiro ? '+' : '-'} $1 WHERE id = $2`,
+        [Number(prev.monto), prev.cuenta_bancaria_id],
+      )
+      await client.query(
+        `UPDATE cuentas_bancarias SET saldo = saldo ${esRetiro ? '-' : '+'} $1 WHERE id = $2`,
+        [montoNuevo, cuentaNueva],
+      )
+
+      const campos: Record<string, unknown> = {
+        socio: body.data.socio?.trim(),
+        monto: body.data.monto,
+        fecha: body.data.fecha,
+        cuenta_bancaria_id: body.data.cuentaBancariaId,
+        notas: body.data.notas,
+      }
+      const entradas = Object.entries(campos).filter(([, v]) => v !== undefined)
+      const sets = entradas.map(([col], idx) => `${col} = $${idx + 2}`).join(', ')
+
+      const { rows } = await client.query<FilaMovimientoSocio>(
+        `UPDATE movimientos_socio SET ${sets} WHERE id = $1 AND deleted_at IS NULL
+         RETURNING id, tipo, socio, monto, fecha, cuenta_bancaria_id, retiro_id, notas, usuario_id, created_at`,
+        [request.params.id, ...entradas.map(([, v]) => v)],
+      )
+
+      await client.query('COMMIT')
+      return reply.send({ movimiento: aMovimientoSocio(rows[0]!) })
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
+  // DELETE /finanzas/movimientos-socio/:id — borrado suave que DEVUELVE el
+  // efecto sobre el saldo bancario (si no, borrar un retiro dejaría la cuenta
+  // descuadrada para siempre).
+  fastify.delete<{ Params: { id: string } }>('/finanzas/movimientos-socio/:id', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const client = request.tenantDb
+    try {
+      await client.query('BEGIN')
+
+      const prevRes = await client.query<{ tipo: string; monto: string; cuenta_bancaria_id: string }>(
+        'SELECT tipo, monto, cuenta_bancaria_id FROM movimientos_socio WHERE id = $1 AND deleted_at IS NULL FOR UPDATE',
+        [request.params.id],
+      )
+      if (prevRes.rowCount === 0) {
+        await client.query('ROLLBACK')
+        return reply.notFound('Movimiento no encontrado.')
+      }
+      const prev = prevRes.rows[0]!
+
+      // Borrar un retiro que ya tiene devoluciones imputadas dejaría esas
+      // devoluciones apuntando a algo borrado y el saldo del socio sin sentido.
+      if (prev.tipo === 'retiro') {
+        const { rows } = await client.query<{ n: number }>(
+          `SELECT COUNT(*)::int AS n FROM movimientos_socio
+           WHERE retiro_id = $1 AND deleted_at IS NULL`,
+          [request.params.id],
+        )
+        if (rows[0]!.n > 0) {
+          await client.query('ROLLBACK')
+          return reply.code(409).send({
+            error: 'No se puede eliminar el retiro: tiene devoluciones imputadas.',
+            devoluciones: rows[0]!.n,
+            sugerencia: 'Eliminá primero esas devoluciones.',
+          })
+        }
+      }
+
+      await client.query(
+        `UPDATE cuentas_bancarias SET saldo = saldo ${prev.tipo === 'retiro' ? '+' : '-'} $1 WHERE id = $2`,
+        [Number(prev.monto), prev.cuenta_bancaria_id],
+      )
+      await client.query('UPDATE movimientos_socio SET deleted_at = NOW() WHERE id = $1', [request.params.id])
+
+      await client.query('COMMIT')
+      return reply.status(204).send()
+    } catch (error) {
+      await client.query('ROLLBACK').catch(() => undefined)
+      throw error
+    }
+  })
+
+  // ── Categorías de gasto/ingreso del tenant (migración 027) ───────────────
+
+  // GET /finanzas/categorias — el catálogo del negocio. `?incluirInactivas=true`
+  // para el administrador; el selector de un formulario solo quiere las activas.
+  fastify.get<{ Querystring: { incluirInactivas?: string } }>(
+    '/finanzas/categorias',
+    conSesion,
+    async (request, reply) => {
+      if (!exigirTenant(request, reply)) return
+      const todas = request.query.incluirInactivas === 'true'
+      const { rows } = await request.tenantDb.query<FilaCategoria>(
+        `SELECT id, nombre, flujo, slug, afecta_utilidad, orden, activo, created_at
+         FROM categorias_gasto
+         ${todas ? '' : 'WHERE activo'}
+         ORDER BY flujo, orden, nombre`,
+      )
+      return reply.send({ categorias: rows.map(aCategoria) })
+    },
+  )
+
+  // POST /finanzas/categorias — crear un rubro propio. Solo admin: cambiar el
+  // plan de cuentas afecta todos los reportes del negocio.
+  fastify.post('/finanzas/categorias', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const body = crearCategoriaMovimientoSchema.safeParse(request.body)
+    if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+
+    try {
+      const { rows } = await request.tenantDb.query<FilaCategoria>(
+        `INSERT INTO categorias_gasto (nombre, flujo, afecta_utilidad, orden)
+         VALUES ($1, $2, $3, COALESCE($4, (SELECT COALESCE(MAX(orden), 0) + 10 FROM categorias_gasto WHERE flujo = $2)))
+         RETURNING id, nombre, flujo, slug, afecta_utilidad, orden, activo, created_at`,
+        [body.data.nombre, body.data.flujo, body.data.afectaUtilidad, body.data.orden ?? null],
+      )
+      return reply.status(201).send({ categoria: aCategoria(rows[0]!) })
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && (error as { code?: string }).code === '23505') {
+        return reply.conflict(`Ya existe una categoría activa llamada "${body.data.nombre}".`)
+      }
+      throw error
+    }
+  })
+
+  // PATCH /finanzas/categorias/:id — renombrar, reordenar, marcar si afecta la
+  // utilidad, o desactivar. `flujo` y `slug` no se tocan (ver el schema).
+  fastify.patch<{ Params: { id: string } }>('/finanzas/categorias/:id', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+    const body = actualizarCategoriaMovimientoSchema.safeParse(request.body)
+    if (!body.success) return reply.badRequest(body.error.issues.map((i) => i.message).join('; '))
+    if (Object.keys(body.data).length === 0) return reply.badRequest('No enviaste ningún campo para actualizar.')
+
+    const campos: Record<string, unknown> = {
+      nombre: body.data.nombre,
+      afecta_utilidad: body.data.afectaUtilidad,
+      orden: body.data.orden,
+      activo: body.data.activo,
+    }
+    const entradas = Object.entries(campos).filter(([, v]) => v !== undefined)
+    const sets = entradas.map(([col], idx) => `${col} = $${idx + 2}`).join(', ')
+
+    try {
+      const { rows, rowCount } = await request.tenantDb.query<FilaCategoria>(
+        `UPDATE categorias_gasto SET ${sets} WHERE id = $1
+         RETURNING id, nombre, flujo, slug, afecta_utilidad, orden, activo, created_at`,
+        [request.params.id, ...entradas.map(([, v]) => v)],
+      )
+      if (rowCount === 0) return reply.notFound('Categoría no encontrada.')
+      return reply.send({ categoria: aCategoria(rows[0]!) })
+    } catch (error) {
+      if (error instanceof Error && 'code' in error && (error as { code?: string }).code === '23505') {
+        return reply.conflict(`Ya existe una categoría activa con ese nombre.`)
+      }
+      throw error
+    }
+  })
+
+  // DELETE /finanzas/categorias/:id — desactiva, NO borra.
+  //
+  // Borrar de verdad dejaría los movimientos ya registrados apuntando a la nada
+  // (o los arrastraría por CASCADE, perdiendo gastos reales). Desactivar la
+  // saca de los selectores y conserva el histórico: un reporte del año pasado
+  // sigue mostrando "Arriendo" aunque el negocio ya no lo use.
+  fastify.delete<{ Params: { id: string } }>('/finanzas/categorias/:id', soloAdmin, async (request, reply) => {
+    if (!exigirTenant(request, reply)) return
+
+    const { rows } = await request.tenantDb.query<{ usos: number; slug: string | null }>(
+      `SELECT (
+         (SELECT COUNT(*) FROM gastos_operativos  WHERE categoria_id = $1 AND deleted_at IS NULL) +
+         (SELECT COUNT(*) FROM ingresos_bancarios WHERE categoria_id = $1 AND deleted_at IS NULL)
+       )::int AS usos,
+       (SELECT slug FROM categorias_gasto WHERE id = $1) AS slug`,
+      [request.params.id],
+    )
+    const info = rows[0]!
+
+    const { rowCount } = await request.tenantDb.query(
+      'UPDATE categorias_gasto SET activo = false WHERE id = $1 AND activo',
+      [request.params.id],
+    )
+    if (rowCount === 0) return reply.notFound('Categoría no encontrada o ya estaba inactiva.')
+
+    return reply.send({ desactivada: true, movimientosQueLaUsan: info.usos })
+  })
+
   // GET /finanzas/gastos — listado de gastos operativos.
   fastify.get('/finanzas/gastos', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaGasto>(
-      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
-       FROM gastos_operativos WHERE deleted_at IS NULL ORDER BY fecha DESC, created_at DESC`,
+      `SELECT ${COLS_GASTO}
+       FROM gastos_operativos g
+       LEFT JOIN categorias_gasto c ON c.id = g.categoria_id
+       WHERE g.deleted_at IS NULL ORDER BY g.fecha DESC, g.created_at DESC`,
     )
     return reply.send({ gastos: rows.map(aGasto) })
   })
@@ -1232,13 +1826,21 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
         facturaCompraId = fc!.id
       }
 
+      const cat = await resolverCategoria(client, 'egreso', body.data.categoriaId, body.data.categoria)
+
       const { rows } = await client.query<FilaGasto>(
-        `INSERT INTO gastos_operativos (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
+        // CTE y no un RETURNING pelado: RETURNING no admite JOIN, y hace falta
+        // devolver el nombre de la categoría ya resuelto.
+        `WITH ins AS (
+           INSERT INTO gastos_operativos (descripcion, categoria, categoria_id, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           RETURNING *
+         )
+         SELECT ${COLS_GASTO} FROM ins g LEFT JOIN categorias_gasto c ON c.id = g.categoria_id`,
         [
           body.data.descripcion,
-          body.data.categoria,
+          cat.categoria,
+          cat.categoriaId,
           body.data.monto,
           fecha,
           body.data.medioPago ?? null,
@@ -1282,8 +1884,13 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('BEGIN')
 
       const actualRes = await client.query<FilaGasto>(
-        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at
-         FROM gastos_operativos WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        // `FOR UPDATE OF g`: con LEFT JOIN, Postgres rechaza bloquear el lado
+        // nullable ("cannot be applied to the nullable side of an outer join"),
+        // así que se bloquea solo la fila del gasto.
+        `SELECT ${COLS_GASTO}
+         FROM gastos_operativos g
+         LEFT JOIN categorias_gasto c ON c.id = g.categoria_id
+         WHERE g.id = $1 AND g.deleted_at IS NULL FOR UPDATE OF g`,
         [request.params.id],
       )
       if (actualRes.rowCount === 0) {
@@ -1374,7 +1981,13 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const valores: unknown[] = []
       const ag = (col: string, val: unknown) => { valores.push(val); sets.push(`${col} = $${valores.length}`) }
       if (body.data.descripcion !== undefined) ag('descripcion', body.data.descripcion)
-      if (body.data.categoria !== undefined) ag('categoria', body.data.categoria)
+      // Cambiar de categoría actualiza las dos columnas a la vez para que no
+      // queden diciendo cosas distintas mientras ambas existan.
+      if (body.data.categoriaId !== undefined || body.data.categoria !== undefined) {
+        const cat = await resolverCategoria(client, 'egreso', body.data.categoriaId, body.data.categoria)
+        ag('categoria', cat.categoria)
+        ag('categoria_id', cat.categoriaId)
+      }
       if (body.data.monto !== undefined) ag('monto', body.data.monto)
       if (body.data.fecha !== undefined) ag('fecha', body.data.fecha)
       if (body.data.medioPago !== undefined) ag('medio_pago', body.data.medioPago)
@@ -1392,9 +2005,12 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
 
       valores.push(request.params.id)
       const { rows } = await client.query<FilaGasto>(
-        `UPDATE gastos_operativos SET ${sets.join(', ')}
-         WHERE id = $${valores.length} AND deleted_at IS NULL
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, proveedor_id, factura_compra_id, usuario_id, created_at`,
+        `WITH upd AS (
+           UPDATE gastos_operativos SET ${sets.join(', ')}
+           WHERE id = $${valores.length} AND deleted_at IS NULL
+           RETURNING *
+         )
+         SELECT ${COLS_GASTO} FROM upd g LEFT JOIN categorias_gasto c ON c.id = g.categoria_id`,
         valores,
       )
 
@@ -1469,8 +2085,10 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/finanzas/ingresos', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaIngreso>(
-      `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
-       FROM ingresos_bancarios WHERE deleted_at IS NULL ORDER BY fecha DESC, created_at DESC`,
+      `SELECT ${COLS_INGRESO}
+       FROM ingresos_bancarios i
+       LEFT JOIN categorias_gasto c ON c.id = i.categoria_id
+       WHERE i.deleted_at IS NULL ORDER BY i.fecha DESC, i.created_at DESC`,
     )
     return reply.send({ ingresos: rows.map(aIngreso) })
   })
@@ -1495,13 +2113,18 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       }
 
       const fecha = body.data.fecha ?? new Date().toISOString().slice(0, 10)
+      const cat = await resolverCategoria(client, 'ingreso', body.data.categoriaId, body.data.categoria)
       const { rows } = await client.query<FilaIngreso>(
-        `INSERT INTO ingresos_bancarios (descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+        `WITH ins AS (
+           INSERT INTO ingresos_bancarios (descripcion, categoria, categoria_id, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           RETURNING *
+         )
+         SELECT ${COLS_INGRESO} FROM ins i LEFT JOIN categorias_gasto c ON c.id = i.categoria_id`,
         [
           body.data.descripcion,
-          body.data.categoria,
+          cat.categoria,
+          cat.categoriaId,
           body.data.monto,
           fecha,
           body.data.medioPago ?? null,
@@ -1538,8 +2161,10 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('BEGIN')
 
       const actualRes = await client.query<FilaIngreso>(
-        `SELECT id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at
-         FROM ingresos_bancarios WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
+        `SELECT ${COLS_INGRESO}
+         FROM ingresos_bancarios i
+         LEFT JOIN categorias_gasto c ON c.id = i.categoria_id
+         WHERE i.id = $1 AND i.deleted_at IS NULL FOR UPDATE OF i`,
         [request.params.id],
       )
       if (actualRes.rowCount === 0) {
@@ -1583,7 +2208,13 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
       const valores: unknown[] = []
       const ag = (col: string, val: unknown) => { valores.push(val); sets.push(`${col} = $${valores.length}`) }
       if (body.data.descripcion !== undefined) ag('descripcion', body.data.descripcion)
-      if (body.data.categoria !== undefined) ag('categoria', body.data.categoria)
+      // Cambiar de categoría actualiza las dos columnas a la vez para que no
+      // queden diciendo cosas distintas mientras ambas existan.
+      if (body.data.categoriaId !== undefined || body.data.categoria !== undefined) {
+        const cat = await resolverCategoria(client, 'ingreso', body.data.categoriaId, body.data.categoria)
+        ag('categoria', cat.categoria)
+        ag('categoria_id', cat.categoriaId)
+      }
       if (body.data.monto !== undefined) ag('monto', body.data.monto)
       if (body.data.fecha !== undefined) ag('fecha', body.data.fecha)
       if (body.data.medioPago !== undefined) ag('medio_pago', body.data.medioPago)
@@ -1592,9 +2223,13 @@ export async function finanzasRoutes(fastify: FastifyInstance): Promise<void> {
 
       valores.push(request.params.id)
       const { rows } = await client.query<FilaIngreso>(
-        `UPDATE ingresos_bancarios SET ${sets.join(', ')}
-         WHERE id = $${valores.length} AND deleted_at IS NULL
-         RETURNING id, descripcion, categoria, monto, fecha, medio_pago, cuenta_bancaria_id, notas, usuario_id, created_at`,
+        `WITH upd AS (
+           UPDATE ingresos_bancarios SET ${sets.join(', ')}
+           WHERE id = $${valores.length} AND deleted_at IS NULL
+           RETURNING *
+         )
+         SELECT ${COLS_INGRESO} FROM upd i LEFT JOIN categorias_gasto c ON c.id = i.categoria_id`,
+    
         valores,
       )
 

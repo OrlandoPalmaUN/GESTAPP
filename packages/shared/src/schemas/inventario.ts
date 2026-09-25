@@ -29,6 +29,8 @@ export const crearProductoSchema = z.object({
   stockInicial: z.number().nonnegative().default(0),
   /** Opt-in: si es true, el stock y el precio se gestionan por variante (ver crearVarianteProductoSchema), no a nivel de producto. */
   tieneVariantes: z.boolean().default(false),
+  /** `true` = materia prima: se compra y se transforma, no se vende (migración 030). */
+  esInsumo: z.boolean().default(false),
 })
 
 export const actualizarProductoSchema = crearProductoSchema
@@ -86,4 +88,35 @@ export const actualizarVarianteProductoSchema = z.object({
   sku: z.string().trim().min(1).nullable().optional(),
   precioVenta: z.number().nonnegative().nullable().optional(),
   activo: z.boolean().optional(),
+})
+
+/**
+ * Registrar una producción (migración 030).
+ *
+ * Se exige al menos un consumo y al menos una salida: sin consumo no hay de qué
+ * sacar el costo, y sin salida no se produjo nada. El costo de las salidas lo
+ * calcula la API a partir de los insumos — no se acepta del cliente, para que no
+ * se pueda inventar un costo que no corresponde a lo que se consumió.
+ */
+export const crearProduccionSchema = z.object({
+  fecha: z.string().optional(),
+  notas: z.string().optional(),
+  consumos: z
+    .array(
+      z.object({
+        productoId: z.uuid(),
+        varianteId: z.uuid().nullable().optional(),
+        cantidad: z.number().positive('La cantidad consumida debe ser mayor que cero.'),
+      }),
+    )
+    .min(1, 'Indicá al menos un insumo consumido.'),
+  salidas: z
+    .array(
+      z.object({
+        productoId: z.uuid(),
+        varianteId: z.uuid().nullable().optional(),
+        cantidad: z.number().positive('La cantidad producida debe ser mayor que cero.'),
+      }),
+    )
+    .min(1, 'Indicá al menos un producto obtenido.'),
 })

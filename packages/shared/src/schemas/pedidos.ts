@@ -1,6 +1,6 @@
 import { z } from 'zod'
 
-import { ESTADOS_PEDIDO, ESTADOS_PEDIDO_PROVEEDOR } from '../types/pedidos.js'
+import { ESTADOS_CAMPANA, ESTADOS_PEDIDO, ESTADOS_PEDIDO_PROVEEDOR } from '../types/pedidos.js'
 
 // ─────────────────────────────────────────────────
 // Pedidos a proveedores (órdenes de compra)
@@ -99,6 +99,8 @@ export const crearClienteSchema = z.object({
   email: z.email().optional(),
   telefono: z.string().optional(),
   direccion: z.string().optional(),
+  /** Apartamento/casa del conjunto — texto libre, cada conjunto numera distinto. */
+  apartamento: z.string().trim().min(1).nullable().optional(),
   ciudad: z.string().optional(),
   /** Días para pagar: 0 = contado. Si se omite, la CxC vence a 30 días. */
   plazoDias: z.number().int().min(0, 'El plazo no puede ser negativo.').nullable().optional(),
@@ -113,6 +115,7 @@ export const actualizarClienteSchema = z.object({
   email: z.email().nullable().optional(),
   telefono: z.string().nullable().optional(),
   direccion: z.string().nullable().optional(),
+  apartamento: z.string().trim().min(1).nullable().optional(),
   ciudad: z.string().nullable().optional(),
   activo: z.boolean().optional(),
   plazoDias: z.number().int().min(0).nullable().optional(),
@@ -150,6 +153,11 @@ export const crearPedidoItemSchema = z.union([crearPedidoItemProductoSchema, cre
 export const crearPedidoSchema = z.object({
   clienteId: z.uuid().nullable().optional(),
   notas: z.string().optional(),
+  /**
+   * Campaña de preventa a la que pertenece el encargo (migración 031). Opcional:
+   * un pedido sin campaña es un pedido normal y se comporta igual que siempre.
+   */
+  campanaId: z.uuid().nullable().optional(),
   items: z.array(crearPedidoItemSchema).min(1, 'El pedido debe tener al menos un ítem.'),
 })
 
@@ -166,5 +174,23 @@ export const transicionarPedidoSchema = z.object({
  */
 export const actualizarPedidoSchema = z.object({
   clienteId: z.uuid().nullable().optional(),
+  notas: z.string().nullable().optional(),
+})
+
+/** Crear una campaña de preventa (migración 031). */
+export const crearCampanaSchema = z.object({
+  nombre: z.string().trim().min(1, 'La campaña necesita un nombre.'),
+  fechaEntrega: z.string().min(1, 'Indicá para qué día es la entrega.'),
+  notas: z.string().optional(),
+})
+
+/**
+ * Editar una campaña. El `estado` se cambia por acá: `cerrada` deja de aceptar
+ * encargos (lo valida el POST de pedidos), `entregada` la archiva.
+ */
+export const actualizarCampanaSchema = z.object({
+  nombre: z.string().trim().min(1).optional(),
+  fechaEntrega: z.string().min(1).optional(),
+  estado: z.enum(ESTADOS_CAMPANA).optional(),
   notas: z.string().nullable().optional(),
 })

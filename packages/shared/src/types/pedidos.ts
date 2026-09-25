@@ -92,6 +92,15 @@ export interface Cliente {
   email: string | null
   telefono: string | null
   direccion: string | null
+  /**
+   * Apartamento / casa dentro del conjunto. `null` = no aplica.
+   *
+   * Existe porque un negocio que reparte en su propio edificio identifica al
+   * cliente por acá y no por el nombre — y la `direccion` es la misma para
+   * todos, así que no distingue. Texto libre: "502", "Torre 3 - 1204", "Casa 2".
+   * La interfaz que lo muestra va detrás del tema `8bit` (ver migración 026).
+   */
+  apartamento: string | null
   ciudad: string | null
   activo: boolean
   /**
@@ -167,6 +176,8 @@ export interface Pedido {
   id: string
   numero: string
   clienteId: string | null
+  /** Campaña de preventa, si el pedido es parte de una (migración 031). */
+  campanaId: string | null
   estado: EstadoPedido
   total: number
   notas: string | null
@@ -205,4 +216,52 @@ export const MOVIMIENTOS_POR_TRANSICION: Partial<Record<`${EstadoPedido}->${Esta
   'en_preparacion->entregado': ['liberacion_reserva', 'salida_venta'],
   'en_preparacion->cancelado': ['liberacion_reserva'],
   // despachado->entregado: la salida ya fue registrada, sin movimiento adicional
+}
+
+/** Estado de una campaña de preventa. Ver migración 031. */
+export const ESTADOS_CAMPANA = ['abierta', 'cerrada', 'entregada', 'cancelada'] as const
+export type EstadoCampana = (typeof ESTADOS_CAMPANA)[number]
+
+/**
+ * Campaña de preventa — agrupa los pedidos de una entrega puntual ("los
+ * pasteles del domingo 12"). Es solo un agrupador: los encargos siguen siendo
+ * pedidos normales y los productos, productos normales.
+ */
+export interface Campana {
+  id: string
+  nombre: string
+  fechaEntrega: string
+  estado: EstadoCampana
+  notas: string | null
+  usuarioId: string | null
+  createdAt: string
+  /** Cuántos pedidos tiene asociados. */
+  pedidos: number
+}
+
+/** Una línea del consolidado: cuánto se encargó de cada producto/variante. */
+export interface LineaConsolidado {
+  productoId: string
+  productoNombre: string
+  varianteId: string | null
+  /** Etiqueta de la variante, p.ej. "Sabor: Pollo". `null` si el producto no varía. */
+  varianteEtiqueta: string | null
+  cantidad: number
+  /** Lo que se va a cobrar por esta línea en toda la campaña. */
+  total: number
+}
+
+/**
+ * Lo que hace útil a la campaña: el número que se le pasa a quien cocina, más
+ * el estado de cobro. Ver GET /campanas/:id/consolidado.
+ */
+export interface ConsolidadoCampana {
+  campana: Campana
+  lineas: LineaConsolidado[]
+  totalAVender: number
+  totalCobrado: number
+  /** `totalAVender - totalCobrado`. */
+  totalPendiente: number
+  /** Clientes con saldo pendiente en esta campaña — a quiénes hay que cobrarles. */
+  clientesPendientes: { clienteId: string | null; nombre: string; apartamento: string | null; pendiente: number }[]
 }

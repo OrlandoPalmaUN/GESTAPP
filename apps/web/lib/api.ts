@@ -1,6 +1,6 @@
-import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, ProductoAtributo, Proveedor, ResumenFinanciero, SpriteProducto, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario, VarianteProducto } from '@antigravity/shared'
+import type { Abono, Campana, CapitalReal, CategoriaGasto, CategoriaIngreso, Categoria, CategoriaMovimiento, ConsolidadoCampana, Cliente, CuentaBancaria, EntidadCrm, EstadoEventoCalendario, EstadoPedido, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, IgComentario, IgCuenta, IgHashtagStat, IgHeatmapPunto, IgPost, IgPostDetalle, IgPostSnapshot, IgResumen, IgRun, IgSnapshotPerfil, MovimientoInventario, MovimientoSocio, NotaCrm, Produccion, NotaInterna, Pedido, PedidoProveedor, PlanId, Producto, ProductoAtributo, Proveedor, ResumenFinanciero, SpriteProducto, Tenant, TipoCuentaBancaria, TipoEventoCalendario, TipoFactura, TransferenciaBancaria, Usuario, VarianteProducto } from '@antigravity/shared'
 
-export type { ProductoAtributo, VarianteProducto }
+export type { Campana, CapitalReal, CategoriaMovimiento, ConsolidadoCampana, MovimientoSocio, Produccion, ProductoAtributo, VarianteProducto }
 
 /** Un elemento en la papelera — puede ser de cualquier módulo (ver `EntidadPapelera` en la API). */
 export interface ItemPapelera {
@@ -45,6 +45,23 @@ export interface PeriodoFlujoCaja {
   saldoEnBanco: number
   /** Suma corrida de saldoDelPeriodo (actual+proyectado) desde el primer período visible. */
   flujoAcumulado: number
+}
+
+/** Una categoría del tenant con su monto por período — ver `desglose` en GET /finanzas/flujo-caja. */
+export interface DesgloseCategoriaFlujo {
+  categoriaId: string | null
+  nombre: string
+  flujo: 'egreso' | 'ingreso'
+  /** `false` = mueve plata pero no cuenta como ganancia/pérdida (capital, préstamos). */
+  afectaUtilidad: boolean
+  /** Un valor por período, alineado al índice de `periodos`. */
+  actual: number[]
+  proyectado: number[]
+}
+
+export interface DesgloseFlujoCaja {
+  egresos: DesgloseCategoriaFlujo[]
+  ingresos: DesgloseCategoriaFlujo[]
 }
 
 export interface Cartera {
@@ -238,7 +255,7 @@ export const api = {
     if (desde) params.set('desde', desde)
     if (periodos) params.set('periodos', String(periodos))
     const qs = params.toString()
-    return request<{ periodos: PeriodoFlujoCaja[] }>(`/finanzas/flujo-caja${qs ? `?${qs}` : ''}`)
+    return request<{ periodos: PeriodoFlujoCaja[]; desglose?: DesgloseFlujoCaja }>(`/finanzas/flujo-caja${qs ? `?${qs}` : ''}`)
   },
 
   crearTenant: (data: { name: string; slug: string; plan?: PlanId }) =>
@@ -309,6 +326,8 @@ export const api = {
     stockMinimo?: number
     stockInicial?: number
     tieneVariantes?: boolean
+    /** `true` = materia prima: se compra y se transforma, no se vende (migración 030). */
+    esInsumo?: boolean
     sprite?: SpriteProducto | null
     spriteEscala?: number | null
   }) =>
@@ -330,6 +349,7 @@ export const api = {
       stockMinimo: number
       activo: boolean
       tieneVariantes: boolean
+      esInsumo: boolean
       sprite: SpriteProducto | null
       spriteEscala: number | null
     }>,
@@ -396,7 +416,7 @@ export const api = {
 
   listarClientes: () => request<{ clientes: Cliente[] }>('/clientes'),
 
-  crearCliente: (data: { nombre: string; nit?: string; email?: string; telefono?: string; direccion?: string; ciudad?: string }) =>
+  crearCliente: (data: { nombre: string; nit?: string; email?: string; telefono?: string; direccion?: string; apartamento?: string | null; ciudad?: string }) =>
     request<{ cliente: Cliente }>('/clientes', {
       method: 'POST',
       body: JSON.stringify(data),
@@ -404,7 +424,7 @@ export const api = {
 
   actualizarCliente: (
     id: string,
-    data: Partial<{ nombre: string; nit: string | null; email: string | null; telefono: string | null; direccion: string | null; ciudad: string | null; activo: boolean; plazoDias: number | null; cupoCredito: number | null }>,
+    data: Partial<{ nombre: string; nit: string | null; email: string | null; telefono: string | null; direccion: string | null; apartamento: string | null; ciudad: string | null; activo: boolean; plazoDias: number | null; cupoCredito: number | null }>,
   ) =>
     request<{ cliente: Cliente }>(`/clientes/${id}`, {
       method: 'PATCH',
@@ -421,6 +441,8 @@ export const api = {
   crearPedido: (data: {
     clienteId?: string | null
     notas?: string
+    /** Campaña de preventa, si el pedido es un encargo de una (migración 031). */
+    campanaId?: string | null
     items: (
       | { productoId: string; varianteId?: string | null; cantidad: number; precioUnitario?: number }
       | { concepto: string; cantidad: number; precioUnitario: number }
@@ -660,7 +682,9 @@ export const api = {
 
   crearIngreso: (data: {
     descripcion: string
-    categoria: CategoriaIngreso
+    /** Categoría del tenant (migración 027). `categoria` queda por compatibilidad. */
+    categoriaId?: string
+    categoria?: CategoriaIngreso
     monto: number
     fecha?: string
     medioPago?: string
@@ -675,7 +699,7 @@ export const api = {
   /** Corrige un ingreso. Si cambia monto/cuenta, el API ajusta el saldo bancario atómicamente. */
   actualizarIngreso: (
     id: string,
-    data: Partial<{ descripcion: string; categoria: CategoriaIngreso; monto: number; fecha: string; medioPago: string | null; cuentaBancariaId: string; notas: string | null }>,
+    data: Partial<{ descripcion: string; categoriaId: string; categoria: CategoriaIngreso; monto: number; fecha: string; medioPago: string | null; cuentaBancariaId: string; notas: string | null }>,
   ) =>
     request<{ ingreso: IngresoBancario }>(`/finanzas/ingresos/${id}`, {
       method: 'PATCH',
@@ -729,12 +753,127 @@ export const api = {
   revertirTransferencia: (id: string) =>
     request<{ cuentas: CuentaBancaria[] }>(`/finanzas/transferencias/${id}`, { method: 'DELETE' }),
 
+  // --- Campañas de preventa (migración 031) ---
+
+  listarCampanas: () => request<{ campanas: Campana[] }>('/campanas'),
+
+  /** El consolidado por sabor/producto, más el estado de cobro y a quién falta cobrarle. */
+  consolidadoCampana: (id: string) => request<ConsolidadoCampana>(`/campanas/${id}/consolidado`),
+
+  crearCampana: (data: { nombre: string; fechaEntrega: string; notas?: string }) =>
+    request<{ campana: Campana }>('/campanas', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  actualizarCampana: (
+    id: string,
+    data: Partial<{ nombre: string; fechaEntrega: string; estado: Campana['estado']; notas: string | null }>,
+  ) =>
+    request<{ campana: Campana }>(`/campanas/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  /** Borra la campaña; los pedidos quedan como pedidos normales sin campaña. */
+  eliminarCampana: (id: string) => request<void>(`/campanas/${id}`, { method: 'DELETE' }),
+
+  // --- Producciones: insumo → producto terminado (migración 030) ---
+
+  listarProducciones: () => request<{ producciones: Produccion[] }>('/producciones'),
+
+  /**
+   * El costo de lo producido NO se manda: lo calcula la API a partir de los
+   * insumos consumidos, para que no se pueda declarar un costo que no
+   * corresponde a lo que se gastó.
+   */
+  crearProduccion: (data: {
+    fecha?: string
+    notas?: string
+    consumos: { productoId: string; varianteId?: string | null; cantidad: number }[]
+    salidas: { productoId: string; varianteId?: string | null; cantidad: number }[]
+  }) =>
+    request<{ produccion: Produccion }>('/producciones', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // --- Préstamos y retiros del socio (migración 028) ---
+
+  listarMovimientosSocio: () =>
+    request<{ movimientos: MovimientoSocio[] }>('/finanzas/movimientos-socio'),
+
+  /** "En banco X + prestado Y = capital real Z", más el detalle por socio. */
+  resumenSocio: () => request<CapitalReal>('/finanzas/movimientos-socio/resumen'),
+
+  crearMovimientoSocio: (data: {
+    tipo: 'retiro' | 'devolucion'
+    socio: string
+    monto: number
+    cuentaBancariaId: string
+    fecha?: string
+    /** Solo en devoluciones: a qué retiro se imputa. */
+    retiroId?: string | null
+    notas?: string
+  }) =>
+    request<{ movimiento: MovimientoSocio }>('/finanzas/movimientos-socio', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  actualizarMovimientoSocio: (
+    id: string,
+    data: Partial<{ socio: string; monto: number; fecha: string; cuentaBancariaId: string; notas: string | null }>,
+  ) =>
+    request<{ movimiento: MovimientoSocio }>(`/finanzas/movimientos-socio/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  eliminarMovimientoSocio: (id: string) =>
+    request<void>(`/finanzas/movimientos-socio/${id}`, { method: 'DELETE' }),
+
+  // --- Categorías de gasto/ingreso del tenant (migración 027) ---
+
+  listarCategoriasMovimiento: (incluirInactivas = false) =>
+    request<{ categorias: CategoriaMovimiento[] }>(
+      `/finanzas/categorias${incluirInactivas ? '?incluirInactivas=true' : ''}`,
+    ),
+
+  crearCategoriaMovimiento: (data: {
+    nombre: string
+    flujo: 'egreso' | 'ingreso'
+    afectaUtilidad?: boolean
+    orden?: number
+  }) =>
+    request<{ categoria: CategoriaMovimiento }>('/finanzas/categorias', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  actualizarCategoriaMovimiento: (
+    id: string,
+    data: Partial<{ nombre: string; afectaUtilidad: boolean; orden: number; activo: boolean }>,
+  ) =>
+    request<{ categoria: CategoriaMovimiento }>(`/finanzas/categorias/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  /** Desactiva la categoría (no la borra): el histórico sigue mostrándola. */
+  desactivarCategoriaMovimiento: (id: string) =>
+    request<{ desactivada: boolean; movimientosQueLaUsan: number }>(`/finanzas/categorias/${id}`, {
+      method: 'DELETE',
+    }),
+
   // --- Gastos operativos ---
 
   listarGastos: () => request<{ gastos: GastoOperativo[] }>('/finanzas/gastos'),
 
   crearGasto: (data: {
     descripcion: string
+    /** Categoría del tenant (migración 027). `categoria` queda por compatibilidad. */
+    categoriaId?: string
     categoria?: CategoriaGasto
     monto: number
     fecha?: string
@@ -754,7 +893,7 @@ export const api = {
   /** Corrige un gasto. Si cambia monto/cuenta, el API ajusta el saldo bancario atómicamente. */
   actualizarGasto: (
     id: string,
-    data: Partial<{ descripcion: string; categoria: CategoriaGasto; monto: number; fecha: string; medioPago: string | null; cuentaBancariaId: string | null; notas: string | null }>,
+    data: Partial<{ descripcion: string; categoriaId: string; categoria: CategoriaGasto; monto: number; fecha: string; medioPago: string | null; cuentaBancariaId: string | null; notas: string | null }>,
   ) =>
     request<{ gasto: GastoOperativo }>(`/finanzas/gastos/${id}`, {
       method: 'PATCH',

@@ -8,6 +8,7 @@ interface FilaCliente {
   email: string | null
   telefono: string | null
   direccion: string | null
+  apartamento: string | null
   ciudad: string | null
   activo: boolean
   plazo_dias: number | null
@@ -23,6 +24,7 @@ function aCliente(row: FilaCliente): Cliente {
     email: row.email,
     telefono: row.telefono,
     direccion: row.direccion,
+    apartamento: row.apartamento,
     ciudad: row.ciudad,
     activo: row.activo,
     plazoDias: row.plazo_dias,
@@ -60,7 +62,7 @@ export async function clientesRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/clientes', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaCliente>(
-      'SELECT id, nombre, nit, email, telefono, direccion, ciudad, activo, plazo_dias, cupo_credito, created_at FROM clientes WHERE deleted_at IS NULL ORDER BY nombre ASC',
+      'SELECT id, nombre, nit, email, telefono, direccion, apartamento, ciudad, activo, plazo_dias, cupo_credito, created_at FROM clientes WHERE deleted_at IS NULL ORDER BY nombre ASC',
     )
     return reply.send({ clientes: rows.map(aCliente) })
   })
@@ -73,15 +75,16 @@ export async function clientesRoutes(fastify: FastifyInstance): Promise<void> {
 
     try {
       const { rows } = await request.tenantDb.query<FilaCliente>(
-        `INSERT INTO clientes (nombre, nit, email, telefono, direccion, ciudad, plazo_dias, cupo_credito)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-         RETURNING id, nombre, nit, email, telefono, direccion, ciudad, activo, plazo_dias, cupo_credito, created_at`,
+        `INSERT INTO clientes (nombre, nit, email, telefono, direccion, apartamento, ciudad, plazo_dias, cupo_credito)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         RETURNING id, nombre, nit, email, telefono, direccion, apartamento, ciudad, activo, plazo_dias, cupo_credito, created_at`,
         [
           body.data.nombre,
           body.data.nit ?? null,
           body.data.email ?? null,
           body.data.telefono ?? null,
           body.data.direccion ?? null,
+          body.data.apartamento ?? null,
           body.data.ciudad ?? null,
           body.data.plazoDias ?? null,
           body.data.cupoCredito ?? null,
@@ -109,6 +112,7 @@ export async function clientesRoutes(fastify: FastifyInstance): Promise<void> {
       email: body.data.email,
       telefono: body.data.telefono,
       direccion: body.data.direccion,
+      apartamento: body.data.apartamento,
       ciudad: body.data.ciudad,
       activo: body.data.activo,
       plazo_dias: body.data.plazoDias,
@@ -121,7 +125,7 @@ export async function clientesRoutes(fastify: FastifyInstance): Promise<void> {
     try {
       const { rows, rowCount } = await request.tenantDb.query<FilaCliente>(
         `UPDATE clientes SET ${sets} WHERE id = $1 AND deleted_at IS NULL
-         RETURNING id, nombre, nit, email, telefono, direccion, ciudad, activo, plazo_dias, cupo_credito, created_at`,
+         RETURNING id, nombre, nit, email, telefono, direccion, apartamento, ciudad, activo, plazo_dias, cupo_credito, created_at`,
         [request.params.id, ...valores],
       )
       if (rowCount === 0) return reply.notFound('Cliente no encontrado.')

@@ -52,11 +52,10 @@ import {
 } from 'lucide-react';
 
 import { UNIDADES_COMUNES } from '@antigravity/shared';
-import type { Abono, CategoriaGasto, CategoriaIngreso, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, SpriteProducto, Tenant, TransferenciaBancaria } from '@antigravity/shared';
+import type { Abono, CategoriaGasto, Categoria, Cliente, CuentaBancaria, EstadoPedidoProveedor, EventoCalendario, Factura, GastoOperativo, IngresoBancario, MovimientoInventario, NotaCrm, NotaInterna, Pedido, PedidoProveedor, Producto, Proveedor, ResumenFinanciero, SpriteProducto, Tenant, TransferenciaBancaria } from '@antigravity/shared';
 
 // Definido localmente para no forzar un import de valor de @antigravity/shared
 // (el tsconfig apunta al source TS que usa extensiones .js — solo funciona con import type).
-const CATEGORIAS_INGRESO_LOCAL: CategoriaIngreso[] = ['capital', 'prestamo', 'devolucion', 'venta_activo', 'otro'];
 
 // Helper para ajustar el brillo de un color hex
 // amount positivo = más claro (hacia blanco), negativo = más oscuro
@@ -137,26 +136,17 @@ const TRANSICIONES_VALIDAS_PROVEEDOR: Record<EstadoPedidoProveedor, EstadoPedido
   cancelado: [],
 };
 
-// Local copy of CATEGORIAS_GASTO (mirrors shared) — avoids value import from @antigravity/shared.
-// Fuente de verdad: CATEGORIAS_GASTO en packages/shared/src/types/finanzas.ts
-// (copia local para no forzar un import de valor desde @antigravity/shared).
-// Agregar uno acá exige agregarlo también allá y en el CHECK de la migración.
-const CATEGORIAS_GASTO_LOCAL: CategoriaGasto[] = [
-  'arriendo', 'servicios', 'nomina', 'comisiones', 'marketing',
-  'transporte', 'impuestos', 'mantenimiento', 'honorarios', 'financieros', 'otros',
-];
-const LABEL_CATEGORIA_GASTO: Record<CategoriaGasto, string> = {
-  arriendo: 'Arriendo', servicios: 'Servicios', nomina: 'Nómina',
-  comisiones: 'Comisiones', marketing: 'Marketing', transporte: 'Transporte',
-  impuestos: 'Impuestos', mantenimiento: 'Mantenimiento', honorarios: 'Honorarios',
-  financieros: 'Financieros', otros: 'Otros',
-};
+// Las categorías de gasto/ingreso ya NO son un enum: cada negocio define las
+// suyas (tabla `categorias_gasto`, migración 027). Antes vivían duplicadas acá
+// como copia del enum de @antigravity/shared, lo que obligaba a tocar tres
+// lugares —front, shared y el CHECK de la migración— para agregar un rubro.
+// Ahora llegan de `GET /finanzas/categorias` al estado `categoriasMovimiento`.
 
 /** Tipo de "compra de inventario" en el selector del formulario. NO es una categoría persistida:
  *  esas filas viven en `pedidos_proveedor`, no en `gastos_operativos`. */
 const TIPO_COMPRA_INVENTARIO = '__compra_inventario__';
 
-import { api, ApiError, type ConfigEmpresa, type EntradaAuditoria, type ProductoAtributo, type ResultadoBusqueda, type VarianteProducto } from '../lib/api';
+import { api, ApiError, type Campana, type CapitalReal, type CategoriaMovimiento, type ConfigEmpresa, type ConsolidadoCampana, type MovimientoSocio, type Produccion, type EntradaAuditoria, type ProductoAtributo, type ResultadoBusqueda, type VarianteProducto } from '../lib/api';
 import { money, moneySigned, fechaCorta, rangoFechas } from '../lib/format';
 import { MoneyInput } from '../components/MoneyInput';
 import { BuscadorGlobal } from '../components/BuscadorGlobal';
@@ -277,7 +267,10 @@ function productoAMockProduct(p: Producto): Product {
     nombre: p.nombre,
     descripcion: p.descripcion ?? '',
     categoria_id: p.categoriaId ?? '',
+    es_insumo: p.esInsumo,
     precio_costo: p.precioCosto ?? 0,
+    costo_promedio: p.costoPromedio ?? 0,
+    costo_efectivo: p.costoEfectivo ?? 0,
     precio_venta: p.precioVenta ?? 0,
     stock_minimo: p.stockMinimo,
     // El servidor calcula el disponible vía `calcularStockDisponible` —
@@ -299,6 +292,7 @@ function clienteAMockCustomer(c: Cliente): Customer {
     email: c.email ?? '',
     telefono: c.telefono ?? '',
     direccion: c.direccion ?? '',
+    apartamento: c.apartamento ?? '',
     plazoDias: c.plazoDias,
     cupoCredito: c.cupoCredito,
   };
@@ -309,6 +303,7 @@ function pedidoAMockOrder(p: Pedido): Order {
     id: p.id,
     numero: p.numero,
     cliente_id: p.clienteId ?? '',
+    campana_id: p.campanaId,
     fecha: p.createdAt,
     total: p.total,
     estado: p.estado,
@@ -729,17 +724,119 @@ export default function AppHome() {
    *  así que corregir un typo obligaba a borrar y volver a crear — y eso ensucia
    *  la auditoría con un borrado que en realidad fue una corrección. */
   const [editandoGasto, setEditandoGasto] = useState<GastoOperativo | null>(null);
-  const [editGastoForm, setEditGastoForm] = useState({ descripcion: '', categoria: 'otros' as CategoriaGasto, monto: '', fecha: '', notas: '' });
+  const [editGastoForm, setEditGastoForm] = useState({ descripcion: '', categoriaId: '', monto: '', fecha: '', notas: '' });
   const [guardandoEditGasto, setGuardandoEditGasto] = useState(false);
   const [editGastoError, setEditGastoError] = useState<string | null>(null);
+
+  /**
+   * Catálogo de categorías de gasto/ingreso del negocio (migración 027). Antes
+   * era un enum fijo replicado en el front; ahora cada tenant define las suyas.
+   * Se cargan una vez y se filtran por `flujo` en cada selector.
+   */
+  const [categoriasMovimiento, setCategoriasMovimiento] = useState<CategoriaMovimiento[]>([]);
+  const categoriasEgreso = categoriasMovimiento.filter((c) => c.flujo === 'egreso' && c.activo);
+  const categoriasIngreso = categoriasMovimiento.filter((c) => c.flujo === 'ingreso' && c.activo);
+  /** Nombre a mostrar de una categoría por id — para listados que solo tienen el id. */
+  const nombreCategoria = (id: string | null): string | null =>
+    id ? (categoriasMovimiento.find((c) => c.id === id)?.nombre ?? null) : null;
+  /**
+   * Con qué categoría abre un formulario nuevo. Busca la sembrada "Otros"/"Otro"
+   * por slug; si el negocio la desactivó, cae a la primera activa de ese flujo.
+   * Nunca devuelve '' si hay alguna categoría, para no abrir con el select vacío.
+   */
+  const categoriaPorDefecto = (flujo: 'egreso' | 'ingreso'): string => {
+    const lista = flujo === 'egreso' ? categoriasEgreso : categoriasIngreso;
+    const slugDefecto = flujo === 'egreso' ? 'otros' : 'otro';
+    return lista.find((c) => c.slug === slugDefecto)?.id ?? lista[0]?.id ?? '';
+  };
+
+  // Administrador de categorías (tab Configuración).
+  const [nuevaCatForm, setNuevaCatForm] = useState<{ nombre: string; flujo: 'egreso' | 'ingreso'; afectaUtilidad: boolean }>({
+    nombre: '', flujo: 'egreso', afectaUtilidad: true,
+  });
+  const [guardandoCat, setGuardandoCat] = useState(false);
+  /**
+   * Si el catálogo ya se pidió. Hace falta porque las categorías se cargan junto
+   * con los gastos, y a Configuración se puede entrar sin haber pasado nunca por
+   * Finanzas — sin esto el administrador se veía vacío.
+   */
+  const [categoriasCargadas, setCategoriasCargadas] = useState(false);
+  const [catAdminError, setCatAdminError] = useState<string | null>(null);
+
+  /**
+   * Palabras que delatan una categoría de compra de mercancía. Con el enum fijo
+   * esto lo impedía la base; ahora que cada negocio define sus rubros, lo único
+   * que queda es avisar: registrar una compra de inventario como gasto la resta
+   * dos veces de la utilidad (como gasto y otra vez como costo al vender).
+   * Ver el comentario largo de la migración 023 y de la 027.
+   */
+  const sugiereMercancia = (nombre: string): boolean =>
+    /mercanc|inventario|compra de producto|materia prima|stock/i.test(nombre);
+
+  const recargarCategorias = async () => {
+    const { categorias } = await api.listarCategoriasMovimiento(true);
+    setCategoriasMovimiento(categorias);
+    setCategoriasCargadas(true);
+  };
+
+  const handleCrearCategoria = async () => {
+    const nombre = nuevaCatForm.nombre.trim();
+    if (!nombre) { setCatAdminError('El nombre de la categoría es obligatorio.'); return; }
+    setGuardandoCat(true);
+    setCatAdminError(null);
+    try {
+      await api.crearCategoriaMovimiento({
+        nombre,
+        flujo: nuevaCatForm.flujo,
+        afectaUtilidad: nuevaCatForm.afectaUtilidad,
+      });
+      setNuevaCatForm({ nombre: '', flujo: 'egreso', afectaUtilidad: true });
+      await recargarCategorias();
+    } catch (error) {
+      setCatAdminError(error instanceof ApiError ? error.message : 'No se pudo crear la categoría.');
+    } finally {
+      setGuardandoCat(false);
+    }
+  };
+
+  const handleRenombrarCategoria = async (id: string, nombre: string) => {
+    setCatAdminError(null);
+    try {
+      await api.actualizarCategoriaMovimiento(id, { nombre });
+      await recargarCategorias();
+    } catch (error) {
+      setCatAdminError(error instanceof ApiError ? error.message : 'No se pudo renombrar la categoría.');
+    }
+  };
+
+  const handleToggleAfectaUtilidad = async (id: string, afectaUtilidad: boolean) => {
+    setCatAdminError(null);
+    try {
+      await api.actualizarCategoriaMovimiento(id, { afectaUtilidad });
+      await recargarCategorias();
+    } catch (error) {
+      setCatAdminError(error instanceof ApiError ? error.message : 'No se pudo actualizar la categoría.');
+    }
+  };
+
+  const handleToggleActivoCategoria = async (id: string, activar: boolean) => {
+    setCatAdminError(null);
+    try {
+      if (activar) await api.actualizarCategoriaMovimiento(id, { activo: true });
+      else await api.desactivarCategoriaMovimiento(id);
+      await recargarCategorias();
+    } catch (error) {
+      setCatAdminError(error instanceof ApiError ? error.message : 'No se pudo cambiar el estado de la categoría.');
+    }
+  };
 
   // --- Ingresos bancarios manuales ---
   const [ingresos, setIngresos] = useState<IngresoBancario[]>([]);
   const [ingresosCargando, setIngresosCargando] = useState(false);
   const [ingresosError, setIngresosError] = useState<string | null>(null);
   const [showIngresoModal, setShowIngresoModal] = useState(false);
-  const [ingresoForm, setIngresoForm] = useState<{ descripcion: string; categoria: CategoriaIngreso; monto: string; fecha: string; medioPago: string; cuentaBancariaId: string; notas: string }>({
-    descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '',
+  const [ingresoForm, setIngresoForm] = useState<{ descripcion: string; categoriaId: string; monto: string; fecha: string; medioPago: string; cuentaBancariaId: string; notas: string }>({
+    descripcion: '', categoriaId: '', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '',
   });
   const [guardandoIngreso, setGuardandoIngreso] = useState(false);
 
@@ -750,6 +847,23 @@ export default function AppHome() {
   const movimientosPag = usePaginacion(movements, 25);
   const ingresosPag = usePaginacion(ingresos, 25);
   const [ingresoFormError, setIngresoFormError] = useState<string | null>(null);
+
+  /**
+   * Préstamos del socio (migración 028). Solo admin — es la plata del dueño.
+   * `capital` trae el "en banco + prestado = capital real", que es el número por
+   * el que empieza la pantalla.
+   */
+  const [movimientosSocio, setMovimientosSocio] = useState<MovimientoSocio[]>([]);
+  const [capitalReal, setCapitalReal] = useState<CapitalReal | null>(null);
+  const [socioCargando, setSocioCargando] = useState(false);
+  const [socioError, setSocioError] = useState<string | null>(null);
+  const [showSocioModal, setShowSocioModal] = useState(false);
+  const [socioForm, setSocioForm] = useState<{
+    tipo: 'retiro' | 'devolucion'; socio: string; monto: number | ''; fecha: string;
+    cuentaBancariaId: string; retiroId: string; notas: string;
+  }>({ tipo: 'retiro', socio: '', monto: '', fecha: '', cuentaBancariaId: '', retiroId: '', notas: '' });
+  const [guardandoSocio, setGuardandoSocio] = useState(false);
+  const [socioFormError, setSocioFormError] = useState<string | null>(null);
 
   // --- Resumen financiero ---
   const [resumenFinanciero, setResumenFinanciero] = useState<ResumenFinanciero | null>(null);
@@ -892,7 +1006,7 @@ export default function AppHome() {
       tipo: 'gasto',
       fecha: g.fecha,
       descripcion: g.descripcion,
-      etiquetaTipo: LABEL_CATEGORIA_GASTO[g.categoria] ?? g.categoria,
+      etiquetaTipo: g.categoriaNombre ?? nombreCategoria(g.categoriaId) ?? g.categoria,
       monto: g.monto,
       proveedorNombre: g.proveedorId ? (suppliers.find((s) => s.id === g.proveedorId)?.nombre ?? null) : null,
       debiendo: seDebe(g.facturaCompraId),
@@ -926,7 +1040,7 @@ export default function AppHome() {
   // `'compras'` sigue siendo un valor válido en la URL para no romper links y
   // marcadores viejos, pero ya no tiene pestaña propia: cae en Gastos, que es
   // donde ahora se registran y se ven las compras.
-  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos' | 'flujo'>(
+  const [financeSubTab, setFinanceSubTab] = useState<'resumen' | 'cxc' | 'cxp' | 'compras' | 'gastos' | 'ingresos' | 'prestamos' | 'flujo'>(
     () => {
       const inicial = valorInicialDeUrl('finanzas', FINANZAS_SUBTABS_VALIDAS, 'resumen');
       return inicial === 'compras' ? 'gastos' : inicial;
@@ -1002,6 +1116,7 @@ export default function AppHome() {
     stock_minimo: '10',
     stock_inicial: '20',
     tiene_variantes: false,
+    es_insumo: false,
     unidad: 'unidad',
     sprite: null as SpriteProducto | null,
   });
@@ -1041,7 +1156,7 @@ export default function AppHome() {
   // Edición de Producto
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editProductForm, setEditProductForm] = useState({
-    sku: '', nombre: '', descripcion: '', categoria_id: '', precio_costo: '', precio_venta: '', stock_minimo: '', tiene_variantes: false,
+    sku: '', nombre: '', descripcion: '', categoria_id: '', precio_costo: '', precio_venta: '', stock_minimo: '', tiene_variantes: false, es_insumo: false,
     unidad: 'unidad', sprite: null as SpriteProducto | null,
   });
 
@@ -1182,11 +1297,11 @@ export default function AppHome() {
 
   // Edición de Cliente
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
-  const [editCustomerForm, setEditCustomerForm] = useState({ nombre: '', nit: '', email: '', telefono: '', direccion: '', plazoDias: '', cupoCredito: '' });
+  const [editCustomerForm, setEditCustomerForm] = useState({ nombre: '', nit: '', email: '', telefono: '', direccion: '', apartamento: '', plazoDias: '', cupoCredito: '' });
 
   // Creación de Cliente
   const [showCreateCustomer, setShowCreateCustomer] = useState(false);
-  const [newCustomerForm, setNewCustomerForm] = useState({ nombre: '', nit: '', email: '', telefono: '', direccion: '', ciudad: '' });
+  const [newCustomerForm, setNewCustomerForm] = useState({ nombre: '', nit: '', email: '', telefono: '', direccion: '', apartamento: '', ciudad: '' });
   const [creandoCliente, setCreandoCliente] = useState(false);
   const [createCustomerError, setCreateCustomerError] = useState<string | null>(null);
 
@@ -1219,9 +1334,11 @@ export default function AppHome() {
 
   // 3. Crear pedido
   const [showCreateOrder, setShowCreateOrder] = useState(false);
+  /** Campaña a la que se asocia el pedido que se está creando (migración 031). '' = ninguna. */
+  const [pedidoCampanaId, setPedidoCampanaId] = useState('');
   // Inline: crear cliente desde el formulario de pedido
   const [showInlineNewClient, setShowInlineNewClient] = useState(false);
-  const [inlineClientForm, setInlineClientForm] = useState({ nombre: '', email: '', telefono: '' });
+  const [inlineClientForm, setInlineClientForm] = useState({ nombre: '', apartamento: '', email: '', telefono: '' });
   const [inlineCreandoCliente, setInlineCreandoCliente] = useState(false);
   const [inlineClientError, setInlineClientError] = useState<string | null>(null);
 
@@ -1569,6 +1686,7 @@ export default function AppHome() {
 
   useEffect(() => {
     void fetchPedidos();
+    void fetchCampanas();
   }, [fetchPedidos]);
 
   // Una vez cargan los clientes reales, fijamos una selección por defecto
@@ -1882,14 +2000,231 @@ export default function AppHome() {
     setGastosCargando(true);
     setGastosError(null);
     try {
-      const { gastos: data } = await api.listarGastos();
+      const [{ gastos: data }, { categorias }] = await Promise.all([
+        api.listarGastos(),
+        // El catálogo va acá y no en su propio efecto porque todo formulario de
+        // gasto lo necesita: pedirlos juntos evita que el selector arranque vacío.
+        api.listarCategoriasMovimiento(true),
+      ]);
       setGastos(data);
+      setCategoriasMovimiento(categorias);
+      setCategoriasCargadas(true);
     } catch (error) {
       setGastosError(error instanceof ApiError ? error.message : 'No se pudieron cargar los gastos.');
     } finally {
       setGastosCargando(false);
     }
   }, [usuario?.tenantId]);
+
+  const fetchSocio = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    setSocioCargando(true);
+    setSocioError(null);
+    try {
+      const [{ movimientos }, capital] = await Promise.all([
+        api.listarMovimientosSocio(),
+        api.resumenSocio(),
+      ]);
+      setMovimientosSocio(movimientos);
+      setCapitalReal(capital);
+    } catch (error) {
+      setSocioError(error instanceof ApiError ? error.message : 'No se pudieron cargar los préstamos.');
+    } finally {
+      setSocioCargando(false);
+    }
+  }, [usuario?.tenantId]);
+
+  const handleGuardarSocio = async () => {
+    const monto = socioForm.monto === '' ? 0 : socioForm.monto;
+    if (!socioForm.socio.trim()) { setSocioFormError('Indicá de quién es el movimiento.'); return; }
+    if (!Number.isFinite(monto) || monto <= 0) { setSocioFormError('El monto debe ser mayor que cero.'); return; }
+    if (!socioForm.cuentaBancariaId) { setSocioFormError('Elegí la cuenta.'); return; }
+    setGuardandoSocio(true);
+    setSocioFormError(null);
+    try {
+      await api.crearMovimientoSocio({
+        tipo: socioForm.tipo,
+        socio: socioForm.socio.trim(),
+        monto,
+        cuentaBancariaId: socioForm.cuentaBancariaId,
+        fecha: socioForm.fecha || undefined,
+        // Solo las devoluciones se imputan a un retiro.
+        retiroId: socioForm.tipo === 'devolucion' && socioForm.retiroId ? socioForm.retiroId : null,
+        notas: socioForm.notas || undefined,
+      });
+      setShowSocioModal(false);
+      setSocioForm({ tipo: 'retiro', socio: '', monto: '', fecha: '', cuentaBancariaId: '', retiroId: '', notas: '' });
+      await Promise.all([fetchSocio(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setSocioFormError(error instanceof ApiError ? error.message : 'No se pudo registrar el movimiento.');
+    } finally {
+      setGuardandoSocio(false);
+    }
+  };
+
+  const handleEliminarSocio = async (id: string) => {
+    setSocioError(null);
+    try {
+      await api.eliminarMovimientoSocio(id);
+      await Promise.all([fetchSocio(), fetchCuentasBancarias(), fetchResumen()]);
+    } catch (error) {
+      setSocioError(error instanceof ApiError ? error.message : 'No se pudo eliminar el movimiento.');
+    }
+  };
+
+  /**
+   * Producciones: insumo → producto terminado (migración 030). Vive dentro de
+   * Inventario porque es una operación de stock, no de finanzas.
+   */
+  const [producciones, setProducciones] = useState<Produccion[]>([]);
+  const [produccionesCargando, setProduccionesCargando] = useState(false);
+  const [produccionesError, setProduccionesError] = useState<string | null>(null);
+  const [showProduccionModal, setShowProduccionModal] = useState(false);
+  const [produccionForm, setProduccionForm] = useState<{
+    fecha: string; notas: string;
+    consumos: { productoId: string; cantidad: string }[];
+    salidas: { productoId: string; cantidad: string }[];
+  }>({ fecha: '', notas: '', consumos: [{ productoId: '', cantidad: '' }], salidas: [{ productoId: '', cantidad: '' }] });
+  const [guardandoProduccion, setGuardandoProduccion] = useState(false);
+  const [produccionFormError, setProduccionFormError] = useState<string | null>(null);
+
+  const insumos = products.filter((p) => p.es_insumo);
+  const productosVendibles = products.filter((p) => !p.es_insumo);
+
+  /**
+   * Costo estimado de la producción ANTES de guardar, para que el dueño vea con
+   * qué número va a quedar su producto. Usa el costo efectivo de cada insumo —
+   * el mismo que aplicará la API.
+   */
+  const costoProduccionEstimado = produccionForm.consumos.reduce((acc, c) => {
+    const prod = products.find((p) => p.id === c.productoId);
+    const cant = Number(c.cantidad);
+    if (!prod || !Number.isFinite(cant)) return acc;
+    return acc + cant * (prod.costo_efectivo || prod.precio_costo || 0);
+  }, 0);
+  const cantidadProducidaTotal = produccionForm.salidas.reduce((acc, sal) => {
+    const cant = Number(sal.cantidad);
+    return acc + (Number.isFinite(cant) ? cant : 0);
+  }, 0);
+
+  const fetchProducciones = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    setProduccionesCargando(true);
+    setProduccionesError(null);
+    try {
+      const { producciones: data } = await api.listarProducciones();
+      setProducciones(data);
+    } catch (error) {
+      setProduccionesError(error instanceof ApiError ? error.message : 'No se pudieron cargar las producciones.');
+    } finally {
+      setProduccionesCargando(false);
+    }
+  }, [usuario?.tenantId]);
+
+  const handleGuardarProduccion = async () => {
+    const consumos = produccionForm.consumos
+      .filter((c) => c.productoId && Number(c.cantidad) > 0)
+      .map((c) => ({ productoId: c.productoId, cantidad: Number(c.cantidad) }));
+    const salidas = produccionForm.salidas
+      .filter((sal) => sal.productoId && Number(sal.cantidad) > 0)
+      .map((sal) => ({ productoId: sal.productoId, cantidad: Number(sal.cantidad) }));
+
+    if (consumos.length === 0) { setProduccionFormError('Indicá al menos un insumo consumido.'); return; }
+    if (salidas.length === 0) { setProduccionFormError('Indicá al menos un producto obtenido.'); return; }
+
+    setGuardandoProduccion(true);
+    setProduccionFormError(null);
+    try {
+      await api.crearProduccion({
+        fecha: produccionForm.fecha || undefined,
+        notas: produccionForm.notas || undefined,
+        consumos,
+        salidas,
+      });
+      setShowProduccionModal(false);
+      setProduccionForm({ fecha: '', notas: '', consumos: [{ productoId: '', cantidad: '' }], salidas: [{ productoId: '', cantidad: '' }] });
+      // Recargar inventario: cambiaron los stocks de insumo y de producto, y el costo.
+      await Promise.all([fetchProducciones(), fetchInventario()]);
+    } catch (error) {
+      setProduccionFormError(error instanceof ApiError ? error.message : 'No se pudo registrar la producción.');
+    } finally {
+      setGuardandoProduccion(false);
+    }
+  };
+
+  /**
+   * Campañas de preventa (migración 031). El valor está en el consolidado: qué
+   * pedirle a la proveedora y a quién falta cobrarle.
+   */
+  const [campanas, setCampanas] = useState<Campana[]>([]);
+  const [campanasCargando, setCampanasCargando] = useState(false);
+  const [campanasError, setCampanasError] = useState<string | null>(null);
+  const [campanaAbierta, setCampanaAbierta] = useState<string | null>(null);
+  const [consolidado, setConsolidado] = useState<ConsolidadoCampana | null>(null);
+  const [showCampanaModal, setShowCampanaModal] = useState(false);
+  const [campanaForm, setCampanaForm] = useState({ nombre: '', fechaEntrega: '', notas: '' });
+  const [guardandoCampana, setGuardandoCampana] = useState(false);
+  const [campanaFormError, setCampanaFormError] = useState<string | null>(null);
+
+  /** Campañas que aún aceptan encargos — las que se ofrecen al crear un pedido. */
+  const campanasAbiertas = campanas.filter((c) => c.estado === 'abierta');
+
+  const fetchCampanas = useCallback(async () => {
+    if (!usuario?.tenantId) return;
+    setCampanasCargando(true);
+    setCampanasError(null);
+    try {
+      const { campanas: data } = await api.listarCampanas();
+      setCampanas(data);
+    } catch (error) {
+      setCampanasError(error instanceof ApiError ? error.message : 'No se pudieron cargar las campañas.');
+    } finally {
+      setCampanasCargando(false);
+    }
+  }, [usuario?.tenantId]);
+
+  const abrirConsolidado = async (id: string) => {
+    setCampanaAbierta(id);
+    setConsolidado(null);
+    setCampanasError(null);
+    try {
+      setConsolidado(await api.consolidadoCampana(id));
+    } catch (error) {
+      setCampanasError(error instanceof ApiError ? error.message : 'No se pudo cargar el consolidado.');
+    }
+  };
+
+  const handleCrearCampana = async () => {
+    if (!campanaForm.nombre.trim()) { setCampanaFormError('La campaña necesita un nombre.'); return; }
+    if (!campanaForm.fechaEntrega) { setCampanaFormError('Indicá para qué día es la entrega.'); return; }
+    setGuardandoCampana(true);
+    setCampanaFormError(null);
+    try {
+      await api.crearCampana({
+        nombre: campanaForm.nombre.trim(),
+        fechaEntrega: campanaForm.fechaEntrega,
+        notas: campanaForm.notas || undefined,
+      });
+      setShowCampanaModal(false);
+      setCampanaForm({ nombre: '', fechaEntrega: '', notas: '' });
+      await fetchCampanas();
+    } catch (error) {
+      setCampanaFormError(error instanceof ApiError ? error.message : 'No se pudo crear la campaña.');
+    } finally {
+      setGuardandoCampana(false);
+    }
+  };
+
+  const handleCambiarEstadoCampana = async (id: string, estado: Campana['estado']) => {
+    setCampanasError(null);
+    try {
+      await api.actualizarCampana(id, { estado });
+      await fetchCampanas();
+      if (campanaAbierta === id) await abrirConsolidado(id);
+    } catch (error) {
+      setCampanasError(error instanceof ApiError ? error.message : 'No se pudo cambiar el estado.');
+    }
+  };
 
   const gastoFormVacio = {
     tipo: 'otros', descripcion: '', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '',
@@ -2006,7 +2341,7 @@ export default function AppHome() {
     setEditandoGasto(gasto);
     setEditGastoForm({
       descripcion: gasto.descripcion,
-      categoria: gasto.categoria,
+      categoriaId: gasto.categoriaId ?? '',
       monto: String(gasto.monto),
       fecha: gasto.fecha,
       notas: gasto.notas ?? '',
@@ -2027,7 +2362,7 @@ export default function AppHome() {
     try {
       await api.actualizarGasto(editandoGasto.id, {
         descripcion: editGastoForm.descripcion.trim(),
-        categoria: editGastoForm.categoria,
+        categoriaId: editGastoForm.categoriaId || undefined,
         monto,
         fecha: editGastoForm.fecha || undefined,
         notas: editGastoForm.notas || null,
@@ -2081,7 +2416,7 @@ export default function AppHome() {
     try {
       await api.crearIngreso({
         descripcion: ingresoForm.descripcion.trim(),
-        categoria: ingresoForm.categoria,
+        categoriaId: ingresoForm.categoriaId || undefined,
         monto,
         fecha: ingresoForm.fecha || undefined,
         medioPago: ingresoForm.medioPago || undefined,
@@ -2089,7 +2424,7 @@ export default function AppHome() {
         notas: ingresoForm.notas || undefined,
       });
       setShowIngresoModal(false);
-      setIngresoForm({ descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '' });
+      setIngresoForm({ descripcion: '', categoriaId: categoriaPorDefecto('ingreso'), monto: '', fecha: '', medioPago: '', cuentaBancariaId: '', notas: '' });
       await Promise.all([fetchIngresos(), fetchCuentasBancarias(), fetchResumen()]);
     } catch (error) {
       setIngresoFormError(error instanceof ApiError ? error.message : 'No se pudo registrar el ingreso.');
@@ -2154,7 +2489,10 @@ export default function AppHome() {
   }, [usuario?.tenantId]);
   useEffect(() => {
     if (activeTab === 'finanzas' && financeSubTab === 'flujo') void fetchFlujoCaja(flujoAño, flujoMes);
-  }, [activeTab, financeSubTab, flujoAño, flujoMes, fetchFlujoCaja]);
+    if (activeTab === 'finanzas' && financeSubTab === 'prestamos') void fetchSocio();
+    // El admin de categorías vive en Configuración, que no pasa por `fetchGastos`.
+    if (activeTab === 'config' && !categoriasCargadas) void recargarCategorias();
+  }, [activeTab, financeSubTab, flujoAño, flujoMes, fetchFlujoCaja, categoriasCargadas]);
 
   // --- Reportes ---
 
@@ -2884,6 +3222,7 @@ export default function AppHome() {
       descripcion: p.descripcion,
       categoria_id: p.categoria_id,
       precio_costo: String(p.precio_costo),
+      es_insumo: p.es_insumo,
       precio_venta: String(p.precio_venta),
       stock_minimo: String(p.stock_minimo),
       tiene_variantes: p.tiene_variantes,
@@ -3048,6 +3387,7 @@ export default function AppHome() {
     setEditingCustomer(c);
     setEditCustomerForm({
       nombre: c.nombre, nit: c.nit, email: c.email, telefono: c.telefono, direccion: c.direccion,
+      apartamento: c.apartamento,
       plazoDias: c.plazoDias == null ? '' : String(c.plazoDias),
       cupoCredito: c.cupoCredito == null ? '' : String(c.cupoCredito),
     });
@@ -3062,6 +3402,7 @@ export default function AppHome() {
         email: editCustomerForm.email || null,
         telefono: editCustomerForm.telefono || null,
         direccion: editCustomerForm.direccion || null,
+        apartamento: editCustomerForm.apartamento.trim() || null,
         // '' significa "sin definir" → null, que en plazo cae al default de 30
         // y en cupo significa sin límite.
         plazoDias: editCustomerForm.plazoDias === '' ? null : Number(editCustomerForm.plazoDias),
@@ -3134,10 +3475,11 @@ export default function AppHome() {
         email: newCustomerForm.email.trim() || undefined,
         telefono: newCustomerForm.telefono.trim() || undefined,
         direccion: newCustomerForm.direccion.trim() || undefined,
+        apartamento: newCustomerForm.apartamento.trim() || null,
         ciudad: newCustomerForm.ciudad.trim() || undefined,
       });
       setShowCreateCustomer(false);
-      setNewCustomerForm({ nombre: '', nit: '', email: '', telefono: '', direccion: '', ciudad: '' });
+      setNewCustomerForm({ nombre: '', nit: '', email: '', telefono: '', direccion: '', apartamento: '', ciudad: '' });
       await fetchPedidos();
     } catch (error) {
       setCreateCustomerError(error instanceof ApiError ? error.message : 'No se pudo crear el cliente.');
@@ -3414,6 +3756,7 @@ export default function AppHome() {
         stockMinimo: minStock,
         stockInicial: initStock,
         tieneVariantes: newProduct.tiene_variantes,
+        esInsumo: newProduct.es_insumo,
         unidad: newProduct.unidad,
         sprite: newProduct.sprite,
       });
@@ -3428,6 +3771,7 @@ export default function AppHome() {
         stock_minimo: '10',
         stock_inicial: '20',
         tiene_variantes: false,
+        es_insumo: false,
         unidad: 'unidad',
         sprite: null,
       });
@@ -3552,13 +3896,16 @@ export default function AppHome() {
         }
         await api.crearPedido({
           clienteId: selectedCustomerId || null,
+          campanaId: pedidoCampanaId || null,
           items: itemsAEnviar,
         });
         setShowCreateOrder(false);
+        setPedidoCampanaId('');
         setOrderItems([]);
         setItemsExpandidos(new Set());
         setShippingEnabled(false);
         setShippingPrice('');
+        void fetchCampanas();
         await Promise.all([fetchPedidos(), fetchFinanzas()]);
       } catch (err: unknown) {
         setOrderValidationError(err instanceof ApiError ? err.message : 'Ocurrió un error inesperado al crear el pedido.');
@@ -3577,18 +3924,31 @@ export default function AppHome() {
     try {
       const { cliente } = await api.crearCliente({
         nombre: inlineClientForm.nombre.trim(),
+        apartamento: inlineClientForm.apartamento.trim() || null,
         email: inlineClientForm.email.trim() || undefined,
         telefono: inlineClientForm.telefono.trim() || undefined,
       });
       await fetchPedidos(); // recarga customers
       setSelectedCustomerId(cliente.id); // auto-selecciona el nuevo cliente
       setShowInlineNewClient(false);
-      setInlineClientForm({ nombre: '', email: '', telefono: '' });
+      setInlineClientForm({ nombre: '', apartamento: '', email: '', telefono: '' });
     } catch (err) {
       setInlineClientError(err instanceof ApiError ? err.message : 'No se pudo crear el cliente.');
     } finally {
       setInlineCreandoCliente(false);
     }
+  };
+
+  /**
+   * Cómo se nombra a un cliente en listas y tarjetas. Con tema 8-bit y
+   * apartamento cargado va "Apto 502 · María": ese negocio reparte dentro de un
+   * solo edificio y ubica al cliente por el apartamento, no por el nombre.
+   * Sin tema (o sin apartamento) devuelve el nombre tal cual, como siempre.
+   */
+  const nombreClienteConApto = (client: Customer | undefined): string => {
+    const nombre = client?.nombre ?? 'Sin cliente';
+    const apto = tema8bit ? client?.apartamento?.trim() : undefined;
+    return apto ? `Apto ${apto} · ${nombre}` : nombre;
   };
 
   /**
@@ -3602,10 +3962,17 @@ export default function AppHome() {
    * o sea, "esta es su compra #3". El nombre de producto es el del primer
    * ítem que sí referencia un producto de catálogo (los cargos libres como
    * Envío no cuentan para esto).
+   *
+   * Con tema 8-bit y apartamento cargado el prefijo cambia a
+   * "Apto <apartamento> · <primer nombre> #<n>": ese negocio reparte dentro de
+   * un solo edificio y reconoce al cliente por el apartamento antes que por el
+   * nombre, así que es lo que debe leerse primero. Se cae al formato normal si
+   * el cliente no tiene apartamento — no todos lo van a llenar.
    */
   const getOrderDisplayName = (ord: Order): string => {
     const client = customers.find((c) => c.id === ord.cliente_id);
     const primerNombre = client?.nombre?.trim().split(/\s+/)[0] ?? 'Sin cliente';
+    const apartamento = tema8bit ? client?.apartamento?.trim() : undefined;
 
     const pedidosDelCliente = orders
       .filter((o) => o.cliente_id === ord.cliente_id)
@@ -3617,7 +3984,9 @@ export default function AppHome() {
       ? products.find((p) => p.id === primerItemConProducto.producto_id)?.nombre
       : undefined;
 
-    let nombre = `Pedido ${primerNombre}${numeroDeCompra > 0 ? ` #${numeroDeCompra}` : ''}`;
+    let nombre = apartamento
+      ? `Apto ${apartamento} · ${primerNombre}${numeroDeCompra > 0 ? ` #${numeroDeCompra}` : ''}`
+      : `Pedido ${primerNombre}${numeroDeCompra > 0 ? ` #${numeroDeCompra}` : ''}`;
     if (nombreProducto) nombre += ` · ${nombreProducto}`;
     if (ord.items.length > 1) nombre += ` (+${ord.items.length - 1})`;
     return nombre;
@@ -4442,7 +4811,7 @@ export default function AppHome() {
                                         >
                                           <div className="flex flex-col gap-0.5 min-w-0">
                                             <span className="font-bold text-black font-mono truncate">{ord.numero}</span>
-                                            <span className="text-neutral-600 truncate">{cliente?.nombre ?? 'Sin cliente'}</span>
+                                            <span className="text-neutral-600 truncate">{nombreClienteConApto(cliente)}</span>
                                           </div>
                                           <div className="flex flex-col items-end gap-0.5 shrink-0">
                                             <span className="font-bold text-black">${ord.total.toLocaleString('es-CO')}</span>
@@ -4478,7 +4847,7 @@ export default function AppHome() {
                                       >
                                         <div className="flex flex-col gap-0.5 min-w-0">
                                           <span className="font-bold text-black font-mono truncate">{inv.numero}</span>
-                                          <span className="text-neutral-600 truncate">{cliente?.nombre ?? 'Sin cliente'}</span>
+                                          <span className="text-neutral-600 truncate">{nombreClienteConApto(cliente)}</span>
                                         </div>
                                         <div className="flex flex-col items-end gap-0.5 shrink-0">
                                           <span className={`font-bold ${vencida ? 'text-brand-red' : 'text-black'}`}>
@@ -4588,6 +4957,27 @@ export default function AppHome() {
                           <Tag size={14} />
                           <span>Administrar Categorías</span>
                         </button>
+                        {/* Producción: solo tiene sentido si el negocio definió
+                            materia prima (migración 030). Sin insumos el botón
+                            no aparece, para no ofrecer un flujo vacío. */}
+                        {insumos.length > 0 && (
+                          <button
+                            onClick={() => {
+                              setProduccionForm({
+                                fecha: '', notas: '',
+                                consumos: [{ productoId: insumos[0]?.id ?? '', cantidad: '' }],
+                                salidas: [{ productoId: '', cantidad: '' }],
+                              });
+                              setProduccionFormError(null);
+                              void fetchProducciones();
+                              setShowProduccionModal(true);
+                            }}
+                            className="neo-btn bg-white hover:bg-neutral-50 text-xs py-2 w-full sm:w-auto flex items-center justify-center gap-1.5"
+                          >
+                            <Plus size={14} />
+                            <span>Producir</span>
+                          </button>
+                        )}
                         <button
                           onClick={() => setShowCreateProduct(true)}
                           className="neo-btn-primary text-xs py-2 w-full sm:w-auto flex items-center justify-center gap-1.5"
@@ -4744,7 +5134,28 @@ export default function AppHome() {
                                         </div>
                                       </div>
                                     </td>
-                                    <td className="p-3 text-right font-mono text-neutral-600">${p.precio_costo.toLocaleString('es-CO')}</td>
+                                    {/* Costo EFECTIVO, no el tecleado: si hay compras reales
+                                        manda el promedio ponderado (migración 029). Se marca
+                                        cuál es para que un costo que "cambia solo" no se lea
+                                        como un bug. */}
+                                    <td className="p-3 text-right font-mono text-neutral-600">
+                                      ${(p.costo_efectivo || p.precio_costo).toLocaleString('es-CO')}
+                                      {p.costo_promedio > 0 ? (
+                                        <span
+                                          className="ml-1 text-[9px] text-emerald-700 border border-emerald-600 px-1"
+                                          title={`Promedio ponderado de las compras reales. El costo manual de referencia es $${p.precio_costo.toLocaleString('es-CO')}.`}
+                                        >
+                                          real
+                                        </span>
+                                      ) : (
+                                        <span
+                                          className="ml-1 text-[9px] text-neutral-400 border border-neutral-300 px-1"
+                                          title="Costo tecleado a mano — todavía no hay compras registradas de este producto."
+                                        >
+                                          est.
+                                        </span>
+                                      )}
+                                    </td>
                                     <td className="p-3 text-right font-mono text-black font-semibold">${p.precio_venta.toLocaleString('es-CO')}</td>
                                     <td className="p-3 text-center font-mono text-neutral-600">{p.stock_minimo}</td>
                                     <td className="p-3 text-center font-mono font-extrabold text-black">{stock}</td>
@@ -4884,6 +5295,143 @@ export default function AppHome() {
                         >
                           Reintentar
                         </button>
+                      </div>
+                    )}
+
+                    {/* CAMPAÑAS DE PREVENTA (migración 031) — agrupan los encargos
+                        de una entrega puntual. Solo se muestra el bloque si hay
+                        alguna: un negocio que no hace preventa no debería ver
+                        una sección vacía. */}
+                    {(campanas.length > 0 || esAdmin) && (
+                      <div className="neo-card bg-white flex flex-col gap-3">
+                        <div className="flex items-center justify-between flex-wrap gap-2 border-b border-black pb-2">
+                          <h3 className="font-mono text-xs font-bold">CAMPAÑAS DE PREVENTA</h3>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCampanaForm({ nombre: '', fechaEntrega: '', notas: '' });
+                              setCampanaFormError(null);
+                              setShowCampanaModal(true);
+                            }}
+                            className="neo-btn bg-white hover:bg-neutral-50 text-[11px] px-2 py-1"
+                          >
+                            + Nueva campaña
+                          </button>
+                        </div>
+
+                        {campanasCargando && (
+                          <span className="font-mono text-[11px] text-neutral-500">Cargando campañas…</span>
+                        )}
+                        {campanas.length === 0 ? (
+                          <p className="text-[11px] text-neutral-600 leading-relaxed">
+                            Para ventas por encargo con entrega en un día puntual — los pasteles del domingo,
+                            por ejemplo. Los encargos siguen siendo pedidos normales; la campaña los agrupa y
+                            te dice cuánto pedirle a tu proveedora y a quién falta cobrarle.
+                          </p>
+                        ) : (
+                          <div className="flex flex-col gap-1.5">
+                            {campanas.map((c) => (
+                              <div key={c.id} className="border border-black bg-white">
+                                <button
+                                  type="button"
+                                  onClick={() => void (campanaAbierta === c.id ? setCampanaAbierta(null) : abrirConsolidado(c.id))}
+                                  className="w-full text-left p-2.5 flex flex-wrap items-center gap-2 hover:bg-neutral-50"
+                                >
+                                  <span className="font-bold text-xs">{c.nombre}</span>
+                                  <span className={`font-mono text-[10px] font-bold border border-black px-1.5 py-0.5 ${
+                                    c.estado === 'abierta' ? 'bg-green-100'
+                                    : c.estado === 'cerrada' ? 'bg-amber-100'
+                                    : c.estado === 'entregada' ? 'bg-neutral-200' : 'bg-red-100'
+                                  }`}>
+                                    {c.estado.toUpperCase()}
+                                  </span>
+                                  <span className="font-mono text-[11px] text-neutral-600">
+                                    entrega {fechaCorta(c.fechaEntrega)}
+                                  </span>
+                                  <span className="ml-auto font-mono text-[11px] text-neutral-600">
+                                    {c.pedidos} {c.pedidos === 1 ? 'encargo' : 'encargos'}
+                                  </span>
+                                </button>
+
+                                {campanaAbierta === c.id && (
+                                  <div className="border-t border-black p-2.5 bg-neutral-50 flex flex-col gap-3">
+                                    {!consolidado ? (
+                                      <span className="font-mono text-[11px] text-neutral-500">Cargando consolidado…</span>
+                                    ) : (
+                                      <>
+                                        {/* Lo que se le pide a quien cocina. */}
+                                        <div className="flex flex-col gap-1">
+                                          <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">
+                                            Pedirle a la proveedora
+                                          </span>
+                                          {consolidado.lineas.length === 0 ? (
+                                            <span className="font-mono text-[11px] text-neutral-500">
+                                              Todavía no hay encargos en esta campaña.
+                                            </span>
+                                          ) : (
+                                            consolidado.lineas.map((l) => (
+                                              <div
+                                                key={`${l.productoId}-${l.varianteId ?? 'base'}`}
+                                                className="flex flex-wrap items-baseline gap-2 border border-black bg-white px-2 py-1"
+                                              >
+                                                <span className="font-mono font-black text-sm">{l.cantidad}</span>
+                                                <span className="text-xs font-bold">{l.productoNombre}</span>
+                                                {l.varianteEtiqueta && (
+                                                  <span className="font-mono text-[10px] text-neutral-600">{l.varianteEtiqueta}</span>
+                                                )}
+                                                <span className="ml-auto font-mono text-[11px] text-neutral-600">{money(l.total)}</span>
+                                              </div>
+                                            ))
+                                          )}
+                                        </div>
+
+                                        {/* Cobro. */}
+                                        <div className="flex flex-wrap gap-3 font-mono text-[11px] border-t border-neutral-300 pt-2">
+                                          <span>A vender: <span className="font-bold">{money(consolidado.totalAVender)}</span></span>
+                                          <span className="text-green-700">Cobrado: <span className="font-bold">{money(consolidado.totalCobrado)}</span></span>
+                                          <span className={consolidado.totalPendiente > 0 ? 'text-brand-red' : 'text-green-700'}>
+                                            Falta: <span className="font-bold">{money(consolidado.totalPendiente)}</span>
+                                          </span>
+                                        </div>
+
+                                        {consolidado.clientesPendientes.length > 0 && (
+                                          <div className="flex flex-col gap-0.5">
+                                            <span className="font-mono text-[10px] font-bold text-neutral-500 uppercase">
+                                              Falta cobrarle a
+                                            </span>
+                                            {consolidado.clientesPendientes.map((cl, i) => (
+                                              <span key={`${cl.clienteId ?? 'sin'}-${i}`} className="font-mono text-[11px]">
+                                                {cl.apartamento ? `Apto ${cl.apartamento} · ` : ''}{cl.nombre}
+                                                {' — '}<span className="font-bold text-brand-red">{money(cl.pendiente)}</span>
+                                              </span>
+                                            ))}
+                                          </div>
+                                        )}
+
+                                        {/* Estado. Cerrar = ya se pidió, no entran más encargos. */}
+                                        <div className="flex flex-wrap gap-1.5 border-t border-neutral-300 pt-2">
+                                          {c.estado === 'abierta' && (
+                                            <button type="button" onClick={() => void handleCambiarEstadoCampana(c.id, 'cerrada')}
+                                              className="neo-btn bg-white hover:bg-neutral-50 text-[10px] font-mono px-2 py-1">
+                                              Cerrar encargos
+                                            </button>
+                                          )}
+                                          {(c.estado === 'abierta' || c.estado === 'cerrada') && (
+                                            <button type="button" onClick={() => void handleCambiarEstadoCampana(c.id, 'entregada')}
+                                              className="neo-btn bg-white hover:bg-neutral-50 text-[10px] font-mono px-2 py-1">
+                                              Marcar entregada
+                                            </button>
+                                          )}
+                                        </div>
+                                      </>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {campanasError && <p className="text-brand-red font-mono text-[11px]">{campanasError}</p>}
                       </div>
                     )}
 
@@ -5361,7 +5909,7 @@ export default function AppHome() {
                                         <div className="flex items-baseline gap-2 flex-wrap">
                                           <span className="font-mono font-black text-black text-sm leading-tight">{ord.numero}</span>
                                           <span className="bg-green-100 text-black text-xs font-bold px-2 py-0.5 rounded truncate max-w-[60%]">
-                                            {client?.nombre ?? 'Sin cliente'}
+                                            {nombreClienteConApto(client)}
                                           </span>
                                         </div>
                                         <div className="flex items-center gap-1.5 flex-wrap">
@@ -5537,7 +6085,7 @@ export default function AppHome() {
                                     };
                                     return (
                                       <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[11px]">
-                                        <div className="font-bold text-black leading-tight">{client?.nombre ?? 'Sin cliente'}</div>
+                                        <div className="font-bold text-black leading-tight">{nombreClienteConApto(client)}</div>
                                         <div className="font-mono text-neutral-600">{ord.numero}</div>
                                         <div className="font-mono font-bold">${ord.total.toLocaleString('es-CO')}</div>
                                         <select
@@ -5570,7 +6118,7 @@ export default function AppHome() {
                     
                     {/* Tabs de Finanzas */}
                     <div className="flex flex-nowrap overflow-x-auto sm:flex-wrap border-b-2 border-black bg-white scrollbar-thin">
-                      {(['resumen', 'cxc', 'cxp', 'gastos', 'ingresos', 'flujo'] as const).map((tab) => (
+                      {(['resumen', 'cxc', 'cxp', 'gastos', 'ingresos', ...(esAdmin ? ['prestamos' as const] : []), 'flujo'] as const).map((tab) => (
                         <button
                           key={tab}
                           onClick={() => setFinanceSubTab(tab)}
@@ -5586,6 +6134,7 @@ export default function AppHome() {
                           {tab === 'gastos' && 'Gastos y Compras'}
                           {tab === 'flujo' && 'Flujo de Caja'}
                           {tab === 'ingresos' && 'Ingresos'}
+                          {tab === 'prestamos' && 'Préstamos del dueño'}
                         </button>
                       ))}
                     </div>
@@ -6189,7 +6738,7 @@ export default function AppHome() {
                           </div>
                           <button
                             onClick={() => {
-                              setIngresoForm({ descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: bankAccounts[0]?.id ?? '', notas: '' });
+                              setIngresoForm({ descripcion: '', categoriaId: categoriaPorDefecto('ingreso'), monto: '', fecha: '', medioPago: '', cuentaBancariaId: bankAccounts[0]?.id ?? '', notas: '' });
                               setIngresoFormError(null);
                               setShowIngresoModal(true);
                             }}
@@ -6253,6 +6802,150 @@ export default function AppHome() {
                           <div className="px-3 pb-3">
                             <Paginador {...ingresosPag} etiqueta="ingresos" />
                           </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* PRÉSTAMOS DEL DUEÑO — plata del negocio que está afuera.
+                        No son gastos: bajan el banco pero no la utilidad. Ver
+                        migración 028. */}
+                    {financeSubTab === 'prestamos' && (
+                      <div className="flex flex-col gap-4">
+                        {/* El número que el dueño busca, arriba de todo. */}
+                        <div className="neo-card bg-white flex flex-col gap-3">
+                          <h3 className="font-mono text-sm font-bold border-b border-black pb-2">CAPITAL REAL DEL NEGOCIO</h3>
+                          {capitalReal ? (
+                            <>
+                              <div className="flex flex-wrap items-end gap-2 font-mono">
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] text-neutral-500 uppercase">En banco</span>
+                                  <span className="text-lg font-bold">{money(capitalReal.enBanco)}</span>
+                                </div>
+                                <span className="text-lg font-bold text-neutral-400 pb-0.5">+</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] text-neutral-500 uppercase">Prestado</span>
+                                  <span className="text-lg font-bold text-amber-700">{money(capitalReal.prestado)}</span>
+                                </div>
+                                <span className="text-lg font-bold text-neutral-400 pb-0.5">=</span>
+                                <div className="flex flex-col">
+                                  <span className="text-[10px] text-neutral-500 uppercase">Capital real</span>
+                                  <span className="text-xl font-black text-brand-blue">{money(capitalReal.capitalReal)}</span>
+                                </div>
+                              </div>
+                              <p className="text-[11px] text-neutral-600 leading-relaxed">
+                                Lo prestado <span className="font-bold">se suma</span>, no se resta: es plata del
+                                negocio que está afuera y se espera de vuelta. El retiro ya bajó el saldo del banco
+                                cuando se registró, y nunca toca la utilidad — no es un gasto.
+                              </p>
+                              {capitalReal.porSocio.length > 0 && (
+                                <div className="flex flex-col gap-1 border-t border-neutral-200 pt-2">
+                                  {capitalReal.porSocio.map((sc) => (
+                                    <div key={sc.socio} className="flex flex-wrap items-center gap-2 text-xs font-mono">
+                                      <span className="font-bold min-w-[8rem]">{sc.socio}</span>
+                                      <span className="text-neutral-600">sacó {money(sc.retirado)}</span>
+                                      <span className="text-neutral-400">·</span>
+                                      <span className="text-green-700">devolvió {money(sc.devuelto)}</span>
+                                      <span className={`ml-auto font-bold ${sc.saldoPendiente > 0 ? 'text-amber-700' : 'text-green-700'}`}>
+                                        debe {money(sc.saldoPendiente)}
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </>
+                          ) : (
+                            <p className="font-mono text-xs text-neutral-500">
+                              {socioCargando ? 'Cargando…' : 'Sin movimientos todavía.'}
+                            </p>
+                          )}
+                        </div>
+
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSocioForm({
+                                tipo: 'retiro', socio: '', monto: '', fecha: '',
+                                cuentaBancariaId: bankAccounts[0]?.id ?? '', retiroId: '', notas: '',
+                              });
+                              setSocioFormError(null);
+                              setShowSocioModal(true);
+                            }}
+                            className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-4 py-2"
+                          >
+                            + Registrar retiro
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setSocioForm({
+                                tipo: 'devolucion', socio: capitalReal?.porSocio[0]?.socio ?? '', monto: '', fecha: '',
+                                cuentaBancariaId: bankAccounts[0]?.id ?? '', retiroId: '', notas: '',
+                              });
+                              setSocioFormError(null);
+                              setShowSocioModal(true);
+                            }}
+                            className="neo-btn bg-white hover:bg-neutral-50 text-xs px-4 py-2"
+                          >
+                            + Registrar devolución
+                          </button>
+                        </div>
+
+                        {socioError && (
+                          <div className="border-2 border-brand-red bg-red-50 p-2.5 text-xs text-brand-red font-mono">{socioError}</div>
+                        )}
+
+                        <div className="neo-card bg-white p-0 overflow-x-auto">
+                          <table className="w-full text-left border-collapse text-xs">
+                            <thead>
+                              <tr className="border-b-2 border-black bg-neutral-100 font-mono font-bold">
+                                <th className="p-3">FECHA</th>
+                                <th className="p-3">TIPO</th>
+                                <th className="p-3">QUIÉN</th>
+                                <th className="p-3 text-right">MONTO</th>
+                                <th className="p-3 text-right">PENDIENTE</th>
+                                <th className="p-3"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {movimientosSocio.length === 0 && (
+                                <tr><td colSpan={6} className="p-4 text-center font-mono text-neutral-500">
+                                  {socioCargando ? 'Cargando…' : 'Todavía no hay retiros ni devoluciones registrados.'}
+                                </td></tr>
+                              )}
+                              {movimientosSocio.map((m) => (
+                                <tr key={m.id} className="border-b border-neutral-200">
+                                  <td className="p-3 font-mono">{fechaCorta(m.fecha)}</td>
+                                  <td className="p-3">
+                                    <span className={`font-mono text-[10px] font-bold border border-black px-1.5 py-0.5 ${m.tipo === 'retiro' ? 'bg-amber-100' : 'bg-green-100'}`}>
+                                      {m.tipo === 'retiro' ? 'RETIRO' : 'DEVOLUCIÓN'}
+                                    </span>
+                                  </td>
+                                  <td className="p-3 font-bold">{m.socio}</td>
+                                  <td className={`p-3 text-right font-mono font-bold ${m.tipo === 'retiro' ? 'text-amber-700' : 'text-green-700'}`}>
+                                    {m.tipo === 'retiro' ? `(${money(m.monto)})` : money(m.monto)}
+                                  </td>
+                                  <td className="p-3 text-right font-mono">
+                                    {m.tipo === 'retiro' && m.saldoPendiente !== undefined
+                                      ? (m.saldoPendiente > 0
+                                          ? <span className="font-bold text-amber-700">{money(m.saldoPendiente)}</span>
+                                          : <span className="text-green-700">saldado</span>)
+                                      : <span className="text-neutral-400">—</span>}
+                                  </td>
+                                  <td className="p-3 text-right">
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleEliminarSocio(m.id)}
+                                      className="neo-btn bg-white hover:bg-red-50 text-[10px] font-mono px-2 py-1"
+                                      title="Va a la papelera y devuelve el efecto sobre el saldo"
+                                    >
+                                      Eliminar
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       </div>
                     )}
@@ -6425,7 +7118,7 @@ export default function AppHome() {
                                   selectedCrmEntityId === c.id ? 'border-brand-blue ring-1 ring-brand-blue' : ''
                                 }`}
                               >
-                                <div className="font-bold text-black text-xs">{c.nombre}</div>
+                                <div className="font-bold text-black text-xs">{nombreClienteConApto(c)}</div>
                                 {c.nit && <div className="text-[11px] text-neutral-500 font-mono mt-1">{c.nit}</div>}
                                 {(() => {
                                   const pedidosCliente = orders.filter(o => o.cliente_id === c.id);
@@ -8003,6 +8696,136 @@ export default function AppHome() {
                       </div>
                     </div>
 
+                    {/* Categorías de gasto e ingreso — definidas por cada negocio (migración 027) */}
+                    <div className="neo-card bg-white flex flex-col gap-4">
+                      <h3 className="font-mono text-sm font-bold border-b border-black pb-2">CATEGORÍAS DE GASTOS E INGRESOS</h3>
+                      <p className="text-xs text-neutral-600 leading-relaxed">
+                        Los rubros con los que clasificas la plata que entra y sale. Son tuyos: agrega los que
+                        use tu negocio y desactiva los que no. Estas mismas categorías son las que se
+                        desglosan en el Flujo de Caja.
+                        {!puedeEditarConfigEmpresa && ' Solo un administrador puede modificarlas.'}
+                      </p>
+
+                      {puedeEditarConfigEmpresa && (
+                        <div className="flex flex-col gap-2 border-2 border-black bg-neutral-50 p-3">
+                          <span className="font-mono text-[11px] font-bold text-neutral-500">AGREGAR CATEGORÍA</span>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <input
+                              type="text"
+                              value={nuevaCatForm.nombre}
+                              onChange={(e) => setNuevaCatForm((f) => ({ ...f, nombre: e.target.value }))}
+                              placeholder="Ej. Hielo y empaques"
+                              maxLength={60}
+                              className="neo-input text-sm flex-1"
+                            />
+                            <select
+                              value={nuevaCatForm.flujo}
+                              onChange={(e) => setNuevaCatForm((f) => ({ ...f, flujo: e.target.value as 'egreso' | 'ingreso' }))}
+                              className="neo-input font-mono text-xs sm:w-40"
+                            >
+                              <option value="egreso">Gasto (sale)</option>
+                              <option value="ingreso">Ingreso (entra)</option>
+                            </select>
+                            <button
+                              type="button"
+                              disabled={guardandoCat || !nuevaCatForm.nombre.trim()}
+                              onClick={() => void handleCrearCategoria()}
+                              className="neo-btn bg-brand-blue text-white hover:opacity-90 text-xs px-4 py-2 disabled:opacity-50"
+                            >
+                              {guardandoCat ? 'Creando…' : 'Agregar'}
+                            </button>
+                          </div>
+
+                          <label className="flex items-start gap-2 cursor-pointer select-none text-[11px]">
+                            <input
+                              type="checkbox"
+                              checked={!nuevaCatForm.afectaUtilidad}
+                              onChange={(e) => setNuevaCatForm((f) => ({ ...f, afectaUtilidad: !e.target.checked }))}
+                              className="mt-0.5"
+                            />
+                            <span className="text-neutral-700">
+                              <span className="font-bold">No es un gasto/ingreso del negocio.</span>{' '}
+                              Marca esto para plata que se mueve sin ser operativa — un aporte de capital, un
+                              préstamo. Sigue apareciendo en el flujo de caja, pero no afecta la utilidad.
+                            </span>
+                          </label>
+
+                          {/* Defensa del doble conteo: lo que antes impedía el CHECK de la base. */}
+                          {sugiereMercancia(nuevaCatForm.nombre) && (
+                            <p className="font-mono text-[11px] font-bold text-amber-700 border border-amber-500 bg-amber-50 px-2 py-1.5 leading-relaxed">
+                              ⚠ Ojo: la compra de mercancía NO va acá. Regístrala como &quot;Compra de
+                              inventario&quot; desde Gastos, para que entre al stock y genere la cuenta por pagar.
+                              Si la guardas como gasto, se resta dos veces de la utilidad: una como gasto y otra
+                              como costo al vender esa misma mercancía.
+                            </p>
+                          )}
+                          {catAdminError && <p className="text-brand-red font-mono text-[11px]">{catAdminError}</p>}
+                        </div>
+                      )}
+
+                      {!categoriasCargadas && (
+                        <span className="font-mono text-[11px] text-neutral-500">Cargando categorías…</span>
+                      )}
+                      {(['egreso', 'ingreso'] as const).map((flujo) => {
+                        const delFlujo = categoriasMovimiento.filter((c) => c.flujo === flujo);
+                        if (delFlujo.length === 0) return null;
+                        return (
+                          <div key={flujo} className="flex flex-col gap-1.5">
+                            <span className="font-mono text-[11px] font-bold text-neutral-500">
+                              {flujo === 'egreso' ? 'GASTOS' : 'INGRESOS'}
+                            </span>
+                            <div className="flex flex-col gap-1">
+                              {delFlujo.map((cat) => (
+                                <div
+                                  key={cat.id}
+                                  className={`flex flex-wrap items-center gap-2 border border-black p-2 text-xs ${cat.activo ? 'bg-white' : 'bg-neutral-100 opacity-60'}`}
+                                >
+                                  <input
+                                    type="text"
+                                    defaultValue={cat.nombre}
+                                    disabled={!puedeEditarConfigEmpresa}
+                                    onBlur={(e) => {
+                                      const v = e.target.value.trim();
+                                      if (v && v !== cat.nombre) void handleRenombrarCategoria(cat.id, v);
+                                    }}
+                                    className="neo-input text-xs flex-1 min-w-[10rem] disabled:bg-transparent disabled:border-transparent"
+                                  />
+                                  {cat.slug && (
+                                    <span className="font-mono text-[10px] text-neutral-400 shrink-0" title="Viene de fábrica">
+                                      de fábrica
+                                    </span>
+                                  )}
+                                  <label className="flex items-center gap-1 shrink-0 cursor-pointer" title="Si afecta la utilidad del negocio">
+                                    <input
+                                      type="checkbox"
+                                      checked={cat.afectaUtilidad}
+                                      disabled={!puedeEditarConfigEmpresa}
+                                      onChange={(e) => void handleToggleAfectaUtilidad(cat.id, e.target.checked)}
+                                    />
+                                    <span className="font-mono text-[10px]">operativa</span>
+                                  </label>
+                                  {puedeEditarConfigEmpresa && (
+                                    <button
+                                      type="button"
+                                      onClick={() => void handleToggleActivoCategoria(cat.id, !cat.activo)}
+                                      className="neo-btn bg-white hover:bg-neutral-50 text-[10px] font-mono px-2 py-1 shrink-0"
+                                    >
+                                      {cat.activo ? 'Desactivar' : 'Reactivar'}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      <p className="text-[11px] text-neutral-500 leading-relaxed border-t border-neutral-200 pt-2">
+                        Desactivar no borra: la categoría sale de los formularios pero los movimientos que
+                        ya la usan la siguen mostrando, así que los reportes viejos no cambian.
+                      </p>
+                    </div>
+
                     {/* Personalización de la interfaz — color secundario por usuario */}
                     <div className="neo-card bg-white flex flex-col gap-4">
                       <h3 className="font-mono text-sm font-bold border-b border-black pb-2">PERSONALIZACIÓN DE LA INTERFAZ</h3>
@@ -8300,6 +9123,25 @@ export default function AppHome() {
                 </span>
               </label>
 
+              {/* Materia prima (migración 030): se compra en su propia unidad y
+                  se transforma. No aparece al armar un pedido. */}
+              <label className={`items-start gap-2 cursor-pointer select-none border border-black p-2.5 bg-neutral-50 ${altaRapidaActiva ? 'hidden' : 'flex'}`}>
+                <input
+                  type="checkbox"
+                  checked={newProduct.es_insumo}
+                  onChange={(e) => setNewProduct({ ...newProduct, es_insumo: e.target.checked })}
+                  className="w-4 h-4 border-2 border-black accent-black mt-0.5"
+                />
+                <span>
+                  <span className="font-mono font-bold block">Es materia prima (no se vende)</span>
+                  <span className="text-[11px] text-neutral-500">
+                    Para lo que se compra en una unidad y se vende en otra — un bloque de queso del que
+                    salen libras. Se lleva su propio stock y no aparece al armar un pedido; para
+                    convertirlo en producto terminado se registra una producción.
+                  </span>
+                </span>
+              </label>
+
               <button type="submit" className="neo-btn bg-brand-blue text-white hover:opacity-90 mt-2 py-2.5">
                 CREAR Y REGISTRAR EN STOCK
               </button>
@@ -8360,7 +9202,7 @@ export default function AppHome() {
                           return (
                             <div key={ord.id} className="bg-white border border-black p-2 flex flex-col gap-1.5 text-[11px]">
                               <div className="flex items-center justify-between gap-2">
-                                <span className="font-bold text-black leading-tight truncate">{client?.nombre ?? 'Sin cliente'}</span>
+                                <span className="font-bold text-black leading-tight truncate">{nombreClienteConApto(client)}</span>
                                 <span className={`shrink-0 inline-block border border-black text-[10px] font-mono font-bold px-1.5 py-0.5 ${estadoBadge[ord.estado] ?? ''}`}>
                                   {estadoLabel[ord.estado] ?? ord.estado}
                                 </span>
@@ -8414,7 +9256,7 @@ export default function AppHome() {
           <div className="neo-card bg-white max-w-2xl w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
             <div className="flex justify-between items-center border-b border-black pb-2">
               <h3 className="font-mono text-sm font-bold text-black">CREAR NUEVO PEDIDO</h3>
-              <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', email: '', telefono: '' }); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+              <button onClick={() => { setShowCreateOrder(false); setShowInlineNewClient(false); setInlineClientForm({ nombre: '', apartamento: '', email: '', telefono: '' }); }} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
             </div>
 
             <form onSubmit={handleCreateOrder} className="flex flex-col gap-4 text-xs">
@@ -8437,8 +9279,16 @@ export default function AppHome() {
                       value={selectedCustomerId}
                       onChange={setSelectedCustomerId}
                       emptyOptionLabel="— Sin cliente —"
-                      placeholder="Buscar cliente por nombre o NIT…"
-                      options={customers.map((c) => ({ value: c.id, label: c.nombre, sublabel: c.nit ?? undefined }))}
+                      placeholder={tema8bit ? 'Buscar por apartamento o nombre…' : 'Buscar cliente por nombre o NIT…'}
+                      /* El apartamento va en el `label` (no en el sublabel)
+                         a propósito: el Combobox filtra por label y sublabel,
+                         así que de una queda buscable, y se lee primero — que
+                         es como esa dueña ubica al cliente. */
+                      options={customers.map((c) => ({
+                        value: c.id,
+                        label: nombreClienteConApto(c),
+                        sublabel: c.nit ?? undefined,
+                      }))}
                     />
                     {/* Condiciones de crédito del cliente elegido. El aviso de
                         cupo AVISA, no bloquea: seguir vendiéndole a alguien que
@@ -8489,6 +9339,18 @@ export default function AppHome() {
                         className="neo-input text-xs"
                         autoFocus
                       />
+                      {/* Segundo campo con tema 8-bit: dar de alta a un vecino
+                          sin el apartamento deja el cliente sin el dato por el
+                          que después se lo va a buscar. */}
+                      {tema8bit && (
+                        <input
+                          type="text"
+                          placeholder="Apartamento (ej. 502)"
+                          value={inlineClientForm.apartamento}
+                          onChange={e => setInlineClientForm(f => ({ ...f, apartamento: e.target.value }))}
+                          className="neo-input text-xs font-mono"
+                        />
+                      )}
                       <input
                         type="email"
                         placeholder="Email (opcional)"
@@ -8519,6 +9381,24 @@ export default function AppHome() {
                 )}
               </div>
 
+              {/* Campaña de preventa (migración 031). Solo aparece si hay alguna
+                  abierta: un pedido normal no tiene por qué ver este campo. */}
+              {campanasAbiertas.length > 0 && (
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">¿ES PARA UNA CAMPAÑA?</label>
+                  <select
+                    value={pedidoCampanaId}
+                    onChange={(e) => setPedidoCampanaId(e.target.value)}
+                    className="neo-input font-mono text-xs"
+                  >
+                    <option value="">— No, es un pedido normal —</option>
+                    {campanasAbiertas.map((c) => (
+                      <option key={c.id} value={c.id}>{c.nombre} · entrega {fechaCorta(c.fechaEntrega)}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+
               {/* Items del pedido. Con tema 8-bit se arman tocando la rejilla
                   de ilustraciones; con el tema por defecto, con el selector de
                   búsqueda de siempre. Lo que NO depende del tema son los
@@ -8548,12 +9428,12 @@ export default function AppHome() {
                         eso obliga a barrer con la vista, y buscar por nombre o SKU es
                         más rápido. Selecciona y agrega igual que un toque: el valor
                         vuelve a '' para poder encadenar varios seguidos. */}
-                    {products.length > 8 && (
+                    {productosVendibles.length > 8 && (
                       <div className="mb-2">
                         <Combobox
                           value=""
                           onChange={(productoId) => {
-                            const p = products.find((prod) => prod.id === productoId);
+                            const p = productosVendibles.find((prod) => prod.id === productoId);
                             if (p) agregarProductoAlPedido(p);
                           }}
                           placeholder="Buscar producto por nombre o SKU…"
@@ -8567,12 +9447,14 @@ export default function AppHome() {
                     )}
 
                     <div className="flex flex-wrap gap-1.5">
-                      {products.length === 0 && (
+                      {productosVendibles.length === 0 && (
                         <span className="font-mono text-[11px] text-neutral-500">
                           No hay productos en el catálogo todavía.
                         </span>
                       )}
-                      {products.map((p) => {
+                      {/* `productosVendibles` y no `products`: la materia prima
+                          se compra y se transforma, no se vende (migración 030). */}
+                      {productosVendibles.map((p) => {
                         const disp = productStocks[p.id] ?? 0;
                         // Cuánto de ESTE producto lleva ya el pedido (sumando
                         // sus líneas, que con variantes pueden ser varias).
@@ -8615,7 +9497,9 @@ export default function AppHome() {
                       const precioCatalogo = activeProd?.precio_venta ?? 0;
                       const precioEfectivo = item.precio_excepcional ?? precioCatalogo;
                       const esExcepcional = item.precio_excepcional !== null;
-                      const costo = activeProd?.precio_costo ?? null;
+                      // Costo EFECTIVO: el promedio ponderado de las compras
+                      // reales si existe, si no el manual (migración 029).
+                      const costo = activeProd?.costo_efectivo || activeProd?.precio_costo || null;
                       const margenUnitario = costo !== null ? precioEfectivo - costo : null;
                       const margenPorcentaje = margenUnitario !== null && precioEfectivo > 0 ? (margenUnitario / precioEfectivo) * 100 : null;
                       const subtotal = precioEfectivo * item.cantidad;
@@ -8735,7 +9619,7 @@ export default function AppHome() {
                                 }}
                                 emptyOptionLabel="Seleccionar producto…"
                                 placeholder="Buscar producto por nombre o SKU…"
-                                options={products.map((p) => ({ value: p.id, label: p.nombre, sublabel: `Dispo ${productStocks[p.id] ?? 0} ${p.unidad} · ${p.sku}` }))}
+                                options={productosVendibles.map((p) => ({ value: p.id, label: p.nombre, sublabel: `Dispo ${productStocks[p.id] ?? 0} ${p.unidad} · ${p.sku}` }))}
                                 className="w-full sm:flex-1 sm:w-auto"
                               />
 
@@ -8969,7 +9853,7 @@ export default function AppHome() {
                 onClick={() => {
                   setShowRegistrarIngresoChoice(false);
                   setActiveTab('finanzas'); setFinanceSubTab('ingresos');
-                  setIngresoForm({ descripcion: '', categoria: 'otro', monto: '', fecha: '', medioPago: '', cuentaBancariaId: bankAccounts[0]?.id ?? '', notas: '' });
+                  setIngresoForm({ descripcion: '', categoriaId: categoriaPorDefecto('ingreso'), monto: '', fecha: '', medioPago: '', cuentaBancariaId: bankAccounts[0]?.id ?? '', notas: '' });
                   setIngresoFormError(null);
                   setShowIngresoModal(true);
                 }}
@@ -10094,6 +10978,390 @@ export default function AppHome() {
       )}
 
       {/* 7b. Modal: Administrar Categorías — crear, renombrar y eliminar en un solo lugar */}
+      {/* Modal: nueva campaña de preventa (migración 031) */}
+      {showCampanaModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4">
+            <div className="flex justify-between items-center border-b border-black pb-2">
+              <h3 className="font-mono text-sm font-bold">NUEVA CAMPAÑA</h3>
+              <button onClick={() => setShowCampanaModal(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+
+            <p className="text-[11px] text-neutral-600 leading-relaxed">
+              Agrupa los encargos de una entrega puntual. Mientras esté abierta, al crear un pedido vas a
+              poder marcarlo como parte de ella; después te muestra el total por producto para pedírselo a
+              tu proveedora.
+            </p>
+
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">NOMBRE *</label>
+                <input
+                  type="text"
+                  value={campanaForm.nombre}
+                  onChange={(e) => setCampanaForm((f) => ({ ...f, nombre: e.target.value }))}
+                  placeholder="Ej. Pasteles del domingo 12"
+                  className="neo-input"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">DÍA DE ENTREGA *</label>
+                <input
+                  type="date"
+                  value={campanaForm.fechaEntrega}
+                  onChange={(e) => setCampanaForm((f) => ({ ...f, fechaEntrega: e.target.value }))}
+                  className="neo-input font-mono"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">NOTAS</label>
+                <input
+                  type="text"
+                  value={campanaForm.notas}
+                  onChange={(e) => setCampanaForm((f) => ({ ...f, notas: e.target.value }))}
+                  className="neo-input"
+                />
+              </div>
+
+              {campanaFormError && <p className="text-brand-red font-mono text-[11px]">{campanaFormError}</p>}
+
+              <button
+                type="button"
+                disabled={guardandoCampana}
+                onClick={() => void handleCrearCampana()}
+                className="neo-btn bg-brand-blue text-white hover:opacity-90 py-2.5 disabled:opacity-50"
+              >
+                {guardandoCampana ? 'Creando…' : 'Crear campaña'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal: registrar una producción (migración 030) */}
+      {showProduccionModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="neo-card bg-white max-w-2xl w-full flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-black pb-2">
+              <h3 className="font-mono text-sm font-bold">REGISTRAR PRODUCCIÓN</h3>
+              <button onClick={() => setShowProduccionModal(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+
+            <p className="text-[11px] text-neutral-600 leading-relaxed">
+              Convertí materia prima en producto terminado. Lo consumido sale del stock del insumo y lo
+              obtenido entra al del producto. <span className="font-bold">El desperdicio no se anota:</span>{' '}
+              queda registrado solo, como la diferencia entre lo que entró y lo que salió.
+            </p>
+
+            <div className="flex flex-col gap-4 text-xs">
+              {/* CONSUMOS */}
+              <div className="flex flex-col gap-2 border-2 border-black p-3 bg-neutral-50">
+                <span className="font-mono text-[11px] font-bold text-neutral-500">SE CONSUMIÓ (materia prima)</span>
+                {produccionForm.consumos.map((c, idx) => {
+                  const prod = products.find((p) => p.id === c.productoId);
+                  return (
+                    <div key={idx} className="flex flex-wrap items-center gap-2">
+                      <select
+                        value={c.productoId}
+                        onChange={(e) => setProduccionForm((f) => ({
+                          ...f,
+                          consumos: f.consumos.map((x, i) => (i === idx ? { ...x, productoId: e.target.value } : x)),
+                        }))}
+                        className="neo-input font-mono text-xs flex-1 min-w-[12rem]"
+                      >
+                        <option value="">— Elegí el insumo —</option>
+                        {insumos.map((p) => (
+                          <option key={p.id} value={p.id}>{p.nombre} ({p.unidad})</option>
+                        ))}
+                      </select>
+                      <input
+                        type="number"
+                        step="any"
+                        min="0"
+                        value={c.cantidad}
+                        onChange={(e) => setProduccionForm((f) => ({
+                          ...f,
+                          consumos: f.consumos.map((x, i) => (i === idx ? { ...x, cantidad: e.target.value } : x)),
+                        }))}
+                        placeholder="Cantidad"
+                        className="neo-input font-mono text-xs w-24"
+                      />
+                      {prod && (
+                        <span className="font-mono text-[10px] text-neutral-500">
+                          a {money(prod.costo_efectivo || prod.precio_costo)} / {prod.unidad}
+                        </span>
+                      )}
+                      {produccionForm.consumos.length > 1 && (
+                        <button
+                          type="button"
+                          onClick={() => setProduccionForm((f) => ({ ...f, consumos: f.consumos.filter((_, i) => i !== idx) }))}
+                          className="neo-btn bg-white hover:bg-red-50 text-[10px] px-2 py-1"
+                        >✕</button>
+                      )}
+                    </div>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={() => setProduccionForm((f) => ({ ...f, consumos: [...f.consumos, { productoId: '', cantidad: '' }] }))}
+                  className="text-brand-blue hover:underline font-bold text-[11px] self-start"
+                >+ Otro insumo</button>
+              </div>
+
+              {/* SALIDAS */}
+              <div className="flex flex-col gap-2 border-2 border-black p-3">
+                <span className="font-mono text-[11px] font-bold text-neutral-500">SE OBTUVO (producto terminado)</span>
+                {produccionForm.salidas.map((sal, idx) => (
+                  <div key={idx} className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={sal.productoId}
+                      onChange={(e) => setProduccionForm((f) => ({
+                        ...f,
+                        salidas: f.salidas.map((x, i) => (i === idx ? { ...x, productoId: e.target.value } : x)),
+                      }))}
+                      className="neo-input font-mono text-xs flex-1 min-w-[12rem]"
+                    >
+                      <option value="">— Elegí el producto —</option>
+                      {productosVendibles.map((p) => (
+                        <option key={p.id} value={p.id}>{p.nombre} ({p.unidad})</option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      value={sal.cantidad}
+                      onChange={(e) => setProduccionForm((f) => ({
+                        ...f,
+                        salidas: f.salidas.map((x, i) => (i === idx ? { ...x, cantidad: e.target.value } : x)),
+                      }))}
+                      placeholder="Cantidad"
+                      className="neo-input font-mono text-xs w-24"
+                    />
+                    {produccionForm.salidas.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => setProduccionForm((f) => ({ ...f, salidas: f.salidas.filter((_, i) => i !== idx) }))}
+                        className="neo-btn bg-white hover:bg-red-50 text-[10px] px-2 py-1"
+                      >✕</button>
+                    )}
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setProduccionForm((f) => ({ ...f, salidas: [...f.salidas, { productoId: '', cantidad: '' }] }))}
+                  className="text-brand-blue hover:underline font-bold text-[11px] self-start"
+                >+ Otro producto</button>
+              </div>
+
+              {/* El número que importa, antes de guardar. */}
+              {costoProduccionEstimado > 0 && cantidadProducidaTotal > 0 && (
+                <div className="border-2 border-black bg-emerald-50 p-3 flex flex-col gap-1">
+                  <span className="font-mono text-[11px] font-bold text-neutral-600">COSTO QUE VA A QUEDAR</span>
+                  <span className="font-mono text-sm">
+                    {money(costoProduccionEstimado)} ÷ {cantidadProducidaTotal} ={' '}
+                    <span className="font-black text-emerald-800">
+                      {money(costoProduccionEstimado / cantidadProducidaTotal)}
+                    </span>{' '}
+                    por unidad
+                  </span>
+                  <span className="text-[11px] text-neutral-600">
+                    Este costo entra al promedio del producto y es contra el que se va a calcular el margen.
+                  </span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">FECHA</label>
+                  <input
+                    type="date"
+                    value={produccionForm.fecha}
+                    onChange={(e) => setProduccionForm((f) => ({ ...f, fecha: e.target.value }))}
+                    className="neo-input font-mono"
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">NOTAS</label>
+                  <input
+                    type="text"
+                    value={produccionForm.notas}
+                    onChange={(e) => setProduccionForm((f) => ({ ...f, notas: e.target.value }))}
+                    placeholder="Ej. bloque de la finca"
+                    className="neo-input"
+                  />
+                </div>
+              </div>
+
+              {produccionFormError && <p className="text-brand-red font-mono text-[11px]">{produccionFormError}</p>}
+
+              <button
+                type="button"
+                disabled={guardandoProduccion}
+                onClick={() => void handleGuardarProduccion()}
+                className="neo-btn bg-brand-blue text-white hover:opacity-90 py-2.5 disabled:opacity-50"
+              >
+                {guardandoProduccion ? 'Guardando…' : 'Registrar producción'}
+              </button>
+
+              {/* Historial con el rendimiento de cada corte. */}
+              {produccionesCargando && (
+                <span className="font-mono text-[11px] text-neutral-500">Cargando producciones anteriores…</span>
+              )}
+              {produccionesError && (
+                <p className="text-brand-red font-mono text-[11px]">{produccionesError}</p>
+              )}
+              {producciones.length > 0 && (
+                <div className="flex flex-col gap-1 border-t border-neutral-300 pt-3">
+                  <span className="font-mono text-[11px] font-bold text-neutral-500">PRODUCCIONES ANTERIORES</span>
+                  {producciones.slice(0, 8).map((pr) => {
+                    const consumos = pr.items.filter((i) => i.rol === 'consumo');
+                    const salidas = pr.items.filter((i) => i.rol === 'salida');
+                    return (
+                      <div key={pr.id} className="border border-black p-2 flex flex-col gap-0.5 bg-white">
+                        <div className="flex flex-wrap items-baseline gap-2">
+                          <span className="font-mono font-bold">{pr.numero}</span>
+                          <span className="font-mono text-[10px] text-neutral-500">{fechaCorta(pr.fecha)}</span>
+                          <span className="ml-auto font-mono text-[11px]">costó {money(pr.costoTotal)}</span>
+                        </div>
+                        <span className="text-[11px] text-neutral-700">
+                          {consumos.map((i) => `${i.cantidad} ${i.productoNombre ?? ''}`).join(' + ')}
+                          {' → '}
+                          {salidas.map((i) => `${i.cantidad} ${i.productoNombre ?? ''}`).join(' + ')}
+                        </span>
+                        {salidas.length > 0 && salidas[0]!.costoUnitario !== null && (
+                          <span className="font-mono text-[10px] text-emerald-700">
+                            {money(salidas[0]!.costoUnitario)} por unidad
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de retiro/devolución del socio (migración 028) */}
+      {showSocioModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
+          <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex justify-between items-center border-b border-black pb-2">
+              <h3 className="font-mono text-sm font-bold">
+                {socioForm.tipo === 'retiro' ? 'REGISTRAR RETIRO' : 'REGISTRAR DEVOLUCIÓN'}
+              </h3>
+              <button onClick={() => setShowSocioModal(false)} className="neo-btn p-3 sm:p-1.5 hover:bg-neutral-50" aria-label="Cerrar"><X size={16} /></button>
+            </div>
+
+            <p className="text-[11px] text-neutral-600 leading-relaxed">
+              {socioForm.tipo === 'retiro'
+                ? 'Plata que sale del negocio como préstamo al dueño. Baja el saldo del banco, pero no cuenta como gasto: sigue siendo capital del negocio, solo que prestado.'
+                : 'Plata que el dueño devuelve al negocio. Sube el saldo del banco y baja lo que debe.'}
+            </p>
+
+            <div className="flex flex-col gap-3 text-xs">
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">QUIÉN *</label>
+                <input
+                  type="text"
+                  list="socios-conocidos"
+                  value={socioForm.socio}
+                  onChange={(e) => setSocioForm((f) => ({ ...f, socio: e.target.value }))}
+                  placeholder="Nombre del dueño o socio"
+                  className="neo-input"
+                />
+                {/* Sugiere los que ya tienen movimientos, para no escribir el
+                    mismo nombre de dos formas y partir el saldo en dos. */}
+                <datalist id="socios-conocidos">
+                  {(capitalReal?.porSocio ?? []).map((sc) => <option key={sc.socio} value={sc.socio} />)}
+                </datalist>
+              </div>
+
+              {socioForm.tipo === 'devolucion' && (
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">IMPUTAR A UN RETIRO (OPCIONAL)</label>
+                  <select
+                    value={socioForm.retiroId}
+                    onChange={(e) => setSocioForm((f) => ({ ...f, retiroId: e.target.value }))}
+                    className="neo-input font-mono text-xs"
+                  >
+                    <option value="">— Sin imputar (baja el saldo general) —</option>
+                    {movimientosSocio
+                      .filter((m) => m.tipo === 'retiro' && (m.saldoPendiente ?? 0) > 0
+                        && (!socioForm.socio || m.socio === socioForm.socio))
+                      .map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {fechaCorta(m.fecha)} · {money(m.monto)} · pendiente {money(m.saldoPendiente ?? 0)}
+                        </option>
+                      ))}
+                  </select>
+                  <span className="text-[11px] text-neutral-500">
+                    Imputarla permite saber cuánto queda de ese retiro puntual, no solo el total.
+                  </span>
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">MONTO *</label>
+                  <MoneyInput
+                    value={socioForm.monto}
+                    onChange={(v) => setSocioForm((f) => ({ ...f, monto: v }))}
+                  />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">FECHA</label>
+                  <input
+                    type="date"
+                    value={socioForm.fecha}
+                    onChange={(e) => setSocioForm((f) => ({ ...f, fecha: e.target.value }))}
+                    className="neo-input font-mono"
+                  />
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">{socioForm.tipo === 'retiro' ? 'SALE DE LA CUENTA *' : 'ENTRA A LA CUENTA *'}</label>
+                <select
+                  value={socioForm.cuentaBancariaId}
+                  onChange={(e) => setSocioForm((f) => ({ ...f, cuentaBancariaId: e.target.value }))}
+                  className="neo-input font-mono text-xs"
+                >
+                  <option value="">— Elegí una cuenta —</option>
+                  {bankAccounts.map((b) => (
+                    <option key={b.id} value={b.id}>{b.banco} · {b.numero} · {money(b.saldo)}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex flex-col gap-1">
+                <label className="font-mono font-bold">NOTAS</label>
+                <input
+                  type="text"
+                  value={socioForm.notas}
+                  onChange={(e) => setSocioForm((f) => ({ ...f, notas: e.target.value }))}
+                  placeholder="Ej. para el mercado de la casa"
+                  className="neo-input"
+                />
+              </div>
+
+              {socioFormError && <p className="text-brand-red font-mono text-[11px]">{socioFormError}</p>}
+
+              <button
+                type="button"
+                disabled={guardandoSocio}
+                onClick={() => void handleGuardarSocio()}
+                className="neo-btn bg-brand-blue text-white hover:opacity-90 py-2.5 disabled:opacity-50"
+              >
+                {guardandoSocio ? 'Guardando…' : socioForm.tipo === 'retiro' ? 'Registrar retiro' : 'Registrar devolución'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCategoryAdmin && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
           <div className="neo-card bg-white max-w-md w-full flex flex-col gap-4 relative max-h-[90vh] overflow-y-auto">
@@ -10185,6 +11453,22 @@ export default function AppHome() {
                 <label className="font-mono font-bold">NOMBRE</label>
                 <input type="text" required value={newCustomerForm.nombre} onChange={(e) => setNewCustomerForm({ ...newCustomerForm, nombre: e.target.value })} className="neo-input" />
               </div>
+              {/* Apartamento: va justo después del nombre y no abajo con la
+                  dirección, porque en el negocio que lo usa es el dato que se
+                  llena SIEMPRE y por el que se busca. Solo con tema 8-bit —
+                  ver migración 026. */}
+              {tema8bit && (
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">APARTAMENTO</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. 502 / Torre 3 - 1204 / Casa 2"
+                    value={newCustomerForm.apartamento}
+                    onChange={(e) => setNewCustomerForm({ ...newCustomerForm, apartamento: e.target.value })}
+                    className="neo-input font-mono"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
                   <label className="font-mono font-bold">INFO DE CONTACTO</label>
@@ -10295,6 +11579,18 @@ export default function AppHome() {
                 <label className="font-mono font-bold">NOMBRE</label>
                 <input type="text" required value={editCustomerForm.nombre} onChange={(e) => setEditCustomerForm({ ...editCustomerForm, nombre: e.target.value })} className="neo-input" />
               </div>
+              {tema8bit && (
+                <div className="flex flex-col gap-1">
+                  <label className="font-mono font-bold">APARTAMENTO</label>
+                  <input
+                    type="text"
+                    placeholder="Ej. 502 / Torre 3 - 1204 / Casa 2"
+                    value={editCustomerForm.apartamento}
+                    onChange={(e) => setEditCustomerForm({ ...editCustomerForm, apartamento: e.target.value })}
+                    className="neo-input font-mono"
+                  />
+                </div>
+              )}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
                   <label className="font-mono font-bold">INFO DE CONTACTO</label>
@@ -10412,7 +11708,7 @@ export default function AppHome() {
                 <label className="font-mono font-bold">CLIENTE</label>
                 <select value={editOrderForm.cliente_id} onChange={(e) => setEditOrderForm({ ...editOrderForm, cliente_id: e.target.value })} className="neo-input font-mono">
                   <option value="">Sin cliente asociado</option>
-                  {customers.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
+                  {customers.map(c => <option key={c.id} value={c.id}>{nombreClienteConApto(c)}</option>)}
                 </select>
               </div>
               <div className="flex flex-col gap-1">
@@ -10632,8 +11928,8 @@ export default function AppHome() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
                   <label className="font-mono text-xs font-bold">TIPO</label>
-                  <select value={editGastoForm.categoria} onChange={e => setEditGastoForm(f => ({ ...f, categoria: e.target.value as CategoriaGasto }))} className="neo-input font-mono text-sm">
-                    {CATEGORIAS_GASTO_LOCAL.map(c => (<option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>))}
+                  <select value={editGastoForm.categoriaId} onChange={e => setEditGastoForm(f => ({ ...f, categoriaId: e.target.value }))} className="neo-input font-mono text-sm">
+                    {categoriasEgreso.map(c => (<option key={c.id} value={c.id}>{c.nombre}</option>))}
                   </select>
                 </div>
                 <div className="flex flex-col gap-1">
@@ -10698,8 +11994,8 @@ export default function AppHome() {
                 >
                   <option value={TIPO_COMPRA_INVENTARIO}>📦 Compra de inventario / mercancía</option>
                   <optgroup label="Gastos del negocio">
-                    {CATEGORIAS_GASTO_LOCAL.map(c => (
-                      <option key={c} value={c}>{LABEL_CATEGORIA_GASTO[c]}</option>
+                    {categoriasEgreso.map(c => (
+                      <option key={c.id} value={c.id}>{c.nombre}</option>
                     ))}
                   </optgroup>
                 </select>
@@ -10937,9 +12233,9 @@ export default function AppHome() {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div className="flex flex-col gap-1">
                   <label className="font-mono text-xs font-bold">CATEGORÍA</label>
-                  <select value={ingresoForm.categoria} onChange={e => setIngresoForm(f => ({ ...f, categoria: e.target.value as CategoriaIngreso }))} className="neo-input font-mono text-sm">
-                    {CATEGORIAS_INGRESO_LOCAL.map(c => (
-                      <option key={c} value={c}>{c.replace('_', ' ').toUpperCase()}</option>
+                  <select value={ingresoForm.categoriaId} onChange={e => setIngresoForm(f => ({ ...f, categoriaId: e.target.value }))} className="neo-input font-mono text-sm">
+                    {categoriasIngreso.map(c => (
+                      <option key={c.id} value={c.id}>{c.nombre}</option>
                     ))}
                   </select>
                 </div>

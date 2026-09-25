@@ -24,10 +24,12 @@ import { webhookApifyRoutes } from './routes/webhook_apify.js'
 import { crmRoutes } from './routes/tenant/crm.js'
 import { dashboardRoutes } from './routes/tenant/dashboard.js'
 import { finanzasRoutes } from './routes/tenant/finanzas.js'
+import { campanasRoutes } from './routes/tenant/campanas.js'
 import { inventarioRoutes } from './routes/tenant/inventario.js'
 import { papeleraRoutes } from './routes/tenant/papelera.js'
 import { pedidosRoutes } from './routes/tenant/pedidos.js'
 import { pedidosProveedorRoutes } from './routes/tenant/pedidos_proveedor.js'
+import { produccionesRoutes } from './routes/tenant/producciones.js'
 import { proveedoresRoutes } from './routes/tenant/proveedores.js'
 import { reportesRoutes } from './routes/tenant/reportes.js'
 
@@ -85,11 +87,13 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(authRoutes)
   await app.register(adminUsuariosRoutes)
   await app.register(adminTenantsRoutes)
+  await app.register(campanasRoutes)
   await app.register(inventarioRoutes)
   await app.register(clientesRoutes)
   await app.register(proveedoresRoutes)
   await app.register(pedidosRoutes)
   await app.register(pedidosProveedorRoutes)
+  await app.register(produccionesRoutes)
   await app.register(crmRoutes)
   await app.register(finanzasRoutes)
   await app.register(comunicacionesRoutes)

@@ -12,6 +12,8 @@ export const TIPOS_MOVIMIENTO = [
   'ajuste_negativo', // Corrección de inventario (merma)
   'reserva', // Pedido confirmado, aún no despachado
   'liberacion_reserva', // Pedido cancelado, stock reservado liberado
+  'consumo_produccion', // Insumo que entró a un proceso de producción (migración 030)
+  'entrada_produccion', // Producto terminado que salió de ese proceso
 ] as const
 
 export type TipoMovimiento = (typeof TIPOS_MOVIMIENTO)[number]
@@ -22,6 +24,7 @@ export const MOVIMIENTOS_DE_ENTRADA: readonly TipoMovimiento[] = [
   'entrada_devolucion',
   'ajuste_positivo',
   'liberacion_reserva',
+  'entrada_produccion',
 ]
 
 /**
@@ -85,7 +88,24 @@ export interface Producto {
   nombre: string
   descripcion: string | null
   categoriaId: string | null
+  /**
+   * `true` = materia prima: se compra y se transforma, nunca se vende directo
+   * (migración 030). No aparece en el selector de productos de un pedido.
+   */
+  esInsumo: boolean
+  /** Costo MANUAL de referencia, tecleado al crear el producto. */
   precioCosto: number | null
+  /**
+   * Costo calculado por promedio ponderado móvil a partir de las compras reales
+   * (migración 029). `null` mientras el producto no tenga ninguna entrada con
+   * costo conocido.
+   */
+  costoPromedio: number | null
+  /**
+   * El que se debe usar para margen y valorización: `costoPromedio ?? precioCosto`.
+   * Lo resuelve la API para que el front no repita la regla.
+   */
+  costoEfectivo: number | null
   precioVenta: number | null
   unidad: string
   stockMinimo: number
@@ -164,4 +184,38 @@ export function calcularStockDisponible(movimientos: Pick<MovimientoInventario, 
     const esEntrada = MOVIMIENTOS_DE_ENTRADA.includes(mov.tipo)
     return esEntrada ? stock + mov.cantidad : stock - mov.cantidad
   }, 0)
+}
+
+/** Rol de una línea de producción: lo que entró al proceso o lo que salió. */
+export const ROLES_PRODUCCION = ['consumo', 'salida'] as const
+export type RolProduccion = (typeof ROLES_PRODUCCION)[number]
+
+export interface ProduccionItem {
+  id: string
+  rol: RolProduccion
+  productoId: string
+  varianteId: string | null
+  cantidad: number
+  /** Snapshot del costo unitario al producir. Ver migración 030. */
+  costoUnitario: number | null
+  /** Resuelto por la API para no obligar al front a cruzar con el catálogo. */
+  productoNombre?: string
+}
+
+/**
+ * Una transformación: consume insumos y produce productos vendibles.
+ *
+ * El desperdicio no se captura, se deduce: si entró 1 bloque y salieron 18
+ * libras, el rendimiento queda registrado solo. Ver migración 030.
+ */
+export interface Produccion {
+  id: string
+  numero: string
+  fecha: string
+  notas: string | null
+  usuarioId: string | null
+  createdAt: string
+  items: ProduccionItem[]
+  /** Σ (cantidad consumida × costo del insumo) — lo que costó el proceso. */
+  costoTotal: number
 }

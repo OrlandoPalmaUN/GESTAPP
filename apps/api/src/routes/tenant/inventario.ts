@@ -29,6 +29,8 @@ interface FilaProducto {
   descripcion: string | null
   categoria_id: string | null
   precio_costo: string | null
+  costo_promedio: string | null
+  es_insumo: boolean
   precio_venta: string | null
   unidad: string
   stock_minimo: string
@@ -97,7 +99,15 @@ function aProducto(row: FilaProducto, stockDisponible: number): Producto {
     nombre: row.nombre,
     descripcion: row.descripcion,
     categoriaId: row.categoria_id,
+    esInsumo: row.es_insumo,
     precioCosto: row.precio_costo === null ? null : Number(row.precio_costo),
+    costoPromedio: row.costo_promedio === null ? null : Number(row.costo_promedio),
+    // El COALESCE se resuelve acá y no en SQL para que el front reciba los tres
+    // valores y pueda distinguir "calculado" de "manual" en la interfaz.
+    costoEfectivo:
+      row.costo_promedio !== null ? Number(row.costo_promedio)
+      : row.precio_costo !== null ? Number(row.precio_costo)
+      : null,
     precioVenta: row.precio_venta === null ? null : Number(row.precio_venta),
     unidad: row.unidad,
     stockMinimo: Number(row.stock_minimo),
@@ -285,7 +295,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
 
     const [productosRes, movimientosRes] = await Promise.all([
       request.tenantDb.query<FilaProducto>(
-        'SELECT id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, sprite, sprite_escala FROM productos WHERE deleted_at IS NULL ORDER BY created_at DESC',
+        'SELECT id, sku, nombre, descripcion, categoria_id, precio_costo, costo_promedio, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, es_insumo, sprite, sprite_escala FROM productos WHERE deleted_at IS NULL ORDER BY created_at DESC',
       ),
       request.tenantDb.query<{ producto_id: string; tipo: string; cantidad: string }>(
         'SELECT producto_id, tipo, cantidad FROM movimientos_inventario',
@@ -346,9 +356,9 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
       sku = body.data.sku ?? (await generarSku(client))
 
       const insertProd = await client.query<FilaProducto>(
-        `INSERT INTO productos (sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, tiene_variantes, sprite, sprite_escala)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-         RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, sprite, sprite_escala`,
+        `INSERT INTO productos (sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, tiene_variantes, es_insumo, sprite, sprite_escala)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+         RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, costo_promedio, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, es_insumo, sprite, sprite_escala`,
         [
           sku,
           body.data.nombre,
@@ -359,6 +369,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
           body.data.unidad,
           body.data.stockMinimo,
           body.data.tieneVariantes,
+          body.data.esInsumo,
           body.data.sprite ?? null,
           body.data.spriteEscala ?? null,
         ],
@@ -401,6 +412,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
       descripcion: body.data.descripcion,
       categoria_id: body.data.categoriaId,
       precio_costo: body.data.precioCosto,
+      es_insumo: body.data.esInsumo,
       precio_venta: body.data.precioVenta,
       unidad: body.data.unidad,
       stock_minimo: body.data.stockMinimo,
@@ -415,7 +427,7 @@ export async function inventarioRoutes(fastify: FastifyInstance): Promise<void> 
 
     const { rows, rowCount } = await request.tenantDb.query<FilaProducto>(
       `UPDATE productos SET ${sets} WHERE id = $1 AND deleted_at IS NULL
-       RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, sprite, sprite_escala`,
+       RETURNING id, sku, nombre, descripcion, categoria_id, precio_costo, costo_promedio, precio_venta, unidad, stock_minimo, activo, created_at, tiene_variantes, es_insumo, sprite, sprite_escala`,
       [request.params.id, ...valores],
     )
     if (rowCount === 0) return reply.notFound('Producto no encontrado.')

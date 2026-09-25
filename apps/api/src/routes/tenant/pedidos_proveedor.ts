@@ -14,6 +14,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 
 import { registrarAbonoEnTx } from '../../lib/abonos.js'
+import { recalcularCostoPromedio } from '../../lib/costeo.js'
 import { generarNumeroFacturaCompra, generarNumeroOC } from '../../lib/numeracion.js'
 
 interface FilaPedidoProveedor {
@@ -520,10 +521,11 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
           const anterior = cantidadAnteriorPorItem.get(item.id) ?? 0
           const delta = Number(item.cantidad_recibida) - anterior
           if (delta <= 0) continue
-          await db.query(
+          const { rows: [movRecibido] } = await db.query<{ id: string }>(
             `INSERT INTO movimientos_inventario
                (producto_id, tipo, cantidad, precio_unitario, referencia_tipo, referencia_id, notas, usuario_id)
-             VALUES ($1, 'entrada_compra', $2, $3, 'factura_compra', $4, $5, $6)`,
+             VALUES ($1, 'entrada_compra', $2, $3, 'factura_compra', $4, $5, $6)
+             RETURNING id`,
             [
               item.producto_id,
               delta,
@@ -532,6 +534,12 @@ export async function pedidosProveedorRoutes(fastify: FastifyInstance): Promise<
               `Recepción OC ${oc.numero}`,
               request.user.sub,
             ],
+          )
+          // El costo del producto se recalcula con lo que REALMENTE se pagó en
+          // esta recepción (migración 029). Va después del INSERT porque el
+          // stock previo se deriva de los movimientos.
+          await recalcularCostoPromedio(
+            db, item.producto_id, delta, Number(item.precio_unitario), movRecibido!.id,
           )
         }
       }

@@ -37,3 +37,10 @@ export async function generarNumeroFacturaCompra(db: ClienteSql): Promise<string
   const n = await siguienteConsecutivo(db, 'numero_factura_compra', 'facturas_compra', anio)
   return `FC-${anio}-${String(n).padStart(4, '0')}`
 }
+
+/** `PRD-2026-0007` — consecutivo por año sobre `producciones` (migración 030). */
+export async function generarNumeroProduccion(db: ClienteSql): Promise<string> {
+  const anio = new Date().getFullYear()
+  const n = await siguienteConsecutivo(db, 'numero_produccion', 'producciones', anio)
+  return `PRD-${anio}-${String(n).padStart(4, '0')}`
+}

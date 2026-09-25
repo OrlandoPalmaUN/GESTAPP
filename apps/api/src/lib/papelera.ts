@@ -154,6 +154,28 @@ export const ENTIDADES_PAPELERA = {
       )
     },
   },
+  movimiento_socio: {
+    tabla: 'movimientos_socio',
+    columnas: 'id, tipo, socio, monto, cuenta_bancaria_id, deleted_at',
+    etiqueta: (r) =>
+      `${r.tipo === 'retiro' ? 'Retiro de' : 'Devolución de'} ${String(r.socio)} · $${Number(r.monto).toLocaleString('es-CO')}`,
+    // Al restaurar hay que RE-aplicar el efecto sobre el saldo, porque el DELETE
+    // lo revirtió: un retiro vuelve a sacar la plata, una devolución a meterla.
+    // Sin esto, borrar y restaurar un retiro le regalaría el monto a la cuenta.
+    alRestaurar: async (tenantDb, id) => {
+      const { rows } = await tenantDb.query<{ tipo: string; monto: string; cuenta_bancaria_id: string }>(
+        'SELECT tipo, monto, cuenta_bancaria_id FROM movimientos_socio WHERE id = $1',
+        [id],
+      )
+      const mov = rows[0]
+      if (!mov) return
+      await tenantDb.query(
+        `UPDATE cuentas_bancarias SET saldo = saldo ${mov.tipo === 'retiro' ? '-' : '+'} $1
+         WHERE id = $2 AND deleted_at IS NULL`,
+        [mov.monto, mov.cuenta_bancaria_id],
+      )
+    },
+  },
 } satisfies Record<string, DescriptorEntidad>
 
 export type EntidadPapelera = keyof typeof ENTIDADES_PAPELERA

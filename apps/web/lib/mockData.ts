@@ -25,7 +25,14 @@ export interface Product {
   nombre: string;
   descripcion: string;
   categoria_id: string;
+  /** `true` = materia prima: se compra y se transforma, no se vende (migración 030). */
+  es_insumo: boolean;
+  /** Costo manual tecleado al crear el producto. */
   precio_costo: number;
+  /** Calculado por promedio ponderado de las compras reales. 0 si aún no hay ninguna. */
+  costo_promedio: number;
+  /** El que se usa para margen: `costo_promedio || precio_costo` (ver migración 029). */
+  costo_efectivo: number;
   precio_venta: number;
   stock_minimo: number;
   stock_inicial: number;
@@ -48,6 +55,8 @@ export interface InventoryMovement {
     | 'entrada_devolucion'
     | 'ajuste_positivo'
     | 'ajuste_negativo'
+    | 'consumo_produccion'
+    | 'entrada_produccion'
     | 'reserva'
     | 'liberacion_reserva';
   cantidad: number;
@@ -69,6 +78,8 @@ export interface Customer extends CustomerCredito {
   email: string;
   telefono: string;
   direccion: string;
+  /** Apartamento/casa del conjunto. Vacío = no aplica (ver migración 026). */
+  apartamento: string;
 }
 
 export interface Supplier {
@@ -124,6 +135,8 @@ export interface Order {
   id: string;
   numero: string;
   cliente_id: string;
+  /** Campaña de preventa a la que pertenece, si aplica (migración 031). */
+  campana_id: string | null;
   fecha: string;
   total: number;
   estado: 'borrador' | 'confirmado' | 'en_preparacion' | 'despachado' | 'entregado' | 'cancelado';

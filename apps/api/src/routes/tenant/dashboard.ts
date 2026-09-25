@@ -209,10 +209,16 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
       const pat = `%${q}%`
 
       const [clientes, productos, proveedores, pedidos, ocs, facturasVenta, facturasCompra] = await Promise.all([
-        request.tenantDb.query<{ id: string; nombre: string; nit: string | null; telefono: string | null }>(
-          `SELECT id, nombre, nit, telefono FROM clientes
+        // `apartamento` entra a la búsqueda porque un negocio que reparte en su
+        // propio edificio identifica al cliente por ahí y no por el nombre:
+        // buscar "502" tiene que encontrar al del 502. Ver migración 026.
+        request.tenantDb.query<{
+          id: string; nombre: string; nit: string | null; telefono: string | null; apartamento: string | null
+        }>(
+          `SELECT id, nombre, nit, telefono, apartamento FROM clientes
            WHERE deleted_at IS NULL
-             AND (nombre ILIKE $1 OR nit ILIKE $1 OR email ILIKE $1 OR telefono ILIKE $1)
+             AND (nombre ILIKE $1 OR nit ILIKE $1 OR email ILIKE $1 OR telefono ILIKE $1
+                  OR apartamento ILIKE $1)
            ORDER BY nombre LIMIT 10`,
           [pat],
         ),
@@ -274,7 +280,12 @@ export async function dashboardRoutes(fastify: FastifyInstance): Promise<void> {
           tipo: 'cliente' as const,
           id: r.id,
           etiqueta: r.nombre,
-          subtitulo: r.nit ? `NIT ${r.nit}` : (r.telefono ?? ''),
+          // El apartamento manda cuando existe: en el negocio que lo usa es el
+          // dato con el que se reconoce al cliente. Si es NULL (todos los demás
+          // tenants) el subtítulo queda exactamente como antes.
+          subtitulo: r.apartamento
+            ? `Apto ${r.apartamento}`
+            : r.nit ? `NIT ${r.nit}` : (r.telefono ?? ''),
         })),
         ...productos.rows.map((r) => ({
           tipo: 'producto' as const,

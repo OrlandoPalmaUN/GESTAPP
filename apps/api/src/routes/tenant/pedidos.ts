@@ -10,10 +10,13 @@ import {
 } from '@antigravity/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 
+import { COSTO_EFECTIVO_SQL } from '../../lib/costeo.js'
+
 interface FilaPedido {
   id: string
   numero: string
   cliente_id: string | null
+  campana_id: string | null
   estado: string
   total: string
   notas: string | null
@@ -125,6 +128,7 @@ function aPedido(row: FilaPedido, items: PedidoItem[]): Pedido {
     id: row.id,
     numero: row.numero,
     clienteId: row.cliente_id,
+    campanaId: row.campana_id,
     estado: row.estado as EstadoPedido,
     total: Number(row.total),
     notas: row.notas,
@@ -265,7 +269,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
   fastify.get('/pedidos', conSesion, async (request, reply) => {
     if (!exigirTenant(request, reply)) return
     const { rows } = await request.tenantDb.query<FilaPedido>(
-      `SELECT id, numero, cliente_id, estado, total, notas, usuario_id, created_at, updated_at
+      `SELECT id, numero, cliente_id, campana_id, estado, total, notas, usuario_id, created_at, updated_at
        FROM pedidos WHERE deleted_at IS NULL ORDER BY created_at DESC`,
     )
     const itemsPorPedido = await cargarItemsDePedidos(request.tenantDb, rows.map((r) => r.id))
@@ -292,14 +296,43 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
         }
       }
 
+      // Campaña de preventa (migración 031). Una campaña cerrada ya no acepta
+      // encargos: si no se valida acá, un pedido que entra tarde saldría en el
+      // consolidado DESPUÉS de haberle pedido la cantidad a la proveedora.
+      let campanaId: string | null = null
+      if (body.data.campanaId) {
+        const { rows } = await client.query<{ id: string; estado: string; nombre: string }>(
+          'SELECT id, estado, nombre FROM campanas WHERE id = $1 AND deleted_at IS NULL',
+          [body.data.campanaId],
+        )
+        const camp = rows[0]
+        if (!camp) {
+          await client.query('ROLLBACK')
+          return reply.badRequest('La campaña seleccionada no existe.')
+        }
+        if (camp.estado !== 'abierta') {
+          await client.query('ROLLBACK')
+          return reply.badRequest(`La campaña "${camp.nombre}" está ${camp.estado} y ya no acepta encargos.`)
+        }
+        campanaId = camp.id
+      }
+
       // Resolver precios/costos reales del catálogo y validar existencia de cada producto
       // — solo para los ítems que SÍ referencian un producto (los "cargos
       // libres" como Envío no tienen `productoId`, ver `crearPedidoItemSchema`).
       const productoIds = body.data.items
         .map((i) => ('productoId' in i ? i.productoId : null))
         .filter((id): id is string => id !== null)
-      const productosRes = await client.query<{ id: string; precio_venta: string | null; precio_costo: string | null; nombre: string; tiene_variantes: boolean }>(
-        'SELECT id, precio_venta, precio_costo, nombre, tiene_variantes FROM productos WHERE id = ANY($1::uuid[])',
+      const productosRes = await client.query<{
+        id: string; precio_venta: string | null; precio_costo: string | null
+        nombre: string; tiene_variantes: boolean; es_insumo: boolean
+      }>(
+        // El costo que se congela en la línea es el EFECTIVO (promedio ponderado
+        // si ya hay compras, si no el manual) — ver migración 029. Antes leía
+        // `precio_costo` a secas, así que el margen se comparaba contra un número
+        // tecleado que podía tener meses.
+        `SELECT id, precio_venta, ${COSTO_EFECTIVO_SQL} AS precio_costo, nombre, tiene_variantes, es_insumo
+         FROM productos WHERE id = ANY($1::uuid[])`,
         [productoIds],
       )
       const catalogo = new Map(productosRes.rows.map((p) => [p.id, p]))
@@ -332,6 +365,16 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
           if (!producto) {
             await client.query('ROLLBACK')
             return reply.badRequest(`Uno de los productos del pedido no existe (id ${item.productoId}).`)
+          }
+          // Un insumo es materia prima: se compra y se transforma, no se le
+          // vende a un cliente (migración 030). Se rechaza acá y no solo se
+          // oculta en la UI, porque el stock de un insumo está en su propia
+          // unidad —bloques, no libras— y venderlo descuadraría las dos cosas.
+          if (producto.es_insumo) {
+            await client.query('ROLLBACK')
+            return reply.badRequest(
+              `"${producto.nombre}" es materia prima y no se vende directo. Registrá una producción para convertirlo en producto terminado.`,
+            )
           }
           let variante: { id: string; producto_id: string; precio_venta: string | null } | undefined
           if (producto.tiene_variantes) {
@@ -377,10 +420,10 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
 
       const numero = await generarNumeroPedido(client)
       const insertPedido = await client.query<FilaPedido>(
-        `INSERT INTO pedidos (numero, cliente_id, estado, total, notas, usuario_id)
-         VALUES ($1, $2, 'borrador', $3, $4, $5)
-         RETURNING id, numero, cliente_id, estado, total, notas, usuario_id, created_at, updated_at`,
-        [numero, body.data.clienteId ?? null, total, body.data.notas ?? null, request.user.sub],
+        `INSERT INTO pedidos (numero, cliente_id, campana_id, estado, total, notas, usuario_id)
+         VALUES ($1, $2, $3, 'borrador', $4, $5, $6)
+         RETURNING id, numero, cliente_id, campana_id, estado, total, notas, usuario_id, created_at, updated_at`,
+        [numero, body.data.clienteId ?? null, campanaId, total, body.data.notas ?? null, request.user.sub],
       )
       const pedido = insertPedido.rows[0]!
 
@@ -420,7 +463,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
       await client.query('BEGIN')
 
       const actual = await client.query<FilaPedido>(
-        `SELECT id, numero, cliente_id, estado, total, notas, usuario_id, created_at, updated_at
+        `SELECT id, numero, cliente_id, campana_id, estado, total, notas, usuario_id, created_at, updated_at
          FROM pedidos WHERE id = $1 FOR UPDATE`,
         [request.params.id],
       )
@@ -520,7 +563,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
 
       const actualizado = await client.query<FilaPedido>(
         `UPDATE pedidos SET estado = $2, updated_at = NOW() WHERE id = $1
-         RETURNING id, numero, cliente_id, estado, total, notas, usuario_id, created_at, updated_at`,
+         RETURNING id, numero, cliente_id, campana_id, estado, total, notas, usuario_id, created_at, updated_at`,
         [pedido.id, estadoDestino],
       )
 
@@ -565,7 +608,7 @@ export async function pedidosRoutes(fastify: FastifyInstance): Promise<void> {
 
       const { rows, rowCount } = await client.query<FilaPedido>(
         `UPDATE pedidos SET ${sets}, updated_at = NOW() WHERE id = $1 AND deleted_at IS NULL
-         RETURNING id, numero, cliente_id, estado, total, notas, usuario_id, created_at, updated_at`,
+         RETURNING id, numero, cliente_id, campana_id, estado, total, notas, usuario_id, created_at, updated_at`,
         [request.params.id, ...valores],
       )
       if (rowCount === 0) {
