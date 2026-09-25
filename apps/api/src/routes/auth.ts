@@ -74,8 +74,20 @@ export async function authRoutes(fastify: FastifyInstance): Promise<void> {
   })
 
   // POST /auth/logout — limpia la cookie de sesión.
+  //
+  // `clearCookie` solo borra si sus opciones (`path`, `sameSite`, `secure`)
+  // COINCIDEN con las que se usaron al crearla en /auth/login — si no, el
+  // navegador la trata como una cookie distinta y la de sesión queda viva.
+  // Con solo `{ path: '/' }` (sin `sameSite: 'none', secure: true` en
+  // producción) eso es justo lo que pasaba: "Cerrar Sesión" respondía 200
+  // pero /auth/me seguía autenticando con la cookie vieja.
   fastify.post('/auth/logout', async (_request, reply) => {
-    reply.clearCookie(SESION_COOKIE.name, { path: '/' })
+    const isProduction = fastify.config.NODE_ENV === 'production'
+    reply.clearCookie(SESION_COOKIE.name, {
+      path: '/',
+      sameSite: isProduction ? 'none' : 'lax',
+      secure: isProduction,
+    })
     return reply.send({ status: 'ok' })
   })
 
