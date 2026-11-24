@@ -4,7 +4,7 @@
  */
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type Groq from 'groq-sdk'
-import { AiClient, getGroq, AI_MODEL, isRateLimit } from '../../lib/ai/client.js'
+import { AiClient, getGroq, AI_MODEL, AI_MODEL_FALLBACK, isRateLimit } from '../../lib/ai/client.js'
 import { getToolsForContext } from '../../lib/ai/tools.js'
 import { executeTool } from '../../lib/ai/executor.js'
 import { buildSystemPrompt, buildNotasPrompt } from '../../lib/ai/prompts.js'
@@ -172,7 +172,7 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
     const systemPrompt = buildNotasPrompt(instrucciones[instruccion] ?? instrucciones.mejorar ?? 'Mejora el texto.')
 
     const completion = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant', // modelo más pequeño y rápido para texto simple
+      model: AI_MODEL_FALLBACK, // modelo más pequeño y rápido para texto simple
       messages: [
         { role: 'system', content: systemPrompt },
         { role: 'user', content: texto },

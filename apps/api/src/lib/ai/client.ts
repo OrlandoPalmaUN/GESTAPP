@@ -2,17 +2,31 @@ import Groq from 'groq-sdk'
 import OpenAI from 'openai'
 import type { ChatCompletionCreateParamsNonStreaming } from 'groq-sdk/resources/chat/completions.js'
 
-export const AI_MODEL          = 'llama-3.3-70b-versatile'
-export const AI_MODEL_FALLBACK = 'llama-3.1-8b-instant'
+/**
+ * Groq retira modelos sin avisar y sin período de gracia: el día que apagaron
+ * la familia llama-3.x, TODAS las respuestas del agente (web y WhatsApp)
+ * empezaron a fallar con 404 model_not_found. Si vuelve a pasar, la lista viva
+ * está en `GET https://api.groq.com/openai/v1/models` con la misma API key —
+ * ahí se ve qué hay hoy, no qué había cuando se escribió esto.
+ *
+ * Los dos modelos de abajo soportan tool use, que es el requisito duro: el
+ * agente tiene 26 herramientas y sin ellas no puede escribir en la base.
+ */
+export const AI_MODEL          = 'openai/gpt-oss-120b'
+export const AI_MODEL_FALLBACK = 'openai/gpt-oss-20b'
 export const GEMINI_MODEL      = 'gemini-2.0-flash'   // 1500 req/día gratis
 
 /**
  * Cliente AI con cadena de fallback automática:
  *
- *   Groq Key 1 (llama-3.3-70b)
- *     → rate limit → Gemini Flash  (si GOOGLE_AI_KEY configurado)
- *     → rate limit → Groq Key 2    (si GROQ_API_KEY_2 configurado)
- *     → rate limit → llama-3.1-8b  (misma key, sin tools, último recurso)
+ *   Groq Key 1 (AI_MODEL)
+ *     → rate limit → Gemini Flash      (si GOOGLE_AI_KEY configurado)
+ *     → rate limit → Groq Key 2        (si GROQ_API_KEY_2 configurado)
+ *     → rate limit → AI_MODEL_FALLBACK (misma key, sin tools, último recurso)
+ *
+ * OJO: la cadena sólo cubre RATE LIMIT. Cualquier otro error (modelo retirado,
+ * key inválida, 500 de Groq) se propaga a propósito, para que se vea en el log
+ * en vez de quedar enmascarado como una respuesta degradada.
  */
 export class AiClient {
   private groq1: Groq
@@ -33,7 +47,7 @@ export class AiClient {
   async chat(
     params: ChatCompletionCreateParamsNonStreaming,
   ): Promise<Groq.Chat.ChatCompletion> {
-    // 1. Primary — Groq llama-3.3-70b
+    // 1. Primary — Groq, AI_MODEL
     try {
       return await this.groq1.chat.completions.create(params)
     } catch (err) {

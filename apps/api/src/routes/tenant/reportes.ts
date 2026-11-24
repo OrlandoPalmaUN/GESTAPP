@@ -11,7 +11,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { PoolClient } from 'pg'
 import type Groq from 'groq-sdk'
-import { getGroq } from '../../lib/ai/client.js'
+import { getGroq, AI_MODEL } from '../../lib/ai/client.js'
 
 function exigirTenant(
   request: FastifyRequest,
@@ -249,7 +249,7 @@ Responde en formato markdown con estas secciones (máximo 200 palabras en total)
 (2-3 acciones concretas para el siguiente período)`
 
   const completion = await groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile',
+    model: AI_MODEL,
     messages: [{ role: 'user', content: prompt }],
     max_tokens: 600,
     temperature: 0.6,
