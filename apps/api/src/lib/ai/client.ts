@@ -47,14 +47,22 @@ export class AiClient {
   async chat(
     params: ChatCompletionCreateParamsNonStreaming,
   ): Promise<Groq.Chat.ChatCompletion> {
-    // 1. Primary — Groq, AI_MODEL
+    // Por qué se acumulan en vez de lanzarse: un eslabón caído no es motivo
+    // para abandonar los que siguen. Pasó en producción — Gemini respondía 404
+    // porque su modelo también fue retirado, y ese 404 tumbaba la respuesta
+    // entera aunque todavía quedaran dos alternativas por probar.
+    const fallos: string[] = []
+
+    // 1. Primary — Groq, AI_MODEL. Acá sí: cualquier error que no sea cupo se
+    //    propaga tal cual, porque es la señal de que algo está roto de verdad.
     try {
       return await this.groq1.chat.completions.create(params)
     } catch (err) {
       if (!isRateLimit(err)) throw err
+      fallos.push(`groq-1: sin cupo`)
     }
 
-    // 2. Fallback — Gemini 2.0 Flash (OpenAI-compatible, full tool use)
+    // 2. Fallback — Gemini (OpenAI-compatible, soporta tools)
     if (this.gemini) {
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -64,37 +72,77 @@ export class AiClient {
         })
         return res as Groq.Chat.ChatCompletion
       } catch (err) {
-        if (!isRateLimit(err)) throw err
+        fallos.push(`gemini (${GEMINI_MODEL}): ${describir(err)}`)
       }
     }
 
-    // 3. Fallback — segunda key de Groq (mismo modelo)
+    // 3. Fallback — segunda key de Groq (mismo modelo, cupo aparte)
     if (this.groq2) {
       try {
         return await this.groq2.chat.completions.create(params)
       } catch (err) {
-        if (!isRateLimit(err)) throw err
+        fallos.push(`groq-2: ${describir(err)}`)
       }
     }
 
-    // 4. Último recurso — modelo pequeño sin tools en Key 1
-    const fallbackParams = {
-      ...params,
-      model: AI_MODEL_FALLBACK,
-      tools: undefined,
-      tool_choice: undefined,
+    // 4. Último recurso: modelo pequeño SIN herramientas.
+    //
+    //    Solo vale cuando la petición original tampoco traía herramientas. Si
+    //    las traía, el usuario está pidiendo una acción — registrar un gasto,
+    //    crear un pedido — y un modelo sin herramientas no puede ejecutarla
+    //    pero sí puede redactar un "listo, ya lo registré" perfectamente
+    //    convincente. En un CRM eso es peor que no responder: queda plata sin
+    //    registrar y el dueño creyendo que sí quedó.
+    const pedíaHerramientas = Array.isArray(params.tools) && params.tools.length > 0
+    if (pedíaHerramientas) {
+      throw new SinCupoError(fallos)
     }
-    const result = await this.groq1.chat.completions.create(fallbackParams)
-    if (result.choices[0]?.message) {
-      const original = result.choices[0].message.content ?? ''
-      result.choices[0].message.content =
-        `⚠ Límite diario alcanzado, usando modelo de respaldo.\n\n${original}`
+
+    try {
+      const result = await this.groq1.chat.completions.create({
+        ...params,
+        model: AI_MODEL_FALLBACK,
+        tools: undefined,
+        tool_choice: undefined,
+      })
+      if (result.choices[0]?.message) {
+        const original = result.choices[0].message.content ?? ''
+        result.choices[0].message.content =
+          `⚠ Límite alcanzado, usando modelo de respaldo.\n\n${original}`
+      }
+      return result
+    } catch (err) {
+      fallos.push(`groq-1 (${AI_MODEL_FALLBACK}): ${describir(err)}`)
+      throw new SinCupoError(fallos)
     }
-    return result
   }
 }
 
+/**
+ * Se agotó la cadena entera. Lleva el detalle de cada eslabón para que el log
+ * diga por qué falló cada uno, en vez de un único error que esconde el resto.
+ */
+export class SinCupoError extends Error {
+  readonly fallos: string[]
+  constructor(fallos: string[]) {
+    super(`sin cupo de IA — ${fallos.join(' | ')}`)
+    this.name = 'SinCupoError'
+    this.fallos = fallos
+  }
+}
+
+function describir(err: unknown): string {
+  if (err instanceof Error) {
+    const status = 'status' in err ? (err as { status?: number }).status : undefined
+    return status ? `${status} ${err.message.slice(0, 80)}` : err.message.slice(0, 80)
+  }
+  return String(err).slice(0, 80)
+}
+
 export function isRateLimit(err: unknown): boolean {
+  // Quedarse sin cupo en toda la cadena es un caso de límite, no un fallo
+  // raro: quien lo reciba debe decir "intentá en un rato", no "algo se rompió".
+  if (err instanceof SinCupoError) return true
   if (err instanceof Error) {
     const msg = err.message.toLowerCase()
     return (

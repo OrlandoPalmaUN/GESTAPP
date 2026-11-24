@@ -75,6 +75,10 @@ export function buildSystemPrompt(biz: BusinessContext): string {
   // ── Contexto por módulo ────────────────────────────────────────────────────
   const contextos: Record<string, string> = {
     general:    'Estás en el panel general. Puedes ayudar con cualquier tema del negocio.',
+    // WhatsApp no tiene módulo activo: el dueño escribe de todo por el mismo
+    // hilo. Se le dice explícitamente que tiene acceso completo para que no
+    // invente trámites ni pida datos que puede buscar solo.
+    whatsapp:   'Estás atendiendo al dueño del negocio por WhatsApp. No hay módulos acá: podés registrar gastos, ingresos, abonos, pedidos, compras, productos y clientes, y consultar saldos, stock y deudas. Si falta un dato que podés averiguar con una herramienta (el ID de una cuenta, de un cliente, de un producto), búscalo vos — nunca se lo pidas al dueño. Si un parámetro es opcional y no lo sabés, omitilo.',
     inventario: 'Estás en Inventario. Ayuda con productos, stock, ajustes y movimientos. Si el usuario pregunta qué está faltando, usa consultar_stock_bajo.',
     pedidos:    'Estás en Pedidos. Registra ventas, actualiza estados, consulta pedidos. Recuerda: crear_pedido deja el pedido en borrador; debes llamar actualizar_estado_pedido con nuevo_estado="confirmado" para que descuente stock y genere la CxC.',
     clientes:   'Estás en CRM. Gestiona clientes, registra pagos, consulta historial.',

@@ -341,8 +341,8 @@ export function crearAgenteWhatsapp(
 
     if (mensajes.length === 0) return null
 
-    const biz = await cargarContextoNegocio(db, tenant.name ?? tenant.slug, 'general', fastify.log)
-    const tools = getToolsForContext('general')
+    const biz = await cargarContextoNegocio(db, tenant.name ?? tenant.slug, 'whatsapp', fastify.log)
+    const tools = getToolsForContext('whatsapp')
 
     const conversacion: Groq.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: `${buildSystemPrompt(biz)}\n\n${REGLAS_CANAL}` },
@@ -408,8 +408,11 @@ export function crearAgenteWhatsapp(
       return cierre.choices[0]?.message?.content?.trim() || 'Listo.'
     } catch (err) {
       fastify.log.error({ err, tenant: tenant.slug }, 'whatsapp: error del agente')
+      // "en un minuto" y no "por hoy": el límite de Groq que se toca en la
+      // práctica es de tokens por MINUTO, no un cupo diario. Decir "hoy" hacía
+      // que el dueño dejara de intentar cuando bastaba con reenviar.
       return isRateLimit(err)
-        ? '⏳ Llegué al límite de IA por hoy. Intentá de nuevo en un rato.'
+        ? '⏳ Me quedé sin cupo del modelo. Reenviá el mensaje en un minuto.'
         : '⚠ No pude procesar eso. Intentá de nuevo.'
     }
   }

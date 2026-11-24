@@ -47,6 +47,30 @@ const TOOLS_BY_CONTEXT: Record<string, string[]> = {
     'buscar_proveedor', 'crear_proveedor', 'crear_compra',
     'consultar_compras_pendientes',
   ],
+
+  // WhatsApp no tiene pestañas: el dueño escribe lo que sea por el mismo hilo,
+  // así que no se le puede recortar el set por módulo como en la web. Pero
+  // tampoco caben las 26 — el plan gratis de Groq da 8.000 tokens por MINUTO y
+  // cada vuelta carga el esquema completo de las herramientas:
+  //
+  //     26 herramientas → ~4.260 tok/vuelta → 1 vuelta por minuto
+  //     estas 20        → ~3.720 tok/vuelta → 2 vueltas por minuto
+  //
+  // Dos vueltas es el mínimo para que sirva: una para ejecutar la herramienta
+  // y otra para confirmar en palabras lo que hizo. Con las 26 no alcanza ni
+  // para eso. Quedan fuera las de Instagram y calendario (no son carga de
+  // datos por chat), kpis_dashboard (lo cubre resumen_negocio) y dos consultas
+  // de solo lectura. Si algún día hay más cupo, acá se amplía.
+  whatsapp: [
+    'buscar_cliente', 'crear_cliente',
+    'buscar_producto', 'crear_producto', 'ajustar_stock', 'consultar_stock_bajo',
+    'crear_pedido', 'actualizar_estado_pedido', 'buscar_pedido',
+    'registrar_gasto', 'registrar_abono', 'registrar_ingreso_manual',
+    'consultar_cuentas_bancarias', 'consultar_facturas_vencidas',
+    'consultar_resumen_negocio', 'crear_nota',
+    'buscar_proveedor', 'crear_proveedor', 'crear_compra',
+    'consultar_compras_pendientes',
+  ],
   compras: [
     'buscar_proveedor', 'crear_proveedor', 'buscar_producto',
     'crear_compra', 'consultar_compras_pendientes',
