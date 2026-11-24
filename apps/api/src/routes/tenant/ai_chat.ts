@@ -101,7 +101,25 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
       const actions: { tool: string; result: unknown }[] = []
 
       for (const tc of msg.tool_calls) {
-        const args = JSON.parse(tc.function.arguments) as Record<string, unknown>
+        // Mismo guardia que el canal de WhatsApp: los argumentos los escribe el
+        // LLM, así que no son JSON garantizado. Sin esto, una sola llamada mal
+        // formada tumbaba el request entero con un 500 en vez de dejar que el
+        // modelo se corrigiera en la vuelta siguiente.
+        let args: Record<string, unknown> = {}
+        try {
+          args = JSON.parse(tc.function.arguments) as Record<string, unknown>
+        } catch {
+          fastify.log.warn(
+            { tool: tc.function.name, argumentos: tc.function.arguments },
+            'ai: argumentos no parseables',
+          )
+          toolResults.push({
+            role: 'tool',
+            tool_call_id: tc.id,
+            content: JSON.stringify({ error: 'argumentos inválidos' }),
+          })
+          continue
+        }
         fastify.log.info({ tool: tc.function.name, args }, 'ai:tool_call')
 
         const result = await executeTool(tc.function.name, args, request.tenantDb)
