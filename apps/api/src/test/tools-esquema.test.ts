@@ -13,10 +13,10 @@
 import { describe, it, expect } from 'vitest'
 import { getToolsForContext } from '../lib/ai/tools.js'
 
-type Props = Record<string, { type?: unknown }>
+type Props = Record<string, { type?: unknown; enum?: string[]; description?: string }>
 
-function esquemaDe(contexto: string, herramienta: string) {
-  const tool = getToolsForContext(contexto).find(t => t.function?.name === herramienta)
+function esquemaDe(contexto: string, herramienta: string, opciones = {}) {
+  const tool = getToolsForContext(contexto, opciones).find(t => t.function?.name === herramienta)
   const params = tool?.function?.parameters as
     | { properties: Props; required?: string[] }
     | undefined
@@ -85,13 +85,95 @@ describe('set de herramientas de WhatsApp', () => {
     }
   })
 
+  it('no ofrece órdenes de compra: acá una compra es un gasto', () => {
+    // Decisión de la dueña: pedirle productos, cantidades y precios uno por
+    // uno desde el celular era más trámite del que vale. Si crear_compra
+    // estuviera en la mesa, el modelo la usaría a veces y la regla del canal
+    // quedaría contradicha por el propio esquema.
+    const nombres = getToolsForContext('whatsapp').map(t => t.function?.name)
+    for (const fuera of [
+      'crear_compra',
+      'consultar_compras_pendientes',
+      'buscar_proveedor',
+      'crear_proveedor',
+    ]) {
+      expect(nombres).not.toContain(fuera)
+    }
+  })
+
   it('cabe en el presupuesto de tokens del plan gratis', () => {
-    // 8.000 tokens por minuto, y hacen falta DOS vueltas para que sirva: una
-    // para ejecutar y otra para confirmar. Si alguien agrega herramientas sin
-    // mirar esto, el canal vuelve a quedarse en una vuelta por minuto.
+    // 8.000 tokens por minuto y cada vuelta recarga el esquema entero. Medido
+    // con las 16: esquema ~2.140 + prompt ~1.290 ≈ 3.575 por vuelta, o sea 2
+    // vueltas por minuto — que es justo lo que necesita una corrida: una
+    // vuelta para ejecutar la herramienta y otra para confirmar en palabras.
+    //
+    // Preguntar la categoría NO agrega una tercera vuelta: la pregunta es una
+    // corrida que termina ahí (una sola vuelta, sin tool), y la respuesta de
+    // la dueña arranca otra corrida nueva un minuto después. El trabajo se
+    // parte en dos mensajes, no en tres vueltas seguidas.
+    //
+    // Sacar las 4 herramientas de órdenes de compra liberó ~460 tokens, que
+    // son casi exactamente los que costaron el enum de categorías y el prompt
+    // más largo. El presupuesto quedó igual que antes, no mejor.
     const tools = getToolsForContext('whatsapp')
     const tokensAprox = Math.round(JSON.stringify(tools).length / 3.6)
-    const porVuelta = tokensAprox + 1250 // system prompt + reglas de canal
+    const porVuelta = tokensAprox + 1400 // system prompt + reglas de canal
     expect(porVuelta * 2).toBeLessThan(8000)
+  })
+})
+
+describe('categoría del gasto — lo que el dueño sí tiene que decidir', () => {
+  it('es obligatoria y es un enum cerrado, no texto libre', () => {
+    // El fallo real: mandó `"categoria": "kerlys"` (el proveedor). Con la
+    // lista solo en la descripción, Groq no tenía con qué rechazarlo y el
+    // executor lo guardó como "otros" sin avisar.
+    const { props, required } = esquemaDe('whatsapp', 'registrar_gasto')
+    expect(required).toContain('categoria')
+    expect(props.categoria?.enum).toContain('arriendo')
+    expect(props.categoria?.enum).not.toContain('kerlys')
+  })
+
+  it('usa las categorías propias del negocio, no los slugs de fábrica', () => {
+    // Desde la migración 027 cada negocio edita su lista. Si acá se
+    // hardcodearan los once de siempre, una categoría creada desde la web
+    // sería inalcanzable por chat.
+    const { props } = esquemaDe('whatsapp', 'registrar_gasto', {
+      categoriasGasto: ['empaques', 'domicilios'],
+    })
+    expect(props.categoria?.enum).toEqual(['empaques', 'domicilios'])
+  })
+
+  it('sin categorías cargadas cae a las de fábrica, no a un enum vacío', () => {
+    // Un enum vacío haría imposible registrar cualquier gasto.
+    for (const opciones of [{}, { categoriasGasto: [] }]) {
+      const { props } = esquemaDe('whatsapp', 'registrar_gasto', opciones)
+      expect(props.categoria?.enum?.length).toBeGreaterThan(5)
+      expect(props.categoria?.enum).toContain('otros')
+    }
+  })
+
+  it('no manda al modelo a una herramienta que no está en la mesa', () => {
+    // En finanzas crear_compra existe, así que corresponde nombrarla. En
+    // WhatsApp no existe: nombrarla sería prometer algo que no puede hacer.
+    expect(esquemaDe('finanzas', 'registrar_gasto').props.categoria?.description)
+      .toContain('crear_compra')
+    expect(esquemaDe('whatsapp', 'registrar_gasto').props.categoria?.description)
+      .not.toContain('crear_compra')
+  })
+
+  it('la descripción del gasto dice qué poner y qué no', () => {
+    // Estaba sin description y el modelo la llenó con el banco: guardó
+    // "Gasto en Bancolombia" y se perdió en qué se gastó la plata.
+    const texto = esquemaDe('whatsapp', 'registrar_gasto').props.descripcion?.description ?? ''
+    expect(texto.length).toBeGreaterThan(20)
+    expect(texto).toContain('cuenta_bancaria_id')
+  })
+
+  it('el medio de pago del abono es obligatorio', () => {
+    // El executor lo defaulteaba a 'efectivo': un abono por transferencia
+    // quedaba como efectivo y la caja dejaba de cuadrar en silencio.
+    const { props, required } = esquemaDe('whatsapp', 'registrar_abono')
+    expect(required).toContain('medio_pago')
+    expect(props.medio_pago?.enum).toContain('transferencia')
   })
 })

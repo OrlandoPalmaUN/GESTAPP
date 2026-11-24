@@ -32,7 +32,7 @@ import type Groq from 'groq-sdk'
 import type { PoolClient } from 'pg'
 
 import { AI_MODEL, isRateLimit, type AiClient } from '../ai/client.js'
-import { cargarContextoNegocio } from '../ai/contexto.js'
+import { cargarContextoNegocio, cargarCategoriasGasto } from '../ai/contexto.js'
 import { executeTool } from '../ai/executor.js'
 import { buildSystemPrompt } from '../ai/prompts.js'
 import { getToolsForContext } from '../ai/tools.js'
@@ -342,7 +342,10 @@ export function crearAgenteWhatsapp(
     if (mensajes.length === 0) return null
 
     const biz = await cargarContextoNegocio(db, tenant.name ?? tenant.slug, 'whatsapp', fastify.log)
-    const tools = getToolsForContext('whatsapp')
+    // Las categorías van al esquema de registrar_gasto como enum cerrado, así
+    // que el modelo solo puede elegir una de las que el negocio tiene activas.
+    const categoriasGasto = await cargarCategoriasGasto(db, fastify.log)
+    const tools = getToolsForContext('whatsapp', { categoriasGasto })
 
     const conversacion: Groq.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: `${buildSystemPrompt(biz)}\n\n${REGLAS_CANAL}` },
@@ -488,9 +491,10 @@ export function crearAgenteWhatsapp(
  * para registrar una venta) es el mismo de `/ai/chat` — acá solo se agrega lo
  * propio del canal.
  */
-const REGLAS_CANAL = `## Estás contestando por WhatsApp
+export const REGLAS_CANAL = `## Estás contestando por WhatsApp
 - Respondés a la dueña o a alguien del negocio, desde su celular.
 - Máximo 2 o 3 líneas. Sin markdown, sin listas largas, sin títulos.
 - Si te mandan una nota de voz o una foto, decí que por ahora solo podés leer texto.
-- Si falta un dato para registrar algo, preguntá SOLO ese dato en una línea.
-- Después de registrar algo, confirmalo en una frase corta con el número o total.`
+- Si falta un dato para registrar algo, preguntá SOLO ese dato en una línea. Si sale de una lista corta (la categoría, el medio de pago), ofrecé las opciones ahí mismo.
+- Nunca completes un dato a dedo para ahorrarte la pregunta. Vale más un mensaje extra que un registro mal clasificado.
+- Después de registrar algo, confirmalo en una frase corta con el número o total. En un gasto decí con qué categoría quedó; en un abono, a qué factura se aplicó y cuánto le falta.`

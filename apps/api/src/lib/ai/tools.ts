@@ -1,4 +1,5 @@
 import type Groq from 'groq-sdk'
+import { CATEGORIAS_GASTO } from '@antigravity/shared'
 
 /**
  * Herramientas que el agente puede llamar.
@@ -51,16 +52,18 @@ const TOOLS_BY_CONTEXT: Record<string, string[]> = {
   // WhatsApp no tiene pestañas: el dueño escribe lo que sea por el mismo hilo,
   // así que no se le puede recortar el set por módulo como en la web. Pero
   // tampoco caben las 26 — el plan gratis de Groq da 8.000 tokens por MINUTO y
-  // cada vuelta carga el esquema completo de las herramientas:
+  // cada vuelta carga el esquema completo de las herramientas. Con estas 16:
+  // esquema ~2.140 + prompt ~1.290 ≈ 3.575 por vuelta → 2 vueltas por minuto,
+  // que es lo que necesita una corrida (ejecutar + confirmar en palabras).
   //
-  //     26 herramientas → ~4.260 tok/vuelta → 1 vuelta por minuto
-  //     estas 20        → ~3.720 tok/vuelta → 2 vueltas por minuto
+  // Fuera de acá, por decisión de la dueña: las órdenes de compra. Una compra
+  // a proveedor por WhatsApp se registra como un gasto y no toca inventario —
+  // pedirle productos, cantidades y precios uno por uno desde el celular era
+  // más trámite del que vale. Para eso está la web. Por eso tampoco están
+  // buscar/crear_proveedor ni consultar_compras_pendientes.
   //
-  // Dos vueltas es el mínimo para que sirva: una para ejecutar la herramienta
-  // y otra para confirmar en palabras lo que hizo. Con las 26 no alcanza ni
-  // para eso. Quedan fuera las de Instagram y calendario (no son carga de
-  // datos por chat), kpis_dashboard (lo cubre resumen_negocio) y dos consultas
-  // de solo lectura. Si algún día hay más cupo, acá se amplía.
+  // También fuera: Instagram y calendario (no son carga de datos por chat),
+  // kpis_dashboard (lo cubre resumen_negocio) y dos consultas de solo lectura.
   whatsapp: [
     'buscar_cliente', 'crear_cliente',
     'buscar_producto', 'crear_producto', 'ajustar_stock', 'consultar_stock_bajo',
@@ -68,8 +71,6 @@ const TOOLS_BY_CONTEXT: Record<string, string[]> = {
     'registrar_gasto', 'registrar_abono', 'registrar_ingreso_manual',
     'consultar_cuentas_bancarias', 'consultar_facturas_vencidas',
     'consultar_resumen_negocio', 'crear_nota',
-    'buscar_proveedor', 'crear_proveedor', 'crear_compra',
-    'consultar_compras_pendientes',
   ],
   compras: [
     'buscar_proveedor', 'crear_proveedor', 'buscar_producto',
@@ -77,11 +78,80 @@ const TOOLS_BY_CONTEXT: Record<string, string[]> = {
   ],
 }
 
-export function getToolsForContext(context: string): Groq.Chat.ChatCompletionTool[] {
+export interface OpcionesTools {
+  /**
+   * Categorías de gasto activas del negocio, de `cargarCategoriasGasto`.
+   * Si no se pasan, se usan los slugs de fábrica como respaldo.
+   */
+  categoriasGasto?: string[]
+}
+
+export function getToolsForContext(
+  context: string,
+  opciones: OpcionesTools = {},
+): Groq.Chat.ChatCompletionTool[] {
   const names = new Set(TOOLS_BY_CONTEXT[context] ?? TOOLS_BY_CONTEXT.general)
+  // Si el contexto no ofrece órdenes de compra, el esquema no puede mandar al
+  // modelo a usar crear_compra: no está en la mesa.
+  const hayOrdenesDeCompra = names.has('crear_compra')
   return AGENT_TOOLS
     .filter(t => t.function?.name && names.has(t.function.name))
+    .map(t => cerrarCategoriaDeGasto(t, opciones.categoriasGasto, hayOrdenesDeCompra))
     .map(admitirNulosEnOpcionales)
+}
+
+/**
+ * Convierte `categoria` de `registrar_gasto` en un `enum` obligatorio con las
+ * categorías reales del negocio.
+ *
+ * Antes era un `string` libre y la lista de válidas vivía SOLO en la
+ * descripción, que el modelo puede ignorar sin que Groq se queje. Pasó en
+ * producción: mandó `"categoria": "kerlys"` (el nombre del proveedor), el
+ * executor no la reconoció y la guardó como "otros" sin avisarle a nadie. El
+ * gasto quedó bien de monto y mal de categoría, que es la peor combinación:
+ * cuadra la caja y miente el reporte.
+ *
+ * Obligatoria y no averiguable con ninguna herramienta — de ahí que el modelo
+ * tenga que preguntarla cuando el mensaje no la deja clara. Esa es la regla
+ * que la acompaña en el prompt del canal.
+ */
+function cerrarCategoriaDeGasto(
+  tool: Groq.Chat.ChatCompletionTool,
+  categorias: string[] | undefined,
+  hayOrdenesDeCompra: boolean,
+): Groq.Chat.ChatCompletionTool {
+  if (tool.function?.name !== 'registrar_gasto') return tool
+
+  const validas = categorias?.length ? categorias : [...CATEGORIAS_GASTO]
+  const params = tool.function.parameters as {
+    properties: Record<string, unknown>
+    required?: string[]
+  }
+
+  const mercancia = hayOrdenesDeCompra
+    ? ' Para una compra de mercancía para revender NO uses un gasto: usa crear_compra, que sí entra al inventario.'
+    : ''
+
+  return {
+    ...tool,
+    function: {
+      ...tool.function,
+      parameters: {
+        ...params,
+        properties: {
+          ...params.properties,
+          categoria: {
+            type: 'string',
+            enum: validas,
+            description:
+              'Obligatoria, exactamente una de la lista. Si el mensaje no dice con claridad cuál es, preguntale al dueño antes de registrar — no elijas por él ni caigas en "otros" por descarte.' +
+              mercancia,
+          },
+        },
+        required: [...new Set([...(params.required ?? []), 'categoria'])],
+      },
+    },
+  } as Groq.Chat.ChatCompletionTool
 }
 
 /**
@@ -384,11 +454,15 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
           cliente_id: { type: 'string' },
           cliente_nombre: { type: 'string' },
           monto: { type: 'number', description: 'En COP' },
+          // Obligatorio desde que se vio que el executor lo defaulteaba a
+          // 'efectivo' en silencio: un abono cobrado por transferencia quedaba
+          // registrado como efectivo y la caja dejaba de cuadrar sin que nada
+          // avisara. No se puede averiguar con una herramienta — se pregunta.
           medio_pago: { type: 'string', enum: ['efectivo', 'transferencia', 'tarjeta', 'cheque'] },
           cuenta_bancaria_id: { type: 'string', description: 'Opcional — si va a una cuenta bancaria específica' },
           referencia: { type: 'string' },
         },
-        required: ['cliente_id', 'cliente_nombre', 'monto'],
+        required: ['cliente_id', 'cliente_nombre', 'monto', 'medio_pago'],
       },
     },
   },
@@ -400,9 +474,18 @@ export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [
       parameters: {
         type: 'object',
         properties: {
-          descripcion: { type: 'string' },
+          // Sin descripción, el modelo la llenaba con lo primero que tenía a
+          // mano: registró "Gasto en Bancolombia" para un gasto de $2.000 en
+          // kerlys, metiendo el banco (que ya va en cuenta_bancaria_id) y
+          // perdiendo en qué se gastó la plata.
+          descripcion: {
+            type: 'string',
+            description: 'En qué se gastó la plata o a quién se le pagó, en pocas palabras. NUNCA el banco ni la cuenta de donde sale: eso va aparte en cuenta_bancaria_id.',
+          },
           monto: { type: 'number', description: 'En COP' },
-          categoria: { type: 'string', description: 'Uno de: arriendo, servicios, nomina, comisiones, marketing, transporte, impuestos, mantenimiento, honorarios, financieros, otros. Para una compra de mercancía NO uses un gasto: usa crear_compra, que sí entra al inventario.' },
+          // La lista válida y el "obligatoria" los pone cerrarCategoriaDeGasto
+          // con las categorías reales del negocio. No duplicarlas acá.
+          categoria: { type: 'string' },
           cuenta_bancaria_id: { type: 'string', description: 'Opcional — descuenta del saldo' },
           fecha: { type: 'string', description: 'YYYY-MM-DD (default hoy)' },
         },

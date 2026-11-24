@@ -796,16 +796,48 @@ async function registrarAbono(args: RegistrarAbonoArgs, db: PoolClient): Promise
   }
 }
 
+/**
+ * Resuelve la categoría pedida contra las que el negocio tiene activas.
+ *
+ * Fuera de la transacción a propósito: es una lectura, y si el schema del
+ * tenant todavía no tiene `categorias_gasto` (migración 027) la query revienta.
+ * Dentro de un BEGIN eso aborta la transacción entera y se perdería el gasto;
+ * acá solo cae al respaldo de los slugs de fábrica.
+ */
+async function resolverCategoriaGasto(
+  pedida: string | undefined,
+  db: PoolClient,
+): Promise<{ categoria: string; categoriaId: string | null }> {
+  const clave = (pedida ?? '').trim().toLowerCase()
+  try {
+    const { rows } = await db.query<{ id: string; clave: string }>(
+      `SELECT id, COALESCE(slug, nombre) AS clave
+         FROM categorias_gasto
+        WHERE flujo = 'egreso' AND activo = true`,
+    )
+    const elegida =
+      rows.find(c => c.clave.toLowerCase() === clave) ??
+      rows.find(c => c.clave.toLowerCase() === 'otros')
+    if (elegida) return { categoria: elegida.clave, categoriaId: elegida.id }
+  } catch {
+    // Sin tabla de categorías: se sigue con el respaldo de abajo.
+  }
+  const semilla = new Set<string>(CATEGORIAS_GASTO)
+  return { categoria: semilla.has(clave) ? clave : 'otros', categoriaId: null }
+}
+
 async function registrarGasto(args: RegistrarGastoArgs, db: PoolClient): Promise<ToolResult> {
+  // Las DOS columnas de categoría se escriben juntas. `categoria` TEXT es la
+  // histórica; `categoria_id` es la que usa el reporte de flujo de caja para
+  // agrupar (LEFT JOIN contra categorias_gasto). Esta función escribía solo el
+  // texto: el único gasto que había registrado el agente era también el único
+  // de 86 con categoria_id en NULL — aparecía en la lista de gastos y se caía
+  // del reporte por categoría. De poco sirve preguntarle la categoría a la
+  // dueña si después no cuenta donde ella la va a buscar.
+  const { categoria, categoriaId } = await resolverCategoriaGasto(args.categoria, db)
+
   await db.query('BEGIN')
   try {
-    // Fuente de verdad única: agregar una categoría en @antigravity/shared la
-    // habilita acá sola. Antes esta lista estaba hardcodeada y rechazaba en
-    // silencio (cayendo a 'otros') categorías que la propia descripción de la
-    // herramienta le ofrecía al modelo.
-    const categoriasPermitidas = new Set<string>(CATEGORIAS_GASTO)
-    const categoria = args.categoria && categoriasPermitidas.has(args.categoria) ? args.categoria : 'otros'
-
     // Si tiene cuenta, validar saldo suficiente
     if (args.cuenta_bancaria_id) {
       const { rows } = await db.query<{ saldo: string }>(
@@ -826,10 +858,10 @@ async function registrarGasto(args: RegistrarGastoArgs, db: PoolClient): Promise
     }
 
     const { rows: gasto } = await db.query<{ id: string }>(
-      `INSERT INTO gastos_operativos (descripcion, monto, categoria, cuenta_bancaria_id, fecha)
-       VALUES ($1, $2, $3, $4, COALESCE($5::date, CURRENT_DATE))
+      `INSERT INTO gastos_operativos (descripcion, monto, categoria, categoria_id, cuenta_bancaria_id, fecha)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::date, CURRENT_DATE))
        RETURNING id`,
-      [args.descripcion, args.monto, categoria, args.cuenta_bancaria_id ?? null, args.fecha ?? null],
+      [args.descripcion, args.monto, categoria, categoriaId, args.cuenta_bancaria_id ?? null, args.fecha ?? null],
     )
 
     if (args.cuenta_bancaria_id) {

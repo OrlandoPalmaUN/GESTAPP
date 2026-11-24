@@ -132,3 +132,35 @@ export async function cargarContextoNegocio(
 
   return biz
 }
+
+/**
+ * Categorías de gasto que el negocio tiene activas, para ofrecérselas al
+ * modelo como un `enum` cerrado en el esquema de `registrar_gasto`.
+ *
+ * Por qué se leen de la tabla y no de `CATEGORIAS_GASTO`: desde la migración
+ * 027 la fuente de verdad es `categorias_gasto`, que cada negocio puede
+ * editar. El array compartido quedó solo como semilla. Si acá se hardcodearan
+ * los once slugs de fábrica, una categoría creada por el negocio desde la web
+ * sería inalcanzable por chat — el modelo no la vería y el gasto caería en
+ * "otros", que es justamente el silencio que esto viene a cerrar.
+ *
+ * Nunca lanza: si la tabla no existe todavía en el schema del tenant, devuelve
+ * lista vacía y quien llame decide el respaldo.
+ */
+export async function cargarCategoriasGasto(
+  db: PoolClient,
+  log?: LoggerMinimo,
+): Promise<string[]> {
+  try {
+    const { rows } = await db.query<{ clave: string }>(
+      `SELECT COALESCE(slug, nombre) AS clave
+         FROM categorias_gasto
+        WHERE flujo = 'egreso' AND activo = true
+        ORDER BY orden`,
+    )
+    return rows.map(r => r.clave).filter(Boolean)
+  } catch (err) {
+    log?.warn({ err }, 'ai: no se pudieron cargar las categorías de gasto')
+    return []
+  }
+}

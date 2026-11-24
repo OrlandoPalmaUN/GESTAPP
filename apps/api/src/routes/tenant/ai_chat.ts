@@ -8,7 +8,7 @@ import { AiClient, getGroq, AI_MODEL, AI_MODEL_FALLBACK, isRateLimit } from '../
 import { getToolsForContext } from '../../lib/ai/tools.js'
 import { executeTool } from '../../lib/ai/executor.js'
 import { buildSystemPrompt, buildNotasPrompt } from '../../lib/ai/prompts.js'
-import { cargarContextoNegocio } from '../../lib/ai/contexto.js'
+import { cargarContextoNegocio, cargarCategoriasGasto } from '../../lib/ai/contexto.js'
 
 function exigirTenant(
   request: FastifyRequest,
@@ -64,7 +64,10 @@ export async function aiChatRoutes(fastify: FastifyInstance): Promise<void> {
 
     const systemPrompt = buildSystemPrompt(biz)
 
-    const tools = getToolsForContext(context)
+    // Mismo enum de categorías que en WhatsApp: el chat de la web escribe en
+    // las mismas tablas y tenía el mismo agujero.
+    const categoriasGasto = await cargarCategoriasGasto(request.tenantDb, fastify.log)
+    const tools = getToolsForContext(context, { categoriasGasto })
 
     const allMessages: Groq.Chat.ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },

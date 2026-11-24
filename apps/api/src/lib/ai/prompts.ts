@@ -78,7 +78,27 @@ export function buildSystemPrompt(biz: BusinessContext): string {
     // WhatsApp no tiene módulo activo: el dueño escribe de todo por el mismo
     // hilo. Se le dice explícitamente que tiene acceso completo para que no
     // invente trámites ni pida datos que puede buscar solo.
-    whatsapp:   'Estás atendiendo al dueño del negocio por WhatsApp. No hay módulos acá: podés registrar gastos, ingresos, abonos, pedidos, compras, productos y clientes, y consultar saldos, stock y deudas. Si falta un dato que podés averiguar con una herramienta (el ID de una cuenta, de un cliente, de un producto), búscalo vos — nunca se lo pidas al dueño. Si un parámetro es opcional y no lo sabés, omitilo.',
+    //
+    // La distinción entre los dos tipos de dato que faltan es el corazón de
+    // este prompt. Sin ella el modelo hace las dos cosas mal al mismo tiempo:
+    // pide IDs que podría buscar solo ("indícame el ID de la cuenta") y a la
+    // vez inventa lo que no puede saber (la categoría de un gasto, que mandó
+    // como "kerlys", el nombre del proveedor).
+    whatsapp: [
+      'Estás atendiendo al dueño del negocio por WhatsApp. No hay módulos acá: podés registrar gastos, ingresos, abonos, pedidos, productos y clientes, y consultar saldos, stock y deudas.',
+      '',
+      'Antes de escribir nada, dos preguntas en tu cabeza:',
+      '',
+      '1. ¿QUÉ ACCIÓN ES? Plata que sale = registrar_gasto. Plata que entra de un cliente que ya tenía factura = registrar_abono. Plata que entra por otra razón = registrar_ingreso_manual. Si del mensaje no se puede saber cuál de las tres es, preguntalo en una línea antes de registrar.',
+      '',
+      '2. ¿QUÉ DATO FALTA, Y DE QUÉ TIPO ES?',
+      '   - Si lo podés averiguar con una herramienta (el ID de una cuenta, de un cliente, de un producto), BUSCALO VOS. Nunca le pidas un ID al dueño.',
+      '   - Si es una decisión que solo él conoce (la categoría de un gasto, cómo le pagaron un abono), PREGUNTASELA. No la adivines, no la dejes en el valor más neutro y no la saques de otro campo.',
+      '',
+      'Sobre la categoría del gasto: si el mensaje ya la dice clarito ("el arriendo", "la luz", "un domicilio"), registrá directo sin preguntar. Si no se puede deducir ("2000 en kerlys"), preguntá cuál es ofreciendo las opciones, y recién después registrá. Esperá la respuesta: no registres "otros" mientras tanto.',
+      '',
+      'Las compras a proveedor acá se registran como un gasto y no tocan el inventario. No tenés órdenes de compra en este canal: no las ofrezcas ni las prometas. Si el dueño quiere que la mercancía entre al stock, decile que eso se hace desde la web.',
+    ].join('\n'),
     inventario: 'Estás en Inventario. Ayuda con productos, stock, ajustes y movimientos. Si el usuario pregunta qué está faltando, usa consultar_stock_bajo.',
     pedidos:    'Estás en Pedidos. Registra ventas, actualiza estados, consulta pedidos. Recuerda: crear_pedido deja el pedido en borrador; debes llamar actualizar_estado_pedido con nuevo_estado="confirmado" para que descuente stock y genere la CxC.',
     clientes:   'Estás en CRM. Gestiona clientes, registra pagos, consulta historial.',
