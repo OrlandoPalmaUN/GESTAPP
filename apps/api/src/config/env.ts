@@ -50,6 +50,22 @@ const envSchema = z.object({
   // Google AI Studio key — Gemini 2.0 Flash gratis: 1500 req/día
   // Obtener en: aistudio.google.com/apikey
   GOOGLE_AI_KEY: z.string().default(''),
+
+  // --- WhatsApp Business Cloud API -----------------------------------------
+  // Las cuatro van juntas: si falta una, el canal se deshabilita solo y lo
+  // dice en el log (ver routes/webhook_whatsapp.ts). No entran a la barrera de
+  // producción de abajo porque el canal es opcional — una empresa sin WhatsApp
+  // tiene que poder desplegar igual.
+  //
+  // Token PERMANENTE de System User, no el del dashboard: ese expira en horas.
+  WHATSAPP_TOKEN: z.string().default(''),
+  // App Secret de la app de Meta — valida el HMAC del webhook.
+  WHATSAPP_APP_SECRET: z.string().default(''),
+  // String que inventamos nosotros; va igual acá y en el dashboard de Meta.
+  WHATSAPP_VERIFY_TOKEN: z.string().default(''),
+  // Versión fijada a propósito: la default de Graph cambia sin avisar y con
+  // ella la forma de los payloads.
+  GRAPH_API_VERSION: z.string().default('v23.0'),
 })
   /**
    * Barrera de producción. Todo lo de arriba tiene default para que `pnpm dev`

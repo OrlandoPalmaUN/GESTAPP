@@ -21,6 +21,7 @@ import { configEmpresaRoutes } from './routes/tenant/config_empresa.js'
 import { redesSocialesRoutes } from './routes/tenant/redes_sociales.js'
 import { aiChatRoutes } from './routes/tenant/ai_chat.js'
 import { webhookApifyRoutes } from './routes/webhook_apify.js'
+import { webhookWhatsappRoutes } from './routes/webhook_whatsapp.js'
 import { crmRoutes } from './routes/tenant/crm.js'
 import { dashboardRoutes } from './routes/tenant/dashboard.js'
 import { finanzasRoutes } from './routes/tenant/finanzas.js'
@@ -100,6 +101,7 @@ export async function buildApp(): Promise<FastifyInstance> {
   await app.register(redesSocialesRoutes)
   await app.register(aiChatRoutes)
   await app.register(webhookApifyRoutes)
+  await app.register(webhookWhatsappRoutes)
   await app.register(igCronPlugin)
   await app.register(reportesCronPlugin)
   await app.register(papeleraRoutes)

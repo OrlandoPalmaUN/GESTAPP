@@ -29,6 +29,7 @@ model Tenant {
   trialEndsAt DateTime? @map("trial_ends_at") @db.Timestamptz(6)
 
   billingEvents BillingEvent[]
+  whatsappNumbers TenantWhatsappNumber[]
 
   @@map("tenants")
   @@schema("public")
@@ -111,5 +112,38 @@ model MigrationLog {
 
   @@unique([schemaName, migration])
   @@map("migration_log")
+  @@schema("public")
+}
+
+/// Mapeo `phone_number_id` → tenant: lo único del canal de WhatsApp que vive en
+/// `public`. El webhook de Meta no trae subdominio ni sesión — llega con el
+/// `phone_number_id` del número que recibió el mensaje
+/// (`entry[].changes[].value.metadata.phone_number_id`) y con eso hay que saber
+/// a qué schema apuntar antes de poder leer o escribir nada. El resto del canal
+/// (contactos, mensajes, conversaciones) vive en el schema del tenant, ver
+/// `tenant-migrations/032_whatsapp.sql`.
+///
+/// Un número por empresa, no uno compartido: el cliente final le escribe al
+/// número DE LA TIENDA. La tabla permite varios números por tenant (un negocio
+/// con dos líneas) y el mismo número no puede estar en dos tenants porque el
+/// `phone_number_id` es la PK.
+///
+/// El token NO está acá: mientras todos los números cuelguen de la WABA de
+/// Gestapp, es un secreto de plataforma (`WHATSAPP_TOKEN`), no un dato por
+/// empresa. El día que un cliente traiga su propia WABA habrá que agregar un
+/// token por fila, y cifrado — no antes.
+model TenantWhatsappNumber {
+  phoneNumberId String   @id @map("phone_number_id")
+  tenantId      String   @map("tenant_id") @db.Uuid
+  wabaId        String?  @map("waba_id")
+  /// Número legible, solo para mostrarlo en el panel (ej. "+57 300 123 4567").
+  displayNumber String?  @map("display_number")
+  activo        Boolean  @default(true)
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId])
+  @@map("tenant_whatsapp_numbers")
   @@schema("public")
 }

@@ -1,4 +1,4 @@
-import type { FastifyReply, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { PoolClient } from 'pg'
 
 import type { SesionJWT } from '../plugins/auth.js'
@@ -25,9 +25,11 @@ declare module 'fastify' {
   }
 }
 
+const SCHEMA_NAME_PATTERN = /^[a-z][a-z0-9_]*$/
+
 /**
- * Resuelve el tenant a partir del subdominio (plan §4) y deja una conexión
- * lista con el search_path correcto para el resto del request.
+ * Abre la conexión sobre la que opera un tenant (plan §4): deja el
+ * search_path correcto para el resto del request.
  *
  * Por qué `pool.connect()` y NO `pool.query()`:
  * `SET search_path` es una propiedad de la CONEXIÓN, no del query individual.
@@ -41,25 +43,62 @@ declare module 'fastify' {
  * que Prisma gestiona el schema público — usar Kysely aquí solo para evitar
  * una import duplicaría el modelo de `tenants` en dos sistemas de tipos.
  */
+/**
+ * Abre una conexión DEDICADA con el `search_path` apuntando al schema del
+ * tenant. Extraído de `asignarTenantAlRequest` para que lo pueda usar también
+ * el trabajo que corre FUERA de un request — el webhook de WhatsApp contesta
+ * 200 a Meta y procesa después, cuando el hook `onResponse` ya liberó
+ * `request.tenantDb`; usar esa conexión ahí sería usarla después de devolverla
+ * al pool, con el search_path de otro tenant encima.
+ *
+ * El `schemaName` siempre viene de `public.tenants` (lo deriva el servidor del
+ * slug, nunca input del cliente), pero igual se valida el formato antes de
+ * interpolarlo: un identificador no se puede parametrizar, y es la misma
+ * defensa que hace el migration runner.
+ */
+export async function abrirConexionDeTenant(
+  fastify: FastifyInstance,
+  schemaName: string,
+  usuarioId = '',
+): Promise<PoolClient> {
+  if (!SCHEMA_NAME_PATTERN.test(schemaName)) {
+    throw new Error(`schemaName "${schemaName}" tiene un formato inesperado — no se interpola en SQL.`)
+  }
+
+  const client = await fastify.pg.connect()
+  try {
+    await client.query(`SET search_path TO "${schemaName}", public`)
+    // GUC de sesión que lee `public.fn_auditoria()` (migración 019) para saber
+    // quién hizo cada cambio. La conexión es dedicada, así que el valor no se
+    // filtra a otro tenant/usuario.
+    await client.query(`SELECT set_config('app.current_user_id', $1, false)`, [usuarioId])
+    return client
+  } catch (error) {
+    client.release()
+    throw error
+  }
+}
+
+/** Contraparte de `abrirConexionDeTenant` para código fuera de un request. */
+export async function cerrarConexionDeTenant(client: PoolClient): Promise<void> {
+  try {
+    await client.query('RESET search_path')
+    await client.query(`SELECT set_config('app.current_user_id', '', false)`)
+  } finally {
+    client.release()
+  }
+}
+
 /** Deja `request.tenant`/`request.tenantDb` listos para `tenant`, con una conexión dedicada y `search_path` ya apuntando a su schema. */
 async function asignarTenantAlRequest(
   request: FastifyRequest,
   tenant: { id: string; name: string; slug: string; schemaName: string; plan: string; status: string },
 ): Promise<void> {
-  const fastify = request.server
-  const client = await fastify.pg.connect()
-  try {
-    await client.query(`SET search_path TO "${tenant.schemaName}", public`)
-    // GUC de sesión que lee `public.fn_auditoria()` (ver migración 019) para
-    // saber quién hizo cada crear/editar/eliminar — la conexión es DEDICADA
-    // a este request, así que el valor no se filtra a otro tenant/usuario.
-    // `set_config(..., false)` en vez de interpolar el id directo en el SQL:
-    // así no hace falta validar el formato del UUID a mano.
-    await client.query(`SELECT set_config('app.current_user_id', $1, false)`, [request.user?.sub ?? ''])
-  } catch (error) {
-    client.release()
-    throw error
-  }
+  const client = await abrirConexionDeTenant(
+    request.server,
+    tenant.schemaName,
+    request.user?.sub ?? '',
+  )
 
   request.tenant = {
     id: tenant.id,
@@ -94,8 +133,22 @@ async function verificarSesionOpcional(request: FastifyRequest): Promise<boolean
   }
 }
 
+/**
+ * Rutas que resuelven su propio tenant y por eso NO pasan por el resolver de
+ * subdominio. Un webhook entra por el host del API (`api.midominio.co`), donde
+ * el primer label del host no es el slug de ninguna empresa: sin esta salida
+ * temprana el resolver buscaría un tenant llamado "api" y respondería 404
+ * antes de que el webhook pudiera leer el payload. Cada webhook sabe de dónde
+ * sacar su tenant: Apify lo recibe en el body, y el de WhatsApp lo busca por el
+ * `phone_number_id` del número que recibió el mensaje (ver `lib/whatsapp/agente.ts`).
+ */
+const PREFIJOS_SIN_RESOLVER = ['/webhooks/']
+
 export async function tenantResolver(request: FastifyRequest, reply: FastifyReply): Promise<void> {
   const fastify = request.server
+
+  if (PREFIJOS_SIN_RESOLVER.some((prefijo) => request.url.startsWith(prefijo))) return
+
   const host = request.headers.host ?? ''
   const slug = host.split('.')[0]
 
@@ -146,10 +199,5 @@ export async function releaseTenantConnection(request: FastifyRequest): Promise<
   if (!client) return
 
   request.tenantDb = undefined
-  try {
-    await client.query('RESET search_path')
-    await client.query(`SELECT set_config('app.current_user_id', '', false)`)
-  } finally {
-    client.release()
-  }
+  await cerrarConexionDeTenant(client)
 }
