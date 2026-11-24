@@ -17,8 +17,10 @@ type Props = Record<string, { type?: unknown }>
 
 function esquemaDe(contexto: string, herramienta: string) {
   const tool = getToolsForContext(contexto).find(t => t.function?.name === herramienta)
-  if (!tool) throw new Error(`no está ${herramienta} en el contexto ${contexto}`)
-  const params = tool.function.parameters as { properties: Props; required?: string[] }
+  const params = tool?.function?.parameters as
+    | { properties: Props; required?: string[] }
+    | undefined
+  if (!params) throw new Error(`no está ${herramienta} en el contexto ${contexto}`)
   return { props: params.properties, required: params.required ?? [] }
 }
 
@@ -53,12 +55,14 @@ describe('esquema que se le manda al modelo', () => {
     const contextos = ['general', 'whatsapp', 'finanzas', 'pedidos', 'inventario', 'clientes']
     for (const ctx of contextos) {
       for (const tool of getToolsForContext(ctx)) {
-        const params = tool.function.parameters as { properties?: Props; required?: string[] }
-        for (const nombre of params.required ?? []) {
-          const tipo = params.properties?.[nombre]?.type
+        const params = tool.function?.parameters as
+          | { properties?: Props; required?: string[] }
+          | undefined
+        for (const nombre of params?.required ?? []) {
+          const tipo = params?.properties?.[nombre]?.type
           expect(
             Array.isArray(tipo) && tipo.includes('null'),
-            `${tool.function.name}.${nombre} es obligatorio y acepta null`,
+            `${tool.function?.name}.${nombre} es obligatorio y acepta null`,
           ).toBe(false)
         }
       }
