@@ -1,0 +1,49 @@
+# Mantiene despierta la API de Render para que el bot de WhatsApp conteste al toque.
+#
+# El plan gratis de Render apaga el servidor tras 15 minutos sin tráfico, y
+# arrancarlo de nuevo toma ~13 segundos. WhatsApp corta mucho antes de eso, así
+# que el primer mensaje después de un rato de silencio se perdía y entraba recién
+# cuando Meta lo reintentaba: medido, 39 y 43 segundos de demora el 24/11/2026.
+#
+# Por qué no las 24 horas: el plan gratis da 750 horas de instancia al mes y
+# estar despierto todo el día son ~720. Si se pasa, Render suspende el servicio
+# hasta el mes siguiente — mucho peor que esperar 40 segundos. Despertándolo solo
+# de 6am a 11:59pm Colombia son ~540 horas, con margen de sobra.
+#
+# Cada 10 y no cada 14 porque los cron de GitHub se atrasan seguido; 10 deja aire
+# antes de los 15 minutos de Render. GitHub Actions no cobra en repos públicos.
+#
+# Ojo: GitHub desactiva los cron de un repo sin commits por 60 días. Si el bot
+# vuelve a tardar, revisar primero la pestaña Actions.
+name: Mantener la API despierta
+
+on:
+  schedule:
+    # UTC. 0-4 y 11-23 UTC = 6:00am a 11:59pm hora de Colombia (UTC-5).
+    - cron: '*/10 0-4,11-23 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: mantener-api-despierta
+  cancel-in-progress: false
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Llamar /health
+        run: |
+          # --max-time 90 porque este curl es justamente el que paga el arranque
+          # en frío. --retry cubre el caso de que Render corte la primera.
+          codigo=$(curl --silent --show-error \
+                        --max-time 90 \
+                        --retry 3 --retry-delay 15 --retry-all-errors \
+                        --write-out '%{http_code}' \
+                        --output respuesta.txt \
+                        https://gestapp-api-c73b.onrender.com/health)
+          echo "HTTP $codigo en $(date -u +%H:%M:%S) UTC"
+          cat respuesta.txt; echo
+          # Si falla, el workflow queda en rojo y GitHub avisa por correo. Eso
+          # convierte esto en un monitor gratis además de un despertador.
+          test "$codigo" = "200"
