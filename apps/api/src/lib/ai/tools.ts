@@ -79,7 +79,46 @@ const TOOLS_BY_CONTEXT: Record<string, string[]> = {
 
 export function getToolsForContext(context: string): Groq.Chat.ChatCompletionTool[] {
   const names = new Set(TOOLS_BY_CONTEXT[context] ?? TOOLS_BY_CONTEXT.general)
-  return AGENT_TOOLS.filter(t => t.function?.name && names.has(t.function.name))
+  return AGENT_TOOLS
+    .filter(t => t.function?.name && names.has(t.function.name))
+    .map(admitirNulosEnOpcionales)
+}
+
+/**
+ * Deja que un parámetro opcional llegue como `null` además de ausente.
+ *
+ * Groq valida la tool call contra este esquema ANTES de entregárnosla, y la
+ * rechaza entera con un 400 si algo no encaja. Los modelos rellenan los campos
+ * opcionales que no conocen con `null` en vez de omitirlos, así que un esquema
+ * que solo acepta `string` convierte esa costumbre en un error duro.
+ *
+ * Pasó en producción con un gasto real: el modelo había resuelto todo bien
+ * —la cuenta, el monto, la descripción— y la llamada murió por un
+ * `"fecha": null`. El gasto no se registró y el dueño vio "no pude procesar".
+ *
+ * Los `null` que entren por acá los limpia `executeTool` antes de tocar SQL.
+ */
+function admitirNulosEnOpcionales(
+  tool: Groq.Chat.ChatCompletionTool,
+): Groq.Chat.ChatCompletionTool {
+  const params = tool.function?.parameters as
+    | { properties?: Record<string, { type?: unknown }>; required?: string[] }
+    | undefined
+  if (!params?.properties) return tool
+
+  const obligatorios = new Set(params.required ?? [])
+  const properties = Object.fromEntries(
+    Object.entries(params.properties).map(([nombre, prop]) => {
+      // Obligatorio, sin tipo declarado, o ya acepta varios: se deja igual.
+      if (obligatorios.has(nombre) || typeof prop.type !== 'string') return [nombre, prop]
+      return [nombre, { ...prop, type: [prop.type, 'null'] }]
+    }),
+  )
+
+  return {
+    ...tool,
+    function: { ...tool.function, parameters: { ...params, properties } },
+  } as Groq.Chat.ChatCompletionTool
 }
 
 export const AGENT_TOOLS: Groq.Chat.ChatCompletionTool[] = [

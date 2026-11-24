@@ -30,9 +30,17 @@ export interface ToolResult {
 
 export async function executeTool(
   name: string,
-  args: Record<string, unknown>,
+  argsCrudos: Record<string, unknown>,
   db: PoolClient,
 ): Promise<ToolResult> {
+  // Un opcional que el modelo no conoce llega como `null`, no ausente (ver
+  // admitirNulosEnOpcionales en tools.ts). Más abajo cada handler asume que un
+  // campo ausente es ausente: si le pasa `fecha: null` a SQL, escribe NULL en
+  // vez de aplicar el default. Se normaliza una sola vez acá, en la puerta.
+  const args = Object.fromEntries(
+    Object.entries(argsCrudos).filter(([, valor]) => valor !== null && valor !== undefined),
+  )
+
   try {
     switch (name) {
       // ── Clientes ────────────────────────────────────────────────────────
